@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools >= 77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magnet"
+version = "0.0.1"
+description = "Exploratory package for MAGNET system"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"}
+]
+requires-python = ">=3.11"
+dependencies = ['crfm-helm==0.5.5',
+                'pandas',
+                'dacite']
