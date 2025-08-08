@@ -20,3 +20,7 @@ dependencies = [
     'numexpr>=2.11.0',
     'lazy_loader>=0.4',
 ]
+
+[tool.pytest.ini_options]
+addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
+norecursedirs = ".git build __pycache__ dev docs"

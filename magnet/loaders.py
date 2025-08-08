@@ -53,6 +53,16 @@ def load_run_spec(run_spec_file_path):
 
 
 def load_stats(suite, run_spec, root_dir="benchmark_output"):
+    """
+    Example:
+        >>> from magnet.loaders import *  # NOQA
+        >>> import magnet
+        >>> dpath = magnet.demo.ensure_helm_demo_outputs()
+        >>> root_dir = (dpath / 'benchmark_output')
+        >>> suite = 'latest'
+        >>> run_spec = 'mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2'
+        >>> stats = load_stats(suite, run_spec, root_dir)
+    """
     stats_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "stats.json")
     with open(stats_file_path) as f:
         json_stats: List[Dict[str, Any]] = json.load(f)
@@ -62,6 +72,16 @@ def load_stats(suite, run_spec, root_dir="benchmark_output"):
 
 
 def load_scenario_state(suite, run_spec, root_dir="benchmark_output"):
+    """
+    Example:
+        >>> from magnet.loaders import *  # NOQA
+        >>> import magnet
+        >>> dpath = magnet.demo.ensure_helm_demo_outputs()
+        >>> root_dir = (dpath / 'benchmark_output')
+        >>> suite = 'latest'
+        >>> run_spec = 'mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2'
+        >>> scenario_state = load_scenario_state(suite, run_spec, root_dir)
+    """
     state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "scenario_state.json")
     with open(state_file_path) as f:
         json_state: Dict[str, Any] = json.load(f)
@@ -96,6 +116,16 @@ def load_all_scenario_states_as_dataframe(suite,
                                           run_specs,
                                           scenario_state_fields,
                                           root_dir="benchmark_output"):
+    """
+    Example:
+        >>> from magnet.loaders import *  # NOQA
+        >>> import magnet
+        >>> dpath = magnet.demo.ensure_helm_demo_outputs()
+        >>> root_dir = (dpath / 'benchmark_output')
+        >>> suite = 'latest'
+        >>> run_specs = ['mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
+        >>> scenario_states_df = load_all_scenario_states_as_dataframe(suite, run_specs, root_dir)
+    """
     scenario_states_dfs = []
     for run_spec in run_specs:
         state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "scenario_state.json")
@@ -118,6 +148,16 @@ def load_all_stats_as_dataframe(suite,
                                 run_specs,
                                 stats_fields,
                                 root_dir="benchmark_output"):
+    """
+    Example:
+        >>> from magnet.loaders import *  # NOQA
+        >>> import magnet
+        >>> dpath = magnet.demo.ensure_helm_demo_outputs()
+        >>> root_dir = (dpath / 'benchmark_output')
+        >>> suite = 'latest'
+        >>> run_specs = ['mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
+        >>> stats = load_all_stats_as_dataframe(suite, run_specs, root_dir)
+    """
     stats_dfs = []
     for run_spec in run_specs:
         stats_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "stats.json")
