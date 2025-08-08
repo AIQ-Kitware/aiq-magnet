@@ -7,9 +7,11 @@ name = "magnet"
 version = "0.0.1"
 description = "Exploratory package for MAGNET system"
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "MAGNET Kitware", email = "kitware@kitware.com"}
 ]
 requires-python = ">=3.11"
-dependencies = ['crfm-helm==0.5.5',
-                'pandas',
-                'dacite']
+dependencies = [
+    'crfm-helm>=0.5.5',
+    'pandas>=2.2.3',
+    'dacite'
+]
