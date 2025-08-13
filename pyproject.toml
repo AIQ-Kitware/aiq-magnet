@@ -2,6 +2,9 @@
 requires = ["setuptools >= 77.0.3"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+packages = ["magnet"]
+
 [project]
 name = "magnet"
 version = "0.0.1"
@@ -11,14 +14,25 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
-    'crfm-helm>=0.5.5',
-    'pandas>=2.2.3',
-    'dacite>=1.9.2',
-    'ubelt>=1.3.8',
-    'scikit-learn>=1.7.1',
-    'h5py>=3.14.0',
-    'numexpr>=2.11.0',
-    'lazy_loader>=0.4',
+    "pandas>=2.2.3",
+    "dacite>=1.9.2",
+    "ubelt>=1.3.8",
+    "lazy_loader>=0.4"
+]
+
+[project.optional-dependencies]
+
+helm = [
+    "crfm-helm>=0.5.5",
+    "scikit-learn>=1.7.1",
+    "h5py>=3.14.0",
+    "numexpr>=2.11.0",
+]
+
+tests = [
+    "magnet[helm]",
+    "xdoctest>=1.2.0",
+    "pytest>=8.1.1",
 ]
 
 [tool.pytest.ini_options]

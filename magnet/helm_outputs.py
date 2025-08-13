@@ -7,8 +7,8 @@ class HelmOutputs:
         >>> self = HelmOutputs.demo()
         >>> self.list_run_specs()
         ['mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
-        >>> self.list_suites()
-        ['my-suite', 'latest']
+        >>> sorted(self.list_suites())
+        ['latest', 'my-suite']
     """
 
     def __init__(self, root_dir):

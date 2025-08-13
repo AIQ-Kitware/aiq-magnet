@@ -13,10 +13,12 @@ __getattr__, __dir__, __all__ = lazy_loader.attach(
     submodules={
         'demo',
         'example_random_predictor',
+        'helm_outputs',
         'loaders',
         'predictor',
     },
     submod_attrs={},
 )
 
-__all__ = ['demo', 'example_random_predictor', 'loaders', 'predictor']
+__all__ = ['demo', 'example_random_predictor', 'helm_outputs', 'loaders',
+           'predictor']
