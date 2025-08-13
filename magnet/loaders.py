@@ -1,12 +1,47 @@
 import os
 import json
 from typing import Dict, Any, List
+import copy
 
 import dacite
 import pandas as pd
 from helm.benchmark.adaptation.scenario_state import ScenarioState
 from helm.benchmark.metrics.statistic import Stat
 from helm.benchmark.run_spec import RunSpec
+import ubelt as ub
+
+
+def json_to_dataframe(json_data, paths):
+    """Convert nested JSON to DataFrame using dot-separated paths."""
+
+    # Handle single dict case
+    if isinstance(json_data, dict):
+        json_data = [json_data]
+
+    result_data = {path: [] for path in paths}
+
+    for item in json_data:
+        walker = ub.IndexableWalker(item)
+
+        for path in paths:
+            # Convert dot-separated path to list
+            path_list = []
+            for p in path.split('.'):
+                try:
+                    # We want to convert list indicies in the path to
+                    # ints if possible; this does break if we have
+                    # dictionaries with integer keys
+                    path_list.append(int(p))
+                except ValueError:
+                    path_list.append(p)
+
+            try:
+                value = walker[path_list]
+                result_data[path].append(value)
+            except (KeyError, IndexError):
+                result_data[path].append(None)
+
+    return pd.DataFrame(result_data)
 
 
 def load_run_spec(run_spec_file_path):
@@ -15,30 +50,6 @@ def load_run_spec(run_spec_file_path):
         run_spec = dacite.from_dict(RunSpec, json_run_spec)
 
     return run_spec
-
-
-def load_scenario_state(suite, run_spec, root_dir="benchmark_output"):
-    state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "scenario_state.json")
-    with open(state_file_path) as f:
-        json_state: Dict[str, Any] = json.load(f)
-        scenario_state = dacite.from_dict(ScenarioState, json_state)
-
-    return scenario_state
-
-def load_all_scenario_states_as_dataframe(suite, run_specs, root_dir="benchmark_output"):
-    scenario_states_records = []
-    for run_spec in run_specs:
-        state = load_scenario_state(suite, run_spec, root_dir=root_dir)
-
-        for request_state in state.request_states:
-            input = request_state.instance.input.text
-            output = request_state.result.completions[0].text
-
-            scenario_states_records.append((run_spec, input, output))
-
-    scenario_states_df = pd.DataFrame(scenario_states_records, columns=["run_spec", "input", "output"])
-
-    return scenario_states_df
 
 
 def load_stats(suite, run_spec, root_dir="benchmark_output"):
@@ -50,56 +61,77 @@ def load_stats(suite, run_spec, root_dir="benchmark_output"):
     return stats
 
 
-def load_all_stats_as_dataframe(suite, run_specs, root_dir="benchmark_output"):
-    stats_records = []
+def load_scenario_state(suite, run_spec, root_dir="benchmark_output"):
+    state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "scenario_state.json")
+    with open(state_file_path) as f:
+        json_state: Dict[str, Any] = json.load(f)
+        scenario_state = dacite.from_dict(ScenarioState, json_state)
+
+    return scenario_state
+
+
+def load_all_run_specs_as_dataframe(suite,
+                                    run_specs,
+                                    run_spec_fields,
+                                    root_dir="benchmark_output"):
+    run_spec_fields = copy.deepcopy(run_spec_fields)
+    if 'name' not in run_spec_fields:
+        run_spec_fields.insert(0, 'name')
+
+    run_specs_dfs = []
     for run_spec in run_specs:
-        stats = load_stats(suite, run_spec, root_dir=root_dir)
+        state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "run_spec.json")
+        with open(state_file_path) as f:
+            run_spec_data = json.load(f)
 
-        for stat in stats:
-            if stat.name.perturbation is None:
-                stats_records.append((run_spec,
-                                      stat.name.name,
-                                      None,None,None,None,None,  # perturbation name, robustness, fairness, computed_on, seed
-                                      stat.count,
-                                      stat.sum,
-                                      stat.sum_squared,
-                                      stat.min,
-                                      stat.max,
-                                      stat.mean,
-                                      stat.variance,
-                                      stat.stddev))
-            else:
-                stats_records.append((run_spec,
-                                      stat.name.name,
-                                      stat.name.perturbation.name,
-                                      stat.name.perturbation.robustness,
-                                      stat.name.perturbation.fairness,
-                                      stat.name.perturbation.computed_on,
-                                      stat.name.perturbation.seed,
-                                      stat.count,
-                                      stat.sum,
-                                      stat.sum_squared,
-                                      stat.min,
-                                      stat.max,
-                                      stat.mean,
-                                      stat.variance,
-                                      stat.stddev))
+        run_spec_df = json_to_dataframe(run_spec_data,
+                                        run_spec_fields)
 
-    stats_df = pd.DataFrame(stats_records,
-                            columns=["run_spec",
-                                     "name",
-                                     "perturbation_name",
-                                     "perturbation_robustness",
-                                     "perturbation_fairness",
-                                     "perturbation_computed_on",
-                                     "perturbation_seed",
-                                     "count",
-                                     "sum",
-                                     "sum_squared",
-                                     "min",
-                                     "max",
-                                     "mean",
-                                     "variance",
-                                     "stddev"])
+        run_specs_dfs.append(run_spec_df)
 
-    return stats_df
+    return pd.concat(run_specs_dfs)
+
+
+def load_all_scenario_states_as_dataframe(suite,
+                                          run_specs,
+                                          scenario_state_fields,
+                                          root_dir="benchmark_output"):
+    scenario_states_dfs = []
+    for run_spec in run_specs:
+        state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "scenario_state.json")
+        with open(state_file_path) as f:
+            scenario_state_data = json.load(f)
+
+        scenario_state_df = json_to_dataframe(scenario_state_data['request_states'],
+                                              scenario_state_fields)
+
+        # Add the run_spec name as a "foreign-key" to our scenario_state dataframe
+        run_spec_name_column_df = pd.DataFrame(
+            {'run_spec.name': [run_spec] * len(scenario_state_df)})
+        scenario_state_df = pd.concat([run_spec_name_column_df, scenario_state_df], axis=1)
+
+        scenario_states_dfs.append(scenario_state_df)
+
+    return pd.concat(scenario_states_dfs)
+
+def load_all_stats_as_dataframe(suite,
+                                run_specs,
+                                stats_fields,
+                                root_dir="benchmark_output"):
+    stats_dfs = []
+    for run_spec in run_specs:
+        stats_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "stats.json")
+        with open(stats_file_path) as f:
+            stats_data = json.load(f)
+
+        stats_df = json_to_dataframe(stats_data,
+                                     stats_fields)
+
+        # Add the run_spec name as a "foreign-key" to our stats dataframe
+        run_spec_name_column_df = pd.DataFrame(
+            {'run_spec.name': [run_spec] * len(stats_df)})
+        stats_df = pd.concat([run_spec_name_column_df, stats_df], axis=1)
+
+        stats_dfs.append(stats_df)
+
+    return pd.concat(stats_dfs)
