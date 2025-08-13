@@ -12,7 +12,24 @@ import ubelt as ub
 
 
 def json_to_dataframe(json_data, paths):
-    """Convert nested JSON to DataFrame using dot-separated paths."""
+    """
+    Convert nested JSON to DataFrame using dot-separated paths.
+
+    Example:
+        >>> from magnet.loaders import *
+        >>> json_data = {'nested': {
+        >>> 'type': 'measure',
+        >>> 'results': [
+        >>>     {'score': 1},
+        >>>     {'score': 2},
+        >>>     {'score': 3},
+        >>> ]}}
+        >>> paths = ['nested.type', 'nested.results', 'nested.results.0.score']
+        >>> df = json_to_dataframe(json_data, paths)
+        >>> print(df.to_string())
+          nested.type                              nested.results  nested.results.0.score
+        0     measure  [{'score': 1}, {'score': 2}, {'score': 3}]                       1
+    """
 
     # Handle single dict case
     if isinstance(json_data, dict):
@@ -53,6 +70,21 @@ def load_run_spec(run_spec_file_path):
 
 
 def load_stats(suite, run_spec, root_dir="benchmark_output"):
+    """
+    Returns:
+        List[helm.benchmark.metrics.statistic.Stat]
+
+    Example:
+        >>> from magnet.loaders import *
+        >>> import magnet
+        >>> outputs = magnet.helm_outputs.HelmOutputs.demo()
+        >>> dpath = magnet.demo.ensure_helm_demo_outputs()
+        >>> root_dir = outputs.root_dir
+        >>> suite = outputs.list_suites()[0]
+        >>> run_spec = outputs.list_run_specs(suite=suite)[0]
+        >>> stats = load_stats(suite, run_spec, root_dir)
+        >>> assert len(stats) > 80
+    """
     stats_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "stats.json")
     with open(stats_file_path) as f:
         json_stats: List[Dict[str, Any]] = json.load(f)
@@ -62,6 +94,20 @@ def load_stats(suite, run_spec, root_dir="benchmark_output"):
 
 
 def load_scenario_state(suite, run_spec, root_dir="benchmark_output"):
+    """
+    Returns:
+        helm.benchmark.adaptation.scenario_state.ScenarioState
+
+    Example:
+        >>> from magnet.loaders import *
+        >>> import magnet
+        >>> outputs = magnet.helm_outputs.HelmOutputs.demo()
+        >>> root_dir = outputs.root_dir
+        >>> suite = outputs.list_suites()[0]
+        >>> run_spec = outputs.list_run_specs(suite=suite)[0]
+        >>> scenario_state = load_scenario_state(suite, run_spec, root_dir)
+        >>> assert len(scenario_state.instances) >= 1
+    """
     state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "scenario_state.json")
     with open(state_file_path) as f:
         json_state: Dict[str, Any] = json.load(f)
@@ -74,6 +120,30 @@ def load_all_run_specs_as_dataframe(suite,
                                     run_specs,
                                     run_spec_fields,
                                     root_dir="benchmark_output"):
+    """
+    Returns:
+        pandas.DataFrame
+
+    Example:
+        >>> from magnet.loaders import *
+        >>> import magnet
+        >>> outputs = magnet.helm_outputs.HelmOutputs.demo()
+        >>> root_dir = outputs.root_dir
+        >>> suite = outputs.list_suites()[0]
+        >>> run_specs = [outputs.list_run_specs(suite=suite)[0]]
+        >>> run_spec_fields = [
+        >>>     "name",
+        >>>     "adapter_spec.model",
+        >>>     "adapter_spec",
+        >>>     "metric_specs",
+        >>>     "data_augmenter_spec",
+        >>>     "groups",
+        >>> ]
+        >>> run_specs_df = load_all_run_specs_as_dataframe(suite, run_specs, run_spec_fields, root_dir)
+        >>> assert len(run_specs_df.columns) == len(run_spec_fields)
+        >>> assert len(run_specs_df) == 1
+        >>> assert not any([x is None for x in run_specs_df.values.ravel()])
+    """
     run_spec_fields = copy.deepcopy(run_spec_fields)
     if 'name' not in run_spec_fields:
         run_spec_fields.insert(0, 'name')
@@ -96,6 +166,32 @@ def load_all_scenario_states_as_dataframe(suite,
                                           run_specs,
                                           scenario_state_fields,
                                           root_dir="benchmark_output"):
+    """
+    Returns:
+        pandas.DataFrame
+
+    Example:
+        >>> from magnet.loaders import *
+        >>> import magnet
+        >>> outputs = magnet.helm_outputs.HelmOutputs.demo()
+        >>> root_dir = outputs.root_dir
+        >>> suite = outputs.list_suites()[0]
+        >>> run_specs = [outputs.list_run_specs(suite=suite)[0]]
+        >>> scenario_state_fields = [
+        >>>     "instance.input.text",
+        >>>     "instance.id",
+        >>>     "instance.split",
+        >>>     "train_trial_index",
+        >>>     "result.completions.0.text",
+        >>>     "result.completions",
+        >>>     "instance",
+        >>>     "request",
+        >>>     "result",
+        >>> ]
+        >>> scenario_states_df = load_all_scenario_states_as_dataframe(suite, run_specs, scenario_state_fields, root_dir)
+        >>> assert len(scenario_states_df.columns) == len(scenario_state_fields) + 1
+        >>> assert len(scenario_states_df) == 1
+    """
     scenario_states_dfs = []
     for run_spec in run_specs:
         state_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "scenario_state.json")
@@ -114,10 +210,31 @@ def load_all_scenario_states_as_dataframe(suite,
 
     return pd.concat(scenario_states_dfs)
 
+
 def load_all_stats_as_dataframe(suite,
                                 run_specs,
                                 stats_fields,
                                 root_dir="benchmark_output"):
+    """
+    Returns:
+        pandas.DataFrame
+
+    Example:
+        >>> from magnet.loaders import *
+        >>> import magnet
+        >>> outputs = magnet.helm_outputs.HelmOutputs.demo()
+        >>> root_dir = outputs.root_dir
+        >>> suite = outputs.list_suites()[0]
+        >>> run_specs = [outputs.list_run_specs(suite=suite)[0]]
+        >>> stats_fields = [
+        >>>     "name.name", "name.split", "name",
+        >>>     "count", "sum", "sum_squared", "min",
+        >>>     "max", "mean", "variance", "stddev",
+        >>> ]
+        >>> stats = load_all_stats_as_dataframe(suite, run_specs, stats_fields, root_dir)
+        >>> assert len(stats) > 80
+        >>> assert len(stats.columns) == len(stats_fields) + 1
+    """
     stats_dfs = []
     for run_spec in run_specs:
         stats_file_path = os.path.join(root_dir, 'runs', suite, run_spec, "stats.json")
