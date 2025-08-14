@@ -28,7 +28,7 @@ class HelmOutputs(ub.NiceRepr):
         >>> self = magnet.HelmOutputs.demo()
         >>> print(self)
         <HelmOutputs(.../magnet/tests/helm_output/benchmark_output)>
-        >>> [s.name for s in self.suites]
+        >>> [s.name for s in self.suites()]
         ['my-suite']
         >>> self.list_run_specs(suite='*')
         ['mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
