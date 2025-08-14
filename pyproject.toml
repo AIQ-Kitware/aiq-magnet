@@ -1,9 +1,11 @@
 [build-system]
-requires = ["setuptools >= 77.0.3"]
+requires = ["setuptools >= 80.9.0"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["magnet"]
+[tool.setuptools.packages.find]
+namespaces = true
+include = ["magnet*"]
+
 
 [project]
 name = "magnet"
@@ -12,6 +14,7 @@ description = "Exploratory package for MAGNET system"
 authors = [
     {name = "MAGNET Kitware", email = "kitware@kitware.com"}
 ]
+urls = { "Repository" = "https://github.com/AIQ-Kitware/magnet-sys-exploratory/" }
 requires-python = ">=3.11"
 dependencies = [
     "crfm-helm>=0.5.5",
@@ -29,6 +32,11 @@ dependencies = [
 tests = [
     "xdoctest>=1.2.0",
     "pytest>=8.1.1",
+    "coverage>=7.3.0",
+    "pytest-cov>=3.0.0",
+]
+
+optional = [
 ]
 
 [tool.pytest.ini_options]

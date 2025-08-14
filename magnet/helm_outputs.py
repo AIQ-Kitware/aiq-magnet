@@ -17,6 +17,7 @@ class HelmOutputs:
     @classmethod
     def demo(cls):
         import magnet
+        print(f'MODULE: magnet={magnet}')
         dpath = magnet.demo.ensure_helm_demo_outputs()
         self = cls(dpath / 'benchmark_output')
         return self
