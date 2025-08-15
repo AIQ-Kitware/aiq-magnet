@@ -210,7 +210,6 @@ class HelmRun(ub.NiceRepr):
         >>> scenario_state = self.scenario_state()
         >>> print(f'stats = {ub.urepr(stats, nl=1)}')
         >>> print(f'spec = {ub.urepr(spec, nl=1)}')
-        >>> print(f'scenario = {ub.urepr(scenario, nl=1)}')
         >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
         >>> # Dataframe objects
         >>> stats_df = self.stats_dataframe()
