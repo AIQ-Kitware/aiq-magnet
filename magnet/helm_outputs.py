@@ -129,6 +129,10 @@ class HelmSuiteRuns(ub.NiceRepr):
         >>> from magnet.helm_outputs import *
         >>> self = HelmSuiteRuns.demo()
         >>> print(self)
+        <HelmSuiteRuns(1)>
+        >>> self.stats_dataframe()
+        >>> self.scenario_state_dataframe()
+        >>> self.run_spec_dataframe()
     """
     def __init__(self, paths):
         self.paths = paths
@@ -180,6 +184,21 @@ class HelmRun(ub.NiceRepr):
     """
     Represents a single run in a suite.
 
+    Note:
+        The following is a list of json files that are in a helm run directory.
+
+        Output files from helm-run:
+            * run_spec.json,
+            * per_instance_stats.json,
+            * scenario.json,
+            * scenario_state.json,
+            * stats.json.
+
+        Output files from helm-summarize:
+            * instances.json,
+            * display_requests.json,
+            * display_predictions.json
+
     Example:
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo()
@@ -188,10 +207,11 @@ class HelmRun(ub.NiceRepr):
         >>> # HELM objects
         >>> stats = self.stats()
         >>> spec = self.run_spec()
-        >>> scenario = self.scenario_state()
+        >>> scenario_state = self.scenario_state()
         >>> print(f'stats = {ub.urepr(stats, nl=1)}')
         >>> print(f'spec = {ub.urepr(spec, nl=1)}')
         >>> print(f'scenario = {ub.urepr(scenario, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
         >>> # Dataframe objects
         >>> stats_df = self.stats_dataframe()
         >>> spec_df = self.run_spec_dataframe()
@@ -209,6 +229,8 @@ class HelmRun(ub.NiceRepr):
 
     def exists(self):
         return all(p.exists() for p in [
+            # TODO: do we need to add scenario.json and per_instance_stats.json
+            # What about the files from helm-summarize?
             self.path / 'stats.json',
             self.path / 'run_spec.json',
             self.path / 'scenario_state.json',
@@ -222,6 +244,8 @@ class HelmRun(ub.NiceRepr):
 
     ## These are alternatives to functions in loaders.py
     ## Still thinking about the best way to structure these.
+
+    # -- Pure HELM Loaders
 
     def stats(self) -> Stat:
         stats_list = kwutil.Json.load(self.path / 'stats.json')
@@ -243,12 +267,16 @@ class HelmRun(ub.NiceRepr):
         state = dacite.from_dict(ScenarioState, nested)
         return state
 
+    # Note: not sure how to load scenario.json with dacite, or if it matters
+
+    # -- Data Frame Loaders
+
     def stats_dataframe(self) -> util_pandas.DotDictDataFrame:
         stats_list = kwutil.Json.load(self.path / 'stats.json')
         stats_flat = [kwutil.DotDict.from_nested(stats) for stats in stats_list]
         flat_table = util_pandas.DotDictDataFrame(stats_flat)
         # Add a prefix to enable joins for join keys
-        flat_table = flat_table.insert_prefix('stat')
+        flat_table = flat_table.insert_prefix('stats')
         # Enrich with contextual metadata
         flat_table['run_spec.name'] = self.name
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
@@ -259,7 +287,7 @@ class HelmRun(ub.NiceRepr):
         stats_flat = [kwutil.DotDict.from_nested(stats) for stats in stats_list]
         flat_table = util_pandas.DotDictDataFrame(stats_flat)
         # Add a prefix to enable joins for join keys
-        flat_table = flat_table.insert_prefix('stat')
+        flat_table = flat_table.insert_prefix('per_instance_stats')
         # Enrich with contextual metadata
         flat_table['run_spec.name'] = self.name
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
@@ -269,10 +297,9 @@ class HelmRun(ub.NiceRepr):
         nested = kwutil.Json.load(self.path / 'scenario_state.json')
         flat_state = kwutil.DotDict.from_nested(nested)
         # Add a prefix to enable joins
-        flat_state = flat_state.insert_prefix('scenario')
+        flat_state = flat_state.insert_prefix('scenario_state')
         flat_table = util_pandas.DotDictDataFrame([flat_state])
         # Enrich with contextual metadata for join keys
-        flat_table['run_spec.name'] = self.name
         flat_table['run_spec.name'] = self.name
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
