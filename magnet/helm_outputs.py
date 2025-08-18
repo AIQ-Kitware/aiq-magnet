@@ -130,9 +130,10 @@ class HelmSuiteRuns(ub.NiceRepr):
         >>> self = HelmSuiteRuns.demo()
         >>> print(self)
         <HelmSuiteRuns(1)>
-        >>> self.stats()
-        >>> self.scenario_state()
+        >>> self.per_instance_stats()
         >>> self.run_spec()
+        >>> self.scenario_state()
+        >>> self.stats()
     """
     def __init__(self, paths):
         self.paths = paths
@@ -164,14 +165,9 @@ class HelmSuiteRuns(ub.NiceRepr):
         else:
             return HelmRun(self.paths[index])
 
-    def stats(self):
+    def per_instance_stats(self):
         # Could likely be quite a bit more efficient here
-        table = pd.concat([r.stats() for r in self[:]], axis=0)
-        return table
-
-    def scenario_state(self):
-        # Could likely be quite a bit more efficient here
-        table = pd.concat([r.scenario_state() for r in self[:]], axis=0)
+        table = pd.concat([r.per_instance_stats() for r in self[:]], axis=0)
         return table
 
     def run_spec(self):
@@ -179,20 +175,40 @@ class HelmSuiteRuns(ub.NiceRepr):
         table = pd.concat([r.run_spec() for r in self[:]], axis=0)
         return table
 
+    def scenario_state(self):
+        # Could likely be quite a bit more efficient here
+        table = pd.concat([r.scenario_state() for r in self[:]], axis=0)
+        return table
+
+    def stats(self):
+        # Could likely be quite a bit more efficient here
+        table = pd.concat([r.stats() for r in self[:]], axis=0)
+        return table
+
 
 class _RawHelmRun:
     """
     Helper to provide access to raw HELM data structures.
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo()
+        >>> # Raw HELM objects
+        >>> per_instance_stats = self.raw.per_instance_stats()
+        >>> stats = self.raw.stats()
+        >>> spec = self.raw.run_spec()
+        >>> scenario_state = self.raw.scenario_state()
+        >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
+        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
+        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
     """
     def __init__(self, path):
         self.path = ub.Path(path)
 
-    def stats(self) -> Stat:
-        stats_list = kwutil.Json.load(self.path / 'stats.json')
-        stats = [dacite.from_dict(Stat, json_stat) for json_stat in stats_list]
-        return stats
+    # Note: not sure how to load scenario.json with dacite, or if it matters
 
-    def per_instance_stats(self) -> RunSpec:
+    def per_instance_stats(self) -> list[PerInstanceStats]:
         nested_items = kwutil.Json.load(self.path / 'per_instance_stats.json')
         items = [dacite.from_dict(PerInstanceStats, item) for item in nested_items]
         return items
@@ -207,42 +223,45 @@ class _RawHelmRun:
         state = dacite.from_dict(ScenarioState, nested)
         return state
 
+    def stats(self) -> list[Stat]:
+        stats_list = kwutil.Json.load(self.path / 'stats.json')
+        stats = [dacite.from_dict(Stat, json_stat) for json_stat in stats_list]
+        return stats
+
 
 class HelmRun(ub.NiceRepr):
     """
     Represents a single run in a suite.
 
+    This provides output to postprocessed dataframe representations of HELM
+    objects. For access to raw HELM objects, use the ``raw`` attribute.
+
     Note:
         The following is a list of json files that are in a helm run directory.
 
         Output files from helm-run:
-            * run_spec.json,
             * per_instance_stats.json,
+            * run_spec.json,
             * scenario.json,
             * scenario_state.json,
-            * stats.json.
+            * stats.json,
 
         Output files from helm-summarize:
-            * instances.json,
+            * display_predictions.json,
             * display_requests.json,
-            * display_predictions.json
+            * instances.json,
 
     Example:
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo()
         >>> print(self)
         <HelmRun(mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2)>
-        >>> # Raw HELM objects
-        >>> stats = self.raw.stats()
-        >>> spec = self.raw.run_spec()
-        >>> scenario_state = self.raw.scenario_state()
-        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
-        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
-        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
         >>> # Dataframe objects
+        >>> per_instance_stats_df = self.per_instance_stats()
         >>> stats_df = self.stats()
         >>> spec_df = self.run_spec()
         >>> scenario_df = self.scenario_state()
+        >>> print(per_instance_stats_df)
         >>> print(stats_df)
         >>> print(spec_df)
         >>> print(scenario_df)
@@ -265,9 +284,11 @@ class HelmRun(ub.NiceRepr):
         return all(p.exists() for p in [
             # TODO: do we need to add scenario.json and per_instance_stats.json
             # What about the files from helm-summarize?
-            self.path / 'stats.json',
+            # self.path / 'per_instance_stats.json', does this always exist ???
             self.path / 'run_spec.json',
             self.path / 'scenario_state.json',
+            # self.path / 'scenario.json', does this always exist ???
+            self.path / 'stats.json',
         ])
 
     @classmethod
@@ -278,25 +299,28 @@ class HelmRun(ub.NiceRepr):
 
     # These are alternatives to functions in loaders.py
 
-    # Note: not sure how to load scenario.json with dacite, or if it matters
-
     # -- Data Frame Loaders
 
-    def stats(self) -> util_pandas.DotDictDataFrame:
-        stats_list = kwutil.Json.load(self.path / 'stats.json')
-        stats_flat = [kwutil.DotDict.from_nested(stats) for stats in stats_list]
-        flat_table = util_pandas.DotDictDataFrame(stats_flat)
-        # Add a prefix to enable joins for join keys
-        flat_table = flat_table.insert_prefix('stats')
-        # Enrich with contextual metadata (primary key for run_spec joins)
-        flat_table['run_spec.name'] = self.name
-        flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
-        return flat_table
+    def per_instance_stats(self) -> util_pandas.DotDictDataFrame:
+        """
+        Dataframe representation of :class:`PerInstanceStats`
+        """
+        instance_stats_list = kwutil.Json.load(self.path / 'per_instance_stats.json')
+        rows = []
+        for item in instance_stats_list:
+            # Each item should correspond to :class:`PerInstanceStats`
+            stats_list = item.pop('stats')
 
-    def perinstance_stats(self) -> util_pandas.DotDictDataFrame:
-        stats_list = kwutil.Json.load(self.path / 'per_instance_stats.json')
-        stats_flat = [kwutil.DotDict.from_nested(stats) for stats in stats_list]
-        flat_table = util_pandas.DotDictDataFrame(stats_flat)
+            # TODO: cook up a perturbed instance id by hashing
+            # the optional perturbation field with instance-id.
+
+            # TODO: build demodata that contains perturbations
+
+            for stats in stats_list:
+                row = kwutil.DotDict.from_nested(stats).insert_prefix('stats')
+                row.update(item)
+                rows.append(row)
+        flat_table = util_pandas.DotDictDataFrame(rows)
         # Add a prefix to enable joins for join keys
         flat_table = flat_table.insert_prefix('per_instance_stats')
         # Enrich with contextual metadata (primary key for run_spec joins)
@@ -304,7 +328,20 @@ class HelmRun(ub.NiceRepr):
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
 
+    def run_spec(self):
+        """
+        Dataframe representation of :class:`RunSpec`
+        """
+        nested = kwutil.Json.load(self.path / 'run_spec.json')
+        flat_state = kwutil.DotDict.from_nested(nested)
+        flat_state = flat_state.insert_prefix('run_spec')
+        flat_table = util_pandas.DotDictDataFrame([flat_state])
+        return flat_table
+
     def scenario_state(self):
+        """
+        Dataframe representation of :class:`ScenarioState`
+        """
         nested = kwutil.Json.load(self.path / 'scenario_state.json')
         flat_state = kwutil.DotDict.from_nested(nested)
         # Add a prefix to enable joins
@@ -315,9 +352,18 @@ class HelmRun(ub.NiceRepr):
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
 
-    def run_spec(self):
-        nested = kwutil.Json.load(self.path / 'run_spec.json')
-        flat_state = kwutil.DotDict.from_nested(nested)
-        flat_state = flat_state.insert_prefix('run_spec')
-        flat_table = util_pandas.DotDictDataFrame([flat_state])
+    def stats(self) -> util_pandas.DotDictDataFrame:
+        """
+        Dataframe representation of :class:`Stat`
+        """
+        stats_list = kwutil.Json.load(self.path / 'stats.json')
+        # TODO: it might be a good idea to hash the name fields to generate
+        # unique ids for "types" of stats.
+        stats_flat = [kwutil.DotDict.from_nested(stats) for stats in stats_list]
+        flat_table = util_pandas.DotDictDataFrame(stats_flat)
+        # Add a prefix to enable joins for join keys
+        flat_table = flat_table.insert_prefix('stats')
+        # Enrich with contextual metadata (primary key for run_spec joins)
+        flat_table['run_spec.name'] = self.name
+        flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
