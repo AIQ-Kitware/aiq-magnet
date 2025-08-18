@@ -1,36 +1,369 @@
-class HelmOutputs:
+"""
+Object oriented classes to represent, load, and explore the outputs of helm
+benchmarks.
+"""
+import ubelt as ub
+import pandas as pd
+import kwutil
+import dacite
+
+from helm.benchmark.adaptation.scenario_state import ScenarioState
+from helm.benchmark.run_spec import RunSpec
+from helm.benchmark.metrics.statistic import Stat
+from helm.benchmark.metrics.metric import PerInstanceStats
+
+
+from magnet.utils import util_pandas
+
+# monkey patch until kwutil 0.3.7
+MONKEYPATCH_KWUTIL = True
+if MONKEYPATCH_KWUTIL:
+    from kwutil import util_dotdict
+    kwutil.DotDict = util_dotdict.DotDict
+
+
+class HelmOutputs(ub.NiceRepr):
     """
     Class to represent and explore helm outputs
 
     Example:
-        >>> from magnet.helm_outputs import *  # NOQA
-        >>> self = HelmOutputs.demo()
-        >>> self.list_run_specs()
+        >>> import magnet
+        >>> self = magnet.HelmOutputs.demo()
+        >>> print(self)
+        <HelmOutputs(.../magnet/tests/helm_output/benchmark_output)>
+        >>> [s.name for s in self.suites()]
+        ['my-suite']
+        >>> self.list_run_specs(suite='*')
         ['mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
-        >>> sorted(self.list_suites())
-        ['latest', 'my-suite']
     """
 
     def __init__(self, root_dir):
         self.root_dir = root_dir
 
+    def __nice__(self):
+        return self.root_dir
+
+    def write_directory_report(self):
+        """
+        Print an exploratory summary of how much data is available.
+
+        Requires optional dependency: xdev
+        """
+        import xdev
+        dirwalker = xdev.DirectoryWalker(self.root_dir).build()
+        dirwalker.write_report(max_depth=4)
+
     @classmethod
     def demo(cls):
         import magnet
-        print(f'MODULE: magnet={magnet}')
         dpath = magnet.demo.ensure_helm_demo_outputs()
-        self = cls(dpath / 'benchmark_output')
+        root_dir = dpath / 'benchmark_output'
+        self = cls(root_dir)
         return self
 
-    def list_suites(self):
+    def suites(self, pattern='*'):
+        # Note sure if a property or method is best here
+        # could do an implicit "view" system like CocoImageView
+        # to give best of both worlds in terms of generator / lists but lets
+        # also not overcomplicate it.
+        return [HelmSuite(p) for p in self._suite_dirs(pattern)]
+
+    def _suite_dirs(self, pattern='*'):
         # not robust to extra directories being written.  is there a way to
         # determine that these directories are actually suites?
-        suite_names = [p.name for p in (self.root_dir / 'runs').glob('*') if p.is_dir()]
-        return suite_names
+        return [p for p in sorted((self.root_dir / 'runs').glob(pattern)) if p.is_dir() and p.name != 'latest']
+
+    def list_suites(self):
+        # maybe remove
+        return [p.name for p in self._suite_dirs()]
 
     def list_run_specs(self, suite='*'):
+        # maybe remove
         # not robust to extra directories being written.  is there a way to
         # determine that these directories are actually run specs?
         run_spec_names = [p.name for p in (self.root_dir / 'runs').glob(suite + '/*') if p.is_dir() if ':' in p.name]
         run_spec_names = sorted(set(run_spec_names))
         return run_spec_names
+
+
+class HelmSuite(ub.NiceRepr):
+    """
+    Represents a single suite in a set of benchmark outputs.
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmSuite.demo()
+        >>> print(self)
+        <HelmSuite(my-suite)>
+        >>> print(self.runs())
+        <HelmSuiteRuns(1)>
+    """
+    def __init__(self, path):
+        self.path = ub.Path(path)
+        self.name = self.path.name
+
+    def __nice__(self):
+        return self.name
+
+    @classmethod
+    def demo(cls):
+        self = HelmOutputs.demo().suites()[0]
+        return self
+
+    def _run_dirs(self, pattern='*'):
+        # not robust to extra directories being written.  is there a way to
+        # determine that these directories are actually run specs?
+        return [p for p in (self.path).glob(pattern) if p.is_dir() if ':' in p.name]
+
+    def runs(self, pattern='*'):
+        paths = self._run_dirs(pattern)
+        return HelmSuiteRuns(paths)
+        # return [HelmRun(p) for p in self._run_dirs(pattern)]
+
+
+class HelmSuiteRuns(ub.NiceRepr):
+    """
+    Represents multiple runs from a suite.
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmSuiteRuns.demo()
+        >>> print(self)
+        <HelmSuiteRuns(1)>
+        >>> self.per_instance_stats()
+        >>> self.run_spec()
+        >>> self.scenario_state()
+        >>> self.stats()
+    """
+    def __init__(self, paths):
+        self.paths = paths
+
+    def __len__(self):
+        return len(self.paths)
+
+    def existing(self):
+        """
+        Filter to only existing runs
+        """
+        return self.__class__([
+            p for p in self.paths
+            if all(p.exists() for p in [
+                p / 'stats.json',
+                p / 'run_spec.json',
+                p / 'scenario_state.json',
+            ])
+        ])
+
+    @classmethod
+    def demo(cls):
+        self = HelmOutputs.demo().suites()[0].runs()
+        return self
+
+    def __getitem__(self, index):
+        if isinstance(index, slice):
+            return [HelmRun(p) for p in self.paths[index]]
+        else:
+            return HelmRun(self.paths[index])
+
+    def per_instance_stats(self):
+        # Could likely be quite a bit more efficient here
+        table = pd.concat([r.per_instance_stats() for r in self[:]], axis=0)
+        return table
+
+    def run_spec(self):
+        # Could likely be quite a bit more efficient here
+        table = pd.concat([r.run_spec() for r in self[:]], axis=0)
+        return table
+
+    def scenario_state(self):
+        # Could likely be quite a bit more efficient here
+        table = pd.concat([r.scenario_state() for r in self[:]], axis=0)
+        return table
+
+    def stats(self):
+        # Could likely be quite a bit more efficient here
+        table = pd.concat([r.stats() for r in self[:]], axis=0)
+        return table
+
+
+class _RawHelmRun:
+    """
+    Helper to provide access to raw HELM data structures.
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo()
+        >>> # Raw HELM objects
+        >>> per_instance_stats = self.raw.per_instance_stats()
+        >>> stats = self.raw.stats()
+        >>> spec = self.raw.run_spec()
+        >>> scenario_state = self.raw.scenario_state()
+        >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
+        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
+        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
+    """
+    def __init__(self, path):
+        self.path = ub.Path(path)
+
+    # Note: not sure how to load scenario.json with dacite, or if it matters
+
+    def per_instance_stats(self) -> list[PerInstanceStats]:
+        nested_items = kwutil.Json.load(self.path / 'per_instance_stats.json')
+        items = [dacite.from_dict(PerInstanceStats, item) for item in nested_items]
+        return items
+
+    def run_spec(self) -> RunSpec:
+        nested = kwutil.Json.load(self.path / 'run_spec.json')
+        run_spec = dacite.from_dict(RunSpec, nested)
+        return run_spec
+
+    def scenario_state(self) -> ScenarioState:
+        nested = kwutil.Json.load(self.path / 'scenario_state.json')
+        state = dacite.from_dict(ScenarioState, nested)
+        return state
+
+    def stats(self) -> list[Stat]:
+        stats_list = kwutil.Json.load(self.path / 'stats.json')
+        stats = [dacite.from_dict(Stat, json_stat) for json_stat in stats_list]
+        return stats
+
+
+class HelmRun(ub.NiceRepr):
+    """
+    Represents a single run in a suite.
+
+    This provides output to postprocessed dataframe representations of HELM
+    objects. For access to raw HELM objects, use the ``raw`` attribute.
+
+    Note:
+        The following is a list of json files that are in a helm run directory.
+
+        Output files from helm-run:
+            * per_instance_stats.json,
+            * run_spec.json,
+            * scenario.json,
+            * scenario_state.json,
+            * stats.json,
+
+        Output files from helm-summarize:
+            * display_predictions.json,
+            * display_requests.json,
+            * instances.json,
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo()
+        >>> print(self)
+        <HelmRun(mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2)>
+        >>> # Dataframe objects
+        >>> per_instance_stats_df = self.per_instance_stats()
+        >>> stats_df = self.stats()
+        >>> spec_df = self.run_spec()
+        >>> scenario_df = self.scenario_state()
+        >>> print(per_instance_stats_df)
+        >>> print(stats_df)
+        >>> print(spec_df)
+        >>> print(scenario_df)
+    """
+    def __init__(self, path):
+        self.path = ub.Path(path)
+        self.name = self.path.name
+
+    @property
+    def raw(self):
+        """
+        Access raw data structures
+        """
+        return _RawHelmRun(self.path)
+
+    def __nice__(self):
+        return self.name
+
+    def exists(self):
+        return all(p.exists() for p in [
+            # TODO: do we need to add scenario.json and per_instance_stats.json
+            # What about the files from helm-summarize?
+            # self.path / 'per_instance_stats.json', does this always exist ???
+            self.path / 'run_spec.json',
+            self.path / 'scenario_state.json',
+            # self.path / 'scenario.json', does this always exist ???
+            self.path / 'stats.json',
+        ])
+
+    @classmethod
+    def demo(cls):
+        suite = HelmOutputs.demo().suites()[0]
+        self = suite.runs()[0]
+        return self
+
+    # These are alternatives to functions in loaders.py
+
+    # -- Data Frame Loaders
+
+    def per_instance_stats(self) -> util_pandas.DotDictDataFrame:
+        """
+        Dataframe representation of :class:`PerInstanceStats`
+        """
+        instance_stats_list = kwutil.Json.load(self.path / 'per_instance_stats.json')
+        rows = []
+        for item in instance_stats_list:
+            # Each item should correspond to :class:`PerInstanceStats`
+            stats_list = item.pop('stats')
+
+            # TODO: cook up a perturbed instance id by hashing
+            # the optional perturbation field with instance-id.
+
+            # TODO: build demodata that contains perturbations
+
+            for stats in stats_list:
+                row = kwutil.DotDict.from_nested(stats).insert_prefix('stats')
+                row.update(item)
+                rows.append(row)
+        flat_table = util_pandas.DotDictDataFrame(rows)
+        # Add a prefix to enable joins for join keys
+        flat_table = flat_table.insert_prefix('per_instance_stats')
+        # Enrich with contextual metadata (primary key for run_spec joins)
+        flat_table['run_spec.name'] = self.name
+        flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
+        return flat_table
+
+    def run_spec(self):
+        """
+        Dataframe representation of :class:`RunSpec`
+        """
+        nested = kwutil.Json.load(self.path / 'run_spec.json')
+        flat_state = kwutil.DotDict.from_nested(nested)
+        flat_state = flat_state.insert_prefix('run_spec')
+        flat_table = util_pandas.DotDictDataFrame([flat_state])
+        return flat_table
+
+    def scenario_state(self):
+        """
+        Dataframe representation of :class:`ScenarioState`
+        """
+        nested = kwutil.Json.load(self.path / 'scenario_state.json')
+        flat_state = kwutil.DotDict.from_nested(nested)
+        # Add a prefix to enable joins
+        flat_state = flat_state.insert_prefix('scenario_state')
+        flat_table = util_pandas.DotDictDataFrame([flat_state])
+        # Enrich with contextual metadata for join keys (primary key for run_spec joins)
+        flat_table['run_spec.name'] = self.name
+        flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
+        return flat_table
+
+    def stats(self) -> util_pandas.DotDictDataFrame:
+        """
+        Dataframe representation of :class:`Stat`
+        """
+        stats_list = kwutil.Json.load(self.path / 'stats.json')
+        # TODO: it might be a good idea to hash the name fields to generate
+        # unique ids for "types" of stats.
+        stats_flat = [kwutil.DotDict.from_nested(stats) for stats in stats_list]
+        flat_table = util_pandas.DotDictDataFrame(stats_flat)
+        # Add a prefix to enable joins for join keys
+        flat_table = flat_table.insert_prefix('stats')
+        # Enrich with contextual metadata (primary key for run_spec joins)
+        flat_table['run_spec.name'] = self.name
+        flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
+        return flat_table
