@@ -4,12 +4,15 @@ import random
 from typing import List
 
 from helm.benchmark.metrics.statistic import Stat
+import ubelt as ub
+import pandas as pd
 
 from magnet.loaders import (
     load_run_spec,
     load_all_run_specs_as_dataframe,
     load_all_scenario_states_as_dataframe,
     load_all_stats_as_dataframe)
+from magnet import HelmOutputs
 
 
 class Predictor:
@@ -35,46 +38,6 @@ class Predictor:
         # dataframe row, both will be applied
         return True
 
-    def run_spec_dataframe_fields(self):
-        # The "name" field is required, and will be added if not
-        # specified
-        return [
-            "name",
-            "adapter_spec.model",
-            "adapter_spec",
-            "metric_specs",
-            "data_augmenter_spec",
-            "groups",
-        ]
-
-    def scenario_state_dataframe_fields(self):
-        return [
-            "instance.input.text",
-            "instance.id",
-            "instance.split",
-            "train_trial_index",
-            "result.completions.0.text",
-            "result.completions",
-            "instance",
-            "request",
-            "result",
-        ]
-
-    def stats_dataframe_fields(self):
-        return [
-            "name.name",
-            "name.split",
-            "name",
-            "count",
-            "sum",
-            "sum_squared",
-            "min",
-            "max",
-            "mean",
-            "variance",
-            "stddev",
-        ]
-
     def predict(self,
                 train_run_specs_df,
                 train_scenario_states_df,
@@ -87,60 +50,53 @@ class Predictor:
         if self.random_seed is not None:
             random.seed(self.random_seed)
 
-        selected_run_specs = []
-        for run_spec_fp in glob(os.path.join(root_dir, 'runs', suite, '*', 'run_spec.json')):
-            run_spec = load_run_spec(run_spec_fp)
+        outputs = HelmOutputs(ub.Path(root_dir))
+        suites_output = outputs.suites(suite)
+        assert len(suites_output) == 1
+        suite_output = suites_output[0]
 
-            if self.run_spec_filter(run_spec):
-                selected_run_specs.append(run_spec)
+        selected_runs = []
+        for run in suite_output.runs():
+            if self.run_spec_filter(run.raw.run_spec()):
+                selected_runs.append(run)
 
-        selected_run_specs_df = load_all_run_specs_as_dataframe(
-            suite,
-            [r.name for r in selected_run_specs],
-            self.run_spec_dataframe_fields(),
-            root_dir=root_dir)
+        selected_run_specs_df = pd.concat([r.run_spec() for r in selected_runs])
 
         selected_run_specs_df = selected_run_specs_df[selected_run_specs_df.apply(
             self.run_spec_dataframe_filter, axis=1)]
 
-        selected_run_specs_names = list(selected_run_specs_df['name'])
+        selected_run_specs_names = list(selected_run_specs_df['run_spec.name'])
 
         *train_runs, eval_run = random.sample(
             selected_run_specs_names, self.num_example_runs + 1)
 
         train_run_specs_df = selected_run_specs_df[
-            selected_run_specs_df['name'].isin(train_runs)]
+            selected_run_specs_df['run_spec.name'].isin(train_runs)]
 
         eval_run_specs_df = selected_run_specs_df[
-            selected_run_specs_df['name'] == eval_run]
+            selected_run_specs_df['run_spec.name'] == eval_run]
 
-        train_scenario_states_df = load_all_scenario_states_as_dataframe(
-            suite,
-            train_runs,
-            self.scenario_state_dataframe_fields(),
-            root_dir=root_dir)
+        train_request_states_df = pd.concat([
+            r.request_states() for r in selected_runs
+            if r.raw.run_spec().name in train_runs])
 
-        train_stats_df = load_all_stats_as_dataframe(
-            suite,
-            train_runs,
-            self.stats_dataframe_fields(),
-            root_dir=root_dir)
+        train_stats_df = pd.concat([
+            r.stats() for r in selected_runs
+            if r.raw.run_spec().name in train_runs])
 
-        _full_eval_scenario_states_df = load_all_scenario_states_as_dataframe(
-            suite,
-            [eval_run],
-            self.scenario_state_dataframe_fields(),
-            root_dir=root_dir)
+        _full_eval_request_states_df = pd.concat([
+            r.request_states() for r in selected_runs
+            if r.raw.run_spec().name == eval_run])
 
         random_eval_indices = random.sample(
-            range(len(_full_eval_scenario_states_df)), self.num_eval_samples)
-        eval_scenario_states_df = _full_eval_scenario_states_df.iloc[random_eval_indices]
+            range(len(_full_eval_request_states_df)), self.num_eval_samples)
+        eval_request_states_df = _full_eval_request_states_df.iloc[random_eval_indices]
 
         predicted_stats = self.predict(train_run_specs_df,
-                                       train_scenario_states_df,
+                                       train_request_states_df,
                                        train_stats_df,
                                        eval_run_specs_df,
-                                       eval_scenario_states_df)
+                                       eval_request_states_df)
 
         # TODO: Do something meaningful with the predictions
         print(predicted_stats)

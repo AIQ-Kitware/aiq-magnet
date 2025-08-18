@@ -352,6 +352,21 @@ class HelmRun(ub.NiceRepr):
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
 
+    def request_states(self):
+        """
+        Dataframe representation of :class:`RequestState`
+        """
+        nested = kwutil.Json.load(self.path / 'scenario_state.json')
+        flat_state = [kwutil.DotDict.from_nested(request_state)
+                      for request_state in nested['request_states']]
+        flat_table = util_pandas.DotDictDataFrame(flat_state)
+        # Add a prefix to enable joins
+        flat_table = flat_table.insert_prefix('request_states')
+        # Enrich with contextual metadata for join keys (primary key for run_spec joins)
+        flat_table['run_spec.name'] = self.name
+        flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
+        return flat_table
+
     def stats(self) -> util_pandas.DotDictDataFrame:
         """
         Dataframe representation of :class:`Stat`
