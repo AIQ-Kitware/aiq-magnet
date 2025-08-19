@@ -34,7 +34,7 @@ class HelmOutputs(ub.NiceRepr):
         >>> [s.name for s in self.suites()]
         ['my-suite']
         >>> self.list_run_specs(suite='*')
-        ['mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
+        ['mmlu:subject=history,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0', 'mmlu:subject=history,method=multiple_choice_joint,model=openai_gpt2', 'mmlu:subject=philosophy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0', 'mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
     """
 
     def __init__(self, root_dir):
@@ -96,7 +96,7 @@ class HelmSuite(ub.NiceRepr):
         >>> print(self)
         <HelmSuite(my-suite)>
         >>> print(self.runs())
-        <HelmSuiteRuns(1)>
+        <HelmSuiteRuns(4)>
     """
     def __init__(self, path):
         self.path = ub.Path(path)
@@ -129,7 +129,7 @@ class HelmSuiteRuns(ub.NiceRepr):
         >>> from magnet.helm_outputs import *
         >>> self = HelmSuiteRuns.demo()
         >>> print(self)
-        <HelmSuiteRuns(1)>
+        <HelmSuiteRuns(4)>
         >>> self.per_instance_stats()
         >>> self.run_spec()
         >>> self.scenario_state()
@@ -255,7 +255,7 @@ class HelmRun(ub.NiceRepr):
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo()
         >>> print(self)
-        <HelmRun(mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2)>
+        <HelmRun(mmlu:subject=history,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0)>
         >>> # Dataframe objects
         >>> per_instance_stats_df = self.per_instance_stats()
         >>> stats_df = self.stats()
