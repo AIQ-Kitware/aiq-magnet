@@ -47,22 +47,26 @@ class ExamplePerturbatioPredictor(Predictor):
         predicted_stats = []
 
         perturbed_exact_match_stats_df = train_stats_df[
-            (train_stats_df['name.name'] == 'exact_match') &
-            (train_stats_df['name.perturbation.name'] == "misspellings") &
-            (train_stats_df['name.perturbation.computed_on'] == "perturbed")]
+            (train_stats_df['stats.name.name'] == 'exact_match') &
+            (train_stats_df['stats.name.perturbation.name'] == "misspellings") &
+            (train_stats_df['stats.name.perturbation.computed_on'] == "perturbed")]
 
         train_run_spec_and_stats_df = pd.merge(
             train_run_specs_df, perturbed_exact_match_stats_df,
-            left_on='name', right_on='run_spec.name')
+            left_on='run_spec.name', right_on='run_spec.name')
 
         # Create simple linear model for strength of perturbation to
         # exact_match performance
         model = LinearRegression()
-        model.fit(train_run_spec_and_stats_df['data_augmenter_spec.perturbation_specs.0.args.prob'].values.reshape(-1, 1),
-                  train_run_spec_and_stats_df['mean'].values.reshape(-1, 1))
+        model.fit(train_run_spec_and_stats_df['stats.name.perturbation.prob'].values.reshape(-1, 1),
+                  train_run_spec_and_stats_df['stats.mean'].values.reshape(-1, 1))
 
         for _, row in eval_run_specs_df.iterrows():
-            misspelling_perturbation_prob = row['data_augmenter_spec.perturbation_specs.0.args.prob']
+            perturbations = row['run_spec.data_augmenter_spec.perturbation_specs']
+
+            assert len(perturbations) > 0
+            misspelling_perturbation_prob = perturbations[0]['args']['prob']
+
             prediction = model.predict([[misspelling_perturbation_prob]])
             # `model.predict` outputs a 2d numpy array, need to unpack the single value
             prediction = prediction[0][0]
