@@ -17,7 +17,6 @@ class ExampleRandomPredictor(Predictor):
         >>> root_dir = outputs.root_dir
         >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
         >>> predictor_instance(root_dir, suite)
-        [{'name': 'predicted_exact_match', 'split': 'valid'}[min=0.12, mean=0.12, max=0.12, sum=0.12 (1)]]
     """
     def predict(self,
                 train_run_specs_df,
