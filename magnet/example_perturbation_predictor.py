@@ -8,36 +8,6 @@ import pandas as pd
 from magnet.predictor import Predictor
 
 class ExamplePerturbatioPredictor(Predictor):
-    def run_spec_dataframe_fields(self):
-        # The "name" field is required, and will be added if not
-        # specified
-        return [
-            "name",
-            "adapter_spec.model",
-            "data_augmenter_spec.perturbation_specs.0.args.prob",
-            "adapter_spec",
-            "metric_specs",
-            "data_augmenter_spec",
-            "groups",
-        ]
-
-    def stats_dataframe_fields(self):
-        return [
-            "name.name",
-            "name.split",
-            "name.perturbation.name",
-            "name.perturbation.computed_on",
-            "name",
-            "count",
-            "sum",
-            "sum_squared",
-            "min",
-            "max",
-            "mean",
-            "variance",
-            "stddev",
-        ]
-
     def predict(self,
                 train_run_specs_df,
                 train_scenario_states_df,
