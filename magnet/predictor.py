@@ -1,17 +1,10 @@
-import os
-from glob import glob
-import random
 from typing import List
 
 from helm.benchmark.metrics.statistic import Stat
 import ubelt as ub
 import pandas as pd
+import kwarray
 
-from magnet.loaders import (
-    load_run_spec,
-    load_all_run_specs_as_dataframe,
-    load_all_scenario_states_as_dataframe,
-    load_all_stats_as_dataframe)
 from magnet import HelmOutputs
 
 
@@ -47,8 +40,7 @@ class Predictor:
         raise NotImplementedError
 
     def __call__(self, root_dir, suite):
-        if self.random_seed is not None:
-            random.seed(self.random_seed)
+        random = kwarray.ensure_rng(self.random_seed, api='python')
 
         outputs = HelmOutputs(ub.Path(root_dir))
         suites_output = outputs.suites(suite)
@@ -76,27 +68,25 @@ class Predictor:
         eval_run_specs_df = selected_run_specs_df[
             selected_run_specs_df['run_spec.name'] == eval_run]
 
-        train_request_states_df = pd.concat([
-            r.request_states() for r in selected_runs
-            if r.raw.run_spec().name in train_runs])
+        _all_stats_df = pd.concat([r.stats() for r in selected_runs])
+        train_stats_df = _all_stats_df[_all_stats_df['run_spec.name'].isin(train_runs)]
 
-        train_stats_df = pd.concat([
-            r.stats() for r in selected_runs
-            if r.raw.run_spec().name in train_runs])
+        _all_scenario_state_df = pd.concat([r.scenario_state() for r in selected_runs])
+        train_scenario_state_df = _all_scenario_state_df[_all_scenario_state_df['run_spec.name'].isin(train_runs)]
+        _full_eval_scenario_state_df = _all_scenario_state_df[_all_scenario_state_df['run_spec.name'] == eval_run]
 
-        _full_eval_request_states_df = pd.concat([
-            r.request_states() for r in selected_runs
-            if r.raw.run_spec().name == eval_run])
+        if self.num_eval_samples > len(_full_eval_scenario_state_df):
+            raise RuntimeError("Not enough rows in eval scenario_state to sample")
 
         random_eval_indices = random.sample(
-            range(len(_full_eval_request_states_df)), self.num_eval_samples)
-        eval_request_states_df = _full_eval_request_states_df.iloc[random_eval_indices]
+            range(len(_full_eval_scenario_state_df)), min(len(_full_eval_scenario_state_df), self.num_eval_samples))
+        eval_scenario_state_df = _full_eval_scenario_state_df.iloc[random_eval_indices]
 
         predicted_stats = self.predict(train_run_specs_df,
-                                       train_request_states_df,
+                                       train_scenario_state_df,
                                        train_stats_df,
                                        eval_run_specs_df,
-                                       eval_request_states_df)
+                                       eval_scenario_state_df)
 
         # TODO: Do something meaningful with the predictions
         print(predicted_stats)

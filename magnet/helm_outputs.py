@@ -342,27 +342,19 @@ class HelmRun(ub.NiceRepr):
         """
         Dataframe representation of :class:`ScenarioState`
         """
-        nested = kwutil.Json.load(self.path / 'scenario_state.json')
-        flat_state = kwutil.DotDict.from_nested(nested)
-        # Add a prefix to enable joins
-        flat_state = flat_state.insert_prefix('scenario_state')
-        flat_table = util_pandas.DotDictDataFrame([flat_state])
-        # Enrich with contextual metadata for join keys (primary key for run_spec joins)
-        flat_table['run_spec.name'] = self.name
-        flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
-        return flat_table
-
-    def request_states(self):
-        """
-        Dataframe representation of :class:`RequestState`
-        """
-        nested = kwutil.Json.load(self.path / 'scenario_state.json')
-        flat_state = [kwutil.DotDict.from_nested(request_state)
-                      for request_state in nested['request_states']]
-        flat_table = util_pandas.DotDictDataFrame(flat_state)
-        # Add a prefix to enable joins
-        flat_table = flat_table.insert_prefix('request_states')
-        # Enrich with contextual metadata for join keys (primary key for run_spec joins)
+        top_level = kwutil.Json.load(self.path / 'scenario_state.json')
+        request_states = top_level.pop('request_states')
+        flat_top_level = kwutil.DotDict.from_nested(top_level)
+        rows = []
+        for item in request_states:
+            row = kwutil.DotDict.from_nested(item)
+            row = row.insert_prefix('request_states')
+            row.update(flat_top_level)
+            rows.append(row)
+        flat_table = util_pandas.DotDictDataFrame(rows)
+        # Add a prefix to enable joins for join keys
+        flat_table = flat_table.insert_prefix('scenario_state')
+        # Enrich with contextual metadata (primary key for run_spec joins)
         flat_table['run_spec.name'] = self.name
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table

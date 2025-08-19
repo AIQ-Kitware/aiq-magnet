@@ -28,7 +28,6 @@ dependencies = [
     "kwarray>=0.7.1",
     "kwutil>=0.3.6",
     "pygtrie>=2.5.0",
-    "xdev>=1.5.4",
 ]
 
 [project.optional-dependencies]
