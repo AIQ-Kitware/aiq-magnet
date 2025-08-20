@@ -7,15 +7,26 @@ from helm.benchmark.metrics.statistic import Stat
 from magnet.predictor import Predictor
 
 class ExampleRandomPredictor(Predictor):
+    """
+    Class to demonstrate a random stat prediction algorithm
+
+    Example:
+        >>> import magnet
+        >>> outputs = magnet.HelmOutputs.demo()
+        >>> suite = outputs.suites()[0].name
+        >>> root_dir = outputs.root_dir
+        >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
+        >>> predictor_instance(root_dir, suite)
+    """
     def predict(self,
                 train_run_specs_df,
-                train_scenario_states_df,
+                train_scenario_state_df,
                 train_stats_df,
                 eval_run_specs_df,
-                eval_scenario_states_df) -> List[Stat]:
+                eval_scenario_state_df) -> List[Stat]:
         predicted_stats = []
 
-        for run_spec in eval_scenario_states_df.groupby(['run_spec.name']):
+        for run_spec in eval_scenario_state_df.groupby(['run_spec.name']):
             prediction = (random.choice(range(0,101)) / 100)
             predicted_stats.append(
                 Stat(**{'name':

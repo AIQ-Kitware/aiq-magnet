@@ -34,7 +34,7 @@ class HelmOutputs(ub.NiceRepr):
         >>> [s.name for s in self.suites()]
         ['my-suite']
         >>> self.list_run_specs(suite='*')
-        ['mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
+        ['mmlu:subject=history,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0', 'mmlu:subject=history,method=multiple_choice_joint,model=openai_gpt2', 'mmlu:subject=philosophy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0', 'mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
     """
 
     def __init__(self, root_dir):
@@ -96,7 +96,7 @@ class HelmSuite(ub.NiceRepr):
         >>> print(self)
         <HelmSuite(my-suite)>
         >>> print(self.runs())
-        <HelmSuiteRuns(1)>
+        <HelmSuiteRuns(4)>
     """
     def __init__(self, path):
         self.path = ub.Path(path)
@@ -129,7 +129,7 @@ class HelmSuiteRuns(ub.NiceRepr):
         >>> from magnet.helm_outputs import *
         >>> self = HelmSuiteRuns.demo()
         >>> print(self)
-        <HelmSuiteRuns(1)>
+        <HelmSuiteRuns(4)>
         >>> self.per_instance_stats()
         >>> self.run_spec()
         >>> self.scenario_state()
@@ -255,7 +255,7 @@ class HelmRun(ub.NiceRepr):
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo()
         >>> print(self)
-        <HelmRun(mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2)>
+        <HelmRun(mmlu:subject=history,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0)>
         >>> # Dataframe objects
         >>> per_instance_stats_df = self.per_instance_stats()
         >>> stats_df = self.stats()
@@ -342,12 +342,19 @@ class HelmRun(ub.NiceRepr):
         """
         Dataframe representation of :class:`ScenarioState`
         """
-        nested = kwutil.Json.load(self.path / 'scenario_state.json')
-        flat_state = kwutil.DotDict.from_nested(nested)
-        # Add a prefix to enable joins
-        flat_state = flat_state.insert_prefix('scenario_state')
-        flat_table = util_pandas.DotDictDataFrame([flat_state])
-        # Enrich with contextual metadata for join keys (primary key for run_spec joins)
+        top_level = kwutil.Json.load(self.path / 'scenario_state.json')
+        request_states = top_level.pop('request_states')
+        flat_top_level = kwutil.DotDict.from_nested(top_level)
+        rows = []
+        for item in request_states:
+            row = kwutil.DotDict.from_nested(item)
+            row = row.insert_prefix('request_states')
+            row.update(flat_top_level)
+            rows.append(row)
+        flat_table = util_pandas.DotDictDataFrame(rows)
+        # Add a prefix to enable joins for join keys
+        flat_table = flat_table.insert_prefix('scenario_state')
+        # Enrich with contextual metadata (primary key for run_spec joins)
         flat_table['run_spec.name'] = self.name
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
