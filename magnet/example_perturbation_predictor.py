@@ -7,7 +7,19 @@ import pandas as pd
 
 from magnet.predictor import Predictor
 
-class ExamplePerturbatioPredictor(Predictor):
+class ExamplePerturbationPredictor(Predictor):
+    """
+    Class to demonstrate a stat prediction algorithm based on strength of perturbation
+
+    Example:
+        >>> import magnet
+        >>> outputs = magnet.HelmOutputs.demo(run_entries=["boolq:data_augmentation=misspelling_sweep,model=openai/gpt2"], max_eval_instances=20)
+        >>> suite = outputs.suites()[0].name
+        >>> root_dir = outputs.root_dir
+        >>> predictor_instance = ExamplePerturbationPredictor(num_eval_samples=5)
+        >>> predictor_instance(root_dir, suite)
+    """
+
     def predict(self,
                 train_run_specs_df,
                 train_scenario_states_df,
@@ -77,5 +89,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    predictor_instance = ExamplePerturbatioPredictor()
+    predictor_instance = ExamplePerturbationPredictor()
     predictor_instance(args.root_dir, args.suite)
