@@ -28,6 +28,7 @@ dependencies = [
     "kwarray>=0.7.1",
     "kwutil>=0.3.6",
     "pygtrie>=2.5.0",
+    "scriptconfig>=0.8.2",
 ]
 
 [project.optional-dependencies]

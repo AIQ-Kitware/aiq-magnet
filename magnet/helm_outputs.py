@@ -29,8 +29,6 @@ class HelmOutputs(ub.NiceRepr):
     Example:
         >>> import magnet
         >>> self = magnet.HelmOutputs.demo()
-        >>> print(self)
-        <HelmOutputs(.../magnet/tests/helm_output/benchmark_output)>
         >>> [s.name for s in self.suites()]
         ['my-suite']
         >>> self.list_run_specs(suite='*')
@@ -54,9 +52,9 @@ class HelmOutputs(ub.NiceRepr):
         dirwalker.write_report(max_depth=4)
 
     @classmethod
-    def demo(cls):
+    def demo(cls, **kwargs):
         import magnet
-        dpath = magnet.demo.ensure_helm_demo_outputs()
+        dpath = magnet.demo.ensure_helm_demo_outputs(**kwargs)
         root_dir = dpath / 'benchmark_output'
         self = cls(root_dir)
         return self
