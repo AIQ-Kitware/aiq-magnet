@@ -68,11 +68,9 @@ class HelmOutputs(ub.NiceRepr):
         >>> import magnet
         >>> self = magnet.HelmOutputs.demo()
         >>> self.write_directory_report()  # xdoctest: +IGNORE_WANT
-        ╙── .../magnet/tests/helm_output/5be22292db3f/benchmark_output: lock.size=0.00 KB,lock.files=1,txt.size=10.08 KB,txt.files=2,csv.size=158.33
-        MB,csv.files=179,.size=4.00 KB,.files=1,json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
-            ├─╼ scenarios: lock.size=0.00 KB,lock.files=1,txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
-            │   └─╼ mmlu: lock.size=0.00 KB,lock.files=1,txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
-            │       ├─╼ data.lock: size=0.00 KB
+        ╙── .../magnet/tests/helm_output/5be22292db3f/benchmark_output: txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179,.size=4.00 KB,.files=1,json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
+            ├─╼ scenarios: txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
+            │   └─╼ mmlu: txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
             │       └─╼ data: txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
             │           └─╼  ...
             ├─╼ scenario_instances
@@ -80,16 +78,14 @@ class HelmOutputs(ub.NiceRepr):
                 ├─╼ latest -> my-suite: size=4.00 KB
                 └─╼ my-suite: json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
                     ├─╼ runs_to_run_suites.json: size=0.36 KB
-                    ├─╼ schema.json: size=162.30 KB
         ...
            files       size                name
-        0    182  158.34 MB           scenarios
+        0    181  158.34 MB           scenarios
         1      0    0.00 KB  scenario_instances
         2    131    2.65 MB                runs
         ...
         kind    files       size
         ext
-        lock        1    0.00 KB
         *null*      1    4.00 KB
         txt         2   10.08 KB
         tex        42   13.11 KB
@@ -97,7 +93,7 @@ class HelmOutputs(ub.NiceRepr):
         csv       179  158.33 MB
         kind     files       size
         ext
-        ∑ total    313  160.99 MB
+        ∑ total    312  160.99 MB
         ...
     """
 
@@ -114,7 +110,8 @@ class HelmOutputs(ub.NiceRepr):
         Requires optional dependency: xdev
         """
         import xdev
-        dirwalker = xdev.DirectoryWalker(self.root_dir).build()
+        dirwalker = xdev.DirectoryWalker(self.root_dir,
+                                         exclude_fnames=['lock', '*.lock']).build()
         dirwalker.write_report(max_depth=4)
 
     def summarize(self):
