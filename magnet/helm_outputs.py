@@ -15,8 +15,15 @@ from helm.benchmark.metrics.metric import PerInstanceStats
 from typing import Generator
 
 from magnet.utils import util_pandas
+from magnet.utils import util_msgspec
 from magnet.utils.util_iterable import add_length_hint
 from functools import cached_property
+
+# Pre-register msgspec structure variants of the HELM dataclass types
+ScenarioStateStruct = util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState)
+RunSpecStruct = util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
+StatStruct = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
+PerInstanceStatsStruct = util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
 
 # monkey patch until kwutil 0.3.7
 MONKEYPATCH_KWUTIL = True
@@ -448,20 +455,6 @@ class _HelmRunDataclassView:
         return stats
 
 
-def _prepare_registry():
-    from magnet.utils import util_msgspec
-    from helm.benchmark.adaptation.scenario_state import ScenarioState
-    from helm.benchmark.run_spec import RunSpec
-    from helm.benchmark.metrics.statistic import Stat
-    from helm.benchmark.metrics.metric import PerInstanceStats
-    util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState)
-    util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
-    util_msgspec.MSGSPEC_REGISTRY.register(Stat)
-    util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
-
-_prepare_registry()
-
-
 class _HelmRunMsgspecView:
     """
     Helper to provide access to raw HELM data structures.
@@ -482,27 +475,23 @@ class _HelmRunMsgspecView:
     def __init__(self, parent):
         self.parent = parent
 
-    def per_instance_stats(self) -> list:
+    def per_instance_stats(self) -> list[PerInstanceStatsStruct]:
         """
         per_instance_stats.json contains a serialized list of PerInstanceStats,
         which contains the statistics produced for the metrics for each
         instance (i.e. input).
         """
-        from magnet.utils import util_msgspec
-        cls = util_msgspec.MSGSPEC_REGISTRY.cache[PerInstanceStats]
         data = (self.parent.path / 'per_instance_stats.json').read_bytes()
-        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[cls])
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[PerInstanceStatsStruct])
         return obj
 
-    def run_spec(self) -> object:
+    def run_spec(self) -> RunSpecStruct:
         """
         run_spec.json contains the RunSpec, which specifies the scenario,
         adapter and metrics for the run.
         """
-        from magnet.utils import util_msgspec
-        cls = util_msgspec.MSGSPEC_REGISTRY.cache[RunSpec]
         data = (self.parent.path / 'run_spec.json').read_bytes()
-        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, cls)
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, RunSpecStruct)
         return obj
 
     def scenario(self):
@@ -518,27 +507,24 @@ class _HelmRunMsgspecView:
             helm.benchmark.scenarios.scenario.Scenario from the json file.
             '''))
 
-    def scenario_state(self) -> ScenarioState:
+    def scenario_state(self) -> ScenarioStateStruct:
         """
         scenario_state.json contains a serialized ScenarioState, which contains
         every request to and response from the model.
         """
         from magnet.utils import util_msgspec
-        cls = util_msgspec.MSGSPEC_REGISTRY.cache[ScenarioState]
         data = (self.parent.path / 'scenario_state.json').read_bytes()
-        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, cls)
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, ScenarioStateStruct)
         return obj
 
-    def stats(self) -> list:
+    def stats(self) -> list[StatStruct]:
         """
         stats.json contains a serialized list of PerInstanceStats, which
         contains the statistics produced for the metrics, aggregated across all
         instances (i.e. inputs).
         """
-        from magnet.utils import util_msgspec
-        cls = util_msgspec.MSGSPEC_REGISTRY.cache[Stat]
         data = (self.parent.path / 'stats.json').read_bytes()
-        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[cls])
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[StatStruct])
         return obj
 
 
