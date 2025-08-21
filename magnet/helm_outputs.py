@@ -332,7 +332,7 @@ class _HelmRunJsonView:
         """
         return kwutil.Json.load(self.parent.path / 'scenario_state.json', backend=self.backend)
 
-    def stats(self) -> dict:
+    def stats(self) -> list[dict]:
         """
         Example:
             >>> from magnet.helm_outputs import *
