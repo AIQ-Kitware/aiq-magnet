@@ -20,7 +20,7 @@ from magnet.utils.util_iterable import add_length_hint
 from functools import cached_property
 
 # Pre-register msgspec structure variants of the HELM dataclass types
-ScenarioStateStruct = util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState)
+ScenarioStateStruct = util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState, dict=True)
 RunSpecStruct = util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
 StatStruct = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
 PerInstanceStatsStruct = util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
@@ -295,6 +295,8 @@ class _HelmRunJsonView:
 
     def per_instance_stats(self) -> list[dict]:
         """
+        A json view for a list of :class:`PerInstanceStats` objects
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -304,6 +306,8 @@ class _HelmRunJsonView:
 
     def run_spec(self) -> dict:
         """
+        A json view of :class:`RunSpec` objects
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -313,6 +317,8 @@ class _HelmRunJsonView:
 
     def scenario(self) -> dict:
         """
+        A json view of a :class:`Scenario` object
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -322,6 +328,8 @@ class _HelmRunJsonView:
 
     def scenario_state(self) -> dict:
         """
+        A json view of a :class:`ScenarioState` object
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -331,6 +339,8 @@ class _HelmRunJsonView:
 
     def stats(self) -> list[dict]:
         """
+        A json view of a :class:`Stat` object
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -508,10 +518,28 @@ class _HelmRunMsgspecView:
         """
         scenario_state.json contains a serialized ScenarioState, which contains
         every request to and response from the model.
+
+        FIXME:
+            ScenarioState has a __post_init__
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> run = HelmRun.demo()
+            >>> self = run.msgspec
+            >>> state1 = self.scenario_state()
+            >>> state2 = run.dataclass.scenario_state()
+            >>> dir(state1)
+            >>> dir(state2)
+            ScenarioState.__post_init__(state1)
+            ScenarioState.__post_init__(state1)
+            from helm.benchmark.scenarios.scenario import Instance
+            util_msgspec.MSGSPEC_REGISTRY[Instance]
+            ...
         """
         from magnet.utils import util_msgspec
         data = (self.parent.path / 'scenario_state.json').read_bytes()
         obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, ScenarioStateStruct)
+        ScenarioState.__post_init__(obj)  # Hack
         return obj
 
     def stats(self) -> list[StatStruct]:

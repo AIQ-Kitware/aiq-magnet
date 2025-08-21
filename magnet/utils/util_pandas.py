@@ -223,7 +223,8 @@ class DataFrame(pd.DataFrame):
         found = [c for c in self.columns if pat.search(c)]
         return found
 
-    def varied_values(self, **kwargs):
+    def varied_values(self, min_variations=0, max_variations=None,
+                      default=ub.NoParam, dropna=False, on_error='raise'):
         """
         Summarize how which values are varied within each column
 
@@ -252,7 +253,11 @@ class DataFrame(pd.DataFrame):
             }
 
         """
-        varied = varied_values(self, **kwargs)
+        varied = varied_values(
+            self, min_variations=min_variations,
+            max_variations=max_variations,
+            default=default, dropna=dropna, on_error=on_error,
+        )
         return varied
 
     def varied_value_counts(self, **kwargs):
