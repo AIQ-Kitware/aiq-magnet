@@ -15,6 +15,7 @@ from helm.benchmark.metrics.metric import PerInstanceStats
 from typing import Generator
 
 from magnet.utils import util_pandas
+from magnet.utils.util_iterable import add_length_hint
 from functools import cached_property
 
 # monkey patch until kwutil 0.3.7
@@ -342,8 +343,8 @@ class _HelmRunDataclassView:
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo().dataclass
         >>> # Raw HELM objects
-        >>> per_instance_stats = self.per_instance_stats()
-        >>> stats = self.stats()
+        >>> per_instance_stats = list(self.per_instance_stats())
+        >>> stats = list(self.stats())
         >>> spec = self.run_spec()
         >>> scenario_state = self.scenario_state()
         >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
@@ -365,40 +366,44 @@ class _HelmRunDataclassView:
         nested_items = self.parent.json.per_instance_stats()
         USE_DACITE = 0
         # nested_items = kwutil.Json.load(self.path / 'per_instance_stats.json', backend='ujson')
-        if USE_DACITE:
-            DACITE_CONFIG = dacite.Config(
-                check_types=False,
-                type_hooks={
-                    MetricName: lambda d: MetricName(**d),
-                    PerturbationDescription: lambda d: PerturbationDescription(**ub.udict.intersection(d, PerturbationDescription.__dataclass_fields__.keys()))
-                }
-            )
-            # dacite seems to have a lot of overhead
-            for item in nested_items:
-                instance = dacite.from_dict(PerInstanceStats, item, config=DACITE_CONFIG)
-                yield instance
-        else:
-            for item in nested_items:
-                # Alternative faster loading, using knowledge about the what
-                # the dataclass structure is this is not robust to changes in
-                # HELM.
-                stats_objs = []
-                for stat in item['stats']:
-                    name = stat['name']
-                    if 'perturbation' in name:
-                        name['perturbation'] = PerturbationDescription(name['perturbation'])
-                    name = MetricName(**name)
-                    stat['name'] = name
-                    stat_obj = Stat(**stat)
-                    stats_objs.append(stat_obj)
-                item['stats'] = stats_objs
-                perturbation = item.get('perturbation', None)
-                if perturbation is not None:
-                    perturbation = ub.udict.intersection(perturbation, PerturbationDescription.__dataclass_fields__.keys())
-                    perturbation = PerturbationDescription(**perturbation)
-                item['perturbation'] = perturbation
-                instance = PerInstanceStats(**item)
-                yield instance
+
+        def _gen_per_instance_stats():
+            if USE_DACITE:
+                DACITE_CONFIG = dacite.Config(
+                    check_types=False,
+                    type_hooks={
+                        MetricName: lambda d: MetricName(**d),
+                        PerturbationDescription: lambda d: PerturbationDescription(**ub.udict.intersection(d, PerturbationDescription.__dataclass_fields__.keys()))
+                    }
+                )
+                # dacite seems to have a lot of overhead
+                for item in nested_items:
+                    instance = dacite.from_dict(PerInstanceStats, item, config=DACITE_CONFIG)
+                    yield instance
+            else:
+                for item in nested_items:
+                    # Alternative faster loading, using knowledge about the what
+                    # the dataclass structure is this is not robust to changes in
+                    # HELM.
+                    stats_objs = []
+                    for stat in item['stats']:
+                        name = stat['name']
+                        if 'perturbation' in name:
+                            name['perturbation'] = PerturbationDescription(name['perturbation'])
+                        name = MetricName(**name)
+                        stat['name'] = name
+                        stat_obj = Stat(**stat)
+                        stats_objs.append(stat_obj)
+                    item['stats'] = stats_objs
+                    perturbation = item.get('perturbation', None)
+                    if perturbation is not None:
+                        perturbation = ub.udict.intersection(perturbation, PerturbationDescription.__dataclass_fields__.keys())
+                        perturbation = PerturbationDescription(**perturbation)
+                    item['perturbation'] = perturbation
+                    instance = PerInstanceStats(**item)
+                    yield instance
+
+        return add_length_hint(_gen_per_instance_stats(), len(nested_items), known_length=True)
 
     def run_spec(self) -> RunSpec:
         """
@@ -439,6 +444,7 @@ class _HelmRunDataclassView:
         """
         stats_list = self.parent.json.stats()
         stats = (dacite.from_dict(Stat, json_stat) for json_stat in stats_list)
+        stats = add_length_hint(stats, len(stats_list), known_length=True)
         return stats
 
 

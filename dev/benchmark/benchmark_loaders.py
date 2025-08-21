@@ -1,6 +1,7 @@
 from magnet.helm_outputs import HelmRun
 import ubelt as ub
 import timerit
+from typing import Iterator
 
 
 def main():
@@ -31,6 +32,8 @@ def main():
             func = getattr(value, name)
             for timer in ti.reset(f'Load {name=} with {key=}'):
                 output = func()
+                if isinstance(output, Iterator):
+                    output = list(output)
                 outputs[key] = output
         print(f'ti.measures = {ub.urepr(ti.measures, nl=2, precision=8, align=':')}')
 

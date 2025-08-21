@@ -26,8 +26,7 @@ dependencies = [
     "h5py>=3.14.0",
     "numexpr>=2.11.0",
     "kwarray>=0.7.1",
-    "kwutil>=0.3.6",
-    #"kwutil>=0.3.7", TODO
+    "kwutil>=0.3.7", 
     "pygtrie>=2.5.0",
     "scriptconfig>=0.8.2",
     "orjson>=3.10.15",
@@ -49,3 +48,6 @@ optional = [
 [tool.pytest.ini_options]
 addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
 norecursedirs = ".git build __pycache__ dev docs"
+
+[tool.mypy]
+disable_error_code = ["import-untyped"]
