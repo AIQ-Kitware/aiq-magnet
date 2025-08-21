@@ -9,6 +9,9 @@ def main():
     variants = {
         'msgspec': run.msgspec,
         'json': run.json,
+        '_json_stdlib': run._json_stdlib,
+        '_json_ujson': run._json_ujson,
+        '_json_orjson': run._json_orjson,
         'dataclass': run.dataclass,
         'dataframe': run.dataframe,
     }

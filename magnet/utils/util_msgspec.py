@@ -54,13 +54,16 @@ class MsgspecRegistry:
         'Paris'
         >>> #
         >>> # Or directly from text
-        >>> decoded = reg.from_bytes(data, User)
+        >>> decoded = reg.decode(data, reg[User])
         >>> decoded.tags
         ['x']
     """
 
     def __init__(self):
         self.cache: Dict[Type, Type] = {}  # dataclass -> struct
+
+    def __getitem__(self, key):
+        return self.cache[key]
 
     def register(self, dc_cls: Type) -> Type[msgspec.Struct]:
         """Convert dataclass into msgspec.Struct (recursively)."""
@@ -112,17 +115,17 @@ class MsgspecRegistry:
         return obj
 
     def decode(self, data: bytes, cls) -> Any:
-        """Decode JSON bytes into the original dataclass via msgspec."""
+        """Load the msgspec results"""
         decoder = msgspec.json.Decoder(cls)
         struct_obj = decoder.decode(data)
         return struct_obj
 
-    def from_bytes(self, data: bytes, dc_cls: Type) -> Any:
-        """Decode JSON bytes into the original dataclass via msgspec."""
-        cls = self.register(dc_cls)
-        decoder = self.decode(data, cls)
-        struct_obj = decoder.decode(data)
-        return struct_obj
+    # Broken
+    # def from_bytes(self, data: bytes, dc_cls: Type) -> Any:
+    #     """Decode JSON bytes into the original dataclass via msgspec."""
+    #     cls = self.register(dc_cls)
+    #     struct_obj = self.decode(data, cls)
+    #     return struct_obj
 
 
 def dataclass_to_struct(

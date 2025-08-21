@@ -31,10 +31,66 @@ class HelmOutputs(ub.NiceRepr):
     Example:
         >>> import magnet
         >>> self = magnet.HelmOutputs.demo()
-        >>> [s.name for s in self.suites()]
-        ['my-suite']
-        >>> self.list_run_specs(suite='*')
-        ['mmlu:subject=history,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0', 'mmlu:subject=history,method=multiple_choice_joint,model=openai_gpt2', 'mmlu:subject=philosophy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0', 'mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2']
+        >>> suite_names = [s.name for s in self.suites()]
+        >>> run_names = self.list_run_specs(suite='*')
+        >>> summary = self.summarize()
+        >>> print(f'suite_names = {ub.urepr(suite_names, nl=1)}')
+        >>> print(f'run_names = {ub.urepr(run_names, nl=1)}')
+        >>> print(f'summary = {ub.urepr(summary, nl=1)}')
+        suite_names = [
+            'my-suite',
+        ]
+        run_names = [
+            'mmlu:subject=anatomy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0',
+            'mmlu:subject=anatomy,method=multiple_choice_joint,model=openai_gpt2',
+            'mmlu:subject=philosophy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0',
+            'mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2',
+        ]
+        summary = {
+            'num_suites': 1,
+            'num_run_specs': 4,
+            'stats':        n_stats  n_metrics  n_perinstance  num_outputs  num_trials  num_train_trials
+                     count      4.0        4.0            4.0          4.0         4.0               4.0
+                     mean     162.0        3.0            7.0          5.0         1.0               1.0
+                     std        0.0        0.0            0.0          0.0         0.0               0.0,
+        }
+
+    Example:
+        >>> # xdoctest: +REQUIRES(module:xdev)
+        >>> import magnet
+        >>> self = magnet.HelmOutputs.demo()
+        >>> self.write_directory_report()  # xdoctest: +IGNORE_WANT
+        ╙── .../magnet/tests/helm_output/5be22292db3f/benchmark_output: lock.size=0.00 KB,lock.files=1,txt.size=10.08 KB,txt.files=2,csv.size=158.33
+        MB,csv.files=179,.size=4.00 KB,.files=1,json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
+            ├─╼ scenarios: lock.size=0.00 KB,lock.files=1,txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
+            │   └─╼ mmlu: lock.size=0.00 KB,lock.files=1,txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
+            │       ├─╼ data.lock: size=0.00 KB
+            │       └─╼ data: txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
+            │           └─╼  ...
+            ├─╼ scenario_instances
+            └─╼ runs: .size=4.00 KB,.files=1,json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
+                ├─╼ latest -> my-suite: size=4.00 KB
+                └─╼ my-suite: json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
+                    ├─╼ runs_to_run_suites.json: size=0.36 KB
+                    ├─╼ schema.json: size=162.30 KB
+        ...
+           files       size                name
+        0    182  158.34 MB           scenarios
+        1      0    0.00 KB  scenario_instances
+        2    131    2.65 MB                runs
+        ...
+        kind    files       size
+        ext
+        lock        1    0.00 KB
+        *null*      1    4.00 KB
+        txt         2   10.08 KB
+        tex        42   13.11 KB
+        json       88    2.64 MB
+        csv       179  158.33 MB
+        kind     files       size
+        ext
+        ∑ total    313  160.99 MB
+        ...
     """
 
     def __init__(self, root_dir):
@@ -57,12 +113,30 @@ class HelmOutputs(ub.NiceRepr):
         # TODO: what is the most useful summary information we can quickly get?
         summary = {}
         suites = self.suites()
-        runs_per_suite = []
+        rows = []
         for suite in suites:
-            runs = suite.runs().run_spec()
-            runs_per_suite.append(len(runs))
+            runs = suite.runs()
+            for run in runs:
+                n_stats = len(run.msgspec.stats())
+                n_perinstance = len(run.msgspec.per_instance_stats())
+                run_spec = run.msgspec.run_spec()
+                adapter_spec = run.msgspec.scenario_state().adapter_spec
+                rows.append({
+                    'name': run.name,
+                    'n_stats': n_stats,
+                    'n_metrics': len(run_spec.metric_specs),
+                    'n_perinstance': n_perinstance,
+                    'num_outputs': adapter_spec.num_outputs,
+                    'num_trials': adapter_spec.num_trials,
+                    'num_train_trials': adapter_spec.num_train_trials,
+                })
+
+        import pandas as pd
+        df = pd.DataFrame(rows)
+        stats = df.describe().loc[['count', 'mean', 'std']]
         summary['num_suites'] = len(self._suite_dirs())
         summary['num_run_specs'] = len(self.list_run_specs())
+        summary['stats'] = stats
         return summary
 
     @classmethod
@@ -203,14 +277,16 @@ class HelmSuiteRuns(ub.NiceRepr):
         table = pd.concat([r.dataframe.stats() for r in self], axis=0)
         return table
 
+### --- Helm Run View Backends
+
 
 class _HelmRunJsonView:
     """
     View that provides simple json readers
     """
-    def __init__(self, parent):
+    def __init__(self, parent, backend='orjson'):
         self.parent = parent
-        self.backend = 'orjson'  # can be ujson or stdlib, but orjson is fastest
+        self.backend = backend  # can be ujson or stdlib, but orjson is fastest
 
     def per_instance_stats(self) -> list[dict]:
         """
@@ -471,7 +547,9 @@ class _HelmRunDataFrameView:
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo()
-            >>> print(self.per_instance_stats())
+            >>> table = (self.per_instance_stats())
+            >>> print(table)
+            >>> assert len(table) > 180
         """
         instance_stats_list = self.parent.json.per_instance_stats()
         rows = []
@@ -499,6 +577,13 @@ class _HelmRunDataFrameView:
     def run_spec(self) -> util_pandas.DotDictDataFrame:
         """
         Dataframe representation of :class:`RunSpec`
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmRun.demo()
+            >>> table = (self.run_spec())
+            >>> print(table)
+            >>> assert len(table) == 1
         """
         nested = self.parent.json.run_spec()
         flat_state = kwutil.DotDict.from_nested(nested)
@@ -512,6 +597,13 @@ class _HelmRunDataFrameView:
     def scenario_state(self) -> util_pandas.DotDictDataFrame:
         """
         Dataframe representation of :class:`ScenarioState`
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmRun.demo()
+            >>> table = (self.scenario_state())
+            >>> print(table)
+            >>> assert len(table) >= 7
         """
         top_level = self.parent.json.scenario_state()
         request_states = top_level.pop('request_states')
@@ -532,6 +624,13 @@ class _HelmRunDataFrameView:
     def stats(self) -> util_pandas.DotDictDataFrame:
         """
         Dataframe representation of :class:`Stat`
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmRun.demo()
+            >>> table = (self.stats())
+            >>> print(table)
+            >>> assert len(table) >= 160
         """
         stats_list = self.parent.json.stats()
         # TODO: it might be a good idea to hash the name fields to generate
@@ -577,7 +676,7 @@ class HelmRun(ub.NiceRepr):
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo()
         >>> print(self)
-        <HelmRun(mmlu:subject=history,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0)>
+        <HelmRun(mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2)>
         >>> # Dataframe objects
         >>> per_instance_stats_df = self.per_instance_stats()
         >>> stats_df = self.stats()
@@ -598,6 +697,18 @@ class HelmRun(ub.NiceRepr):
         Access to direct JSON view
         """
         return _HelmRunJsonView(self)
+
+    @cached_property
+    def _json_stdlib(self):
+        return _HelmRunJsonView(self, backend='stdlib')
+
+    @cached_property
+    def _json_orjson(self):
+        return _HelmRunJsonView(self, backend='orjson')
+
+    @cached_property
+    def _json_ujson(self):
+        return _HelmRunJsonView(self, backend='ujson')
 
     @cached_property
     def dataclass(self):
@@ -640,7 +751,7 @@ class HelmRun(ub.NiceRepr):
         self = suite.runs()[-1]
         return self
 
-    # These are alternatives to functions in loaders.py
+    # Default accessors
 
     def per_instance_stats(self) -> util_pandas.DotDictDataFrame:
         """
