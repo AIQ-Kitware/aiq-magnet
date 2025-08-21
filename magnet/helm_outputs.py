@@ -606,7 +606,6 @@ class HelmRun(ub.NiceRepr):
         """
         return _HelmRunDataclassView(self)
 
-
     @cached_property
     def msgspec(self):
         """

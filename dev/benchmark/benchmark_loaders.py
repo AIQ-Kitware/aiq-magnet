@@ -13,8 +13,6 @@ def main():
         'dataframe': run.dataframe,
     }
 
-    ti = timerit.Timerit(100, bestof=10, verbose=2)
-
     methods = [
         'stats',
         'run_spec',
@@ -23,12 +21,15 @@ def main():
     ]
 
     for name in methods:
+        ti = timerit.Timerit(100, bestof=10, verbose=2)
+
+        outputs = {}
         for key, value in variants.items():
             func = getattr(value, name)
             for timer in ti.reset(f'Load {name=} with {key=}'):
-                func()
-
-    print(f'ti.measures = {ub.urepr(ti.measures, nl=2, precision=8, align=':')}')
+                output = func()
+                outputs[key] = output
+        print(f'ti.measures = {ub.urepr(ti.measures, nl=2, precision=8, align=':')}')
 
 
 if __name__ == '__main__':
