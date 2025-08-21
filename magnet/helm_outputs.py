@@ -200,7 +200,7 @@ class HelmSuite(ub.NiceRepr):
     def _run_dirs(self, pattern='*'):
         # not robust to extra directories being written.  is there a way to
         # determine that these directories are actually run specs?
-        return [p for p in (self.path).glob(pattern) if p.is_dir() if ':' in p.name]
+        return sorted([p for p in (self.path).glob(pattern) if p.is_dir() if ':' in p.name])
 
     def runs(self, pattern='*'):
         paths = self._run_dirs(pattern)
