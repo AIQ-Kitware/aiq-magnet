@@ -250,19 +250,20 @@ def main():
     heim_output_dpath = ub.Path('/data/crfm-helm-public/heim/benchmark_output')
     outs = magnet.HelmOutputs(heim_output_dpath)
     suite = outs.suites('v1.1.0')[0]
-    runs = suite.runs('mscoco:*').existing()
+    runs = suite.runs('*').existing()
 
     pman = kwutil.ProgressManager()
     with pman:
         tables = []
-        for run in pman.progiter(runs, desc='iter runs'):
-            ...
+        for run in pman.progiter(runs, desc='Loading HELM runs'):
             table = load_run_clip_info(run)
             if table is not None:
                 tables.append(table)
+            else:
+                print(f'Skip {run}')
 
     import pandas as pd
-    big_table = pd.concat(tables).reset_index()
+    big_table = pd.concat(tables).reset_index(drop=True)
 
     from helm.common.object_spec import parse_object_spec
     run_specs = {k: parse_object_spec(k) for k in big_table['run_spec.name'].unique()}
@@ -277,7 +278,6 @@ def main():
 
     big_table.search_columns('perturb')
     big_table.search_columns('modifications')
-
     big_table[['run_spec.name'] + big_table.search_columns('modifications')]
 
     unique_indices = []
@@ -289,7 +289,15 @@ def main():
             # Part of it is that sometimes an instance specifies the full
             # perturbation but other times it seems to be specified implicitly.
             ignore_prefix = [
+                # There seems to be some duplication with
+                # benchmark_output/scenarios/cub200/images/CUB_200_2011/images/079.Belted_Kingfisher/Belted_Kingfisher_0024_70538.jpg
+                # benchmark_output/scenarios/cub200/images/CUB_200_2011/images/051.Horned_Grebe/Horned_Grebe_0068_35111.jpg
+                'request_states.instance.references',
+
                 'adapter_spec.max_eval_instances',
+                # I guess some instance ids have the same text?
+                'per_instance_stats.instance_id',
+                'request_states.instance.id',
                 'per_instance_stats.perturb_id',
                 'per_instance_stats.perturb_instance_id',
                 'per_instance_stats.perturb_instance_id',
@@ -304,10 +312,16 @@ def main():
             to_drop = group.prefix_subframe(ignore_prefix).columns
             munged = group.drop(to_drop, axis=1)
             varied = munged.varied_value_counts(min_variations=2, on_error='placeholder')
-            varied.pop('run_path')
-            varied.pop('run_spec.name')
+            varied.pop('run_path', None)
+            varied.pop('run_spec.name', None)
             if varied:
                 constant = group.drop(varied.keys(), axis=1).iloc[0].to_dict()
+                # Just skip ones we cant figure out
+                blocklist = {
+                    '32ab299758c04c9b6aa6858dffd879695b928196adf7e25eeda3cb5e66ce1a9a81cdb5aec56642eca20124f5af08755a1e565f629b3610ee0a433825ce80076e'
+                }
+                if constant['input_text_id'] in blocklist:
+                    continue
                 print(f'constant = {ub.urepr(constant, nl=2)}')
                 print(f'varied = {ub.urepr(varied, nl=2)}')
                 raise Exception
