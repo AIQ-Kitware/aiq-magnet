@@ -45,9 +45,20 @@ class Predictor:
             if self.run_spec_filter(run_spec):
                 selected_run_specs.append(run_spec)
 
-        *train_runs, eval_run = random.sample(
-            selected_run_specs, self.num_example_runs + 1
-        )
+        eval_runs = [
+            run_spec
+            for run_spec in selected_run_specs
+            if self.model_filter(run_spec.adapter_spec.model)
+        ]
+
+        if not eval_runs:
+            raise RuntimeError("No evaluation runs left after filtering")
+
+        train_runs = [
+            run_spec
+            for run_spec in selected_run_specs
+            if not self.model_filter(run_spec.adapter_spec.model)
+        ]
 
         train_scenario_states_df = load_all_scenario_states_as_dataframe(
             suite, [r.name for r in train_runs], root_dir=root_dir
@@ -58,7 +69,7 @@ class Predictor:
         )
 
         _full_eval_scenario_states_df = load_all_scenario_states_as_dataframe(
-            suite, [eval_run.name], root_dir=root_dir
+            suite, [eval_run.name for eval_run in eval_runs], root_dir=root_dir
         )
 
         random_eval_indices = random.sample(
