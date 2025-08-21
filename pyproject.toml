@@ -8,13 +8,13 @@ include = ["magnet*"]
 
 
 [project]
-name = "magnet"
+name = "aiq-magnet"
 version = "0.0.1"
-description = "Exploratory package for MAGNET system"
+description = "Kitware's MAGNET framework for AIQ"
 authors = [
     {name = "MAGNET Kitware", email = "kitware@kitware.com"}
 ]
-urls = { "Repository" = "https://github.com/AIQ-Kitware/magnet-sys-exploratory/" }
+urls = { "Repository" = "https://github.com/AIQ-Kitware/aiq-magnet/" }
 requires-python = ">=3.11"
 dependencies = [
     "crfm-helm>=0.5.5",
