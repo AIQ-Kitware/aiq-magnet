@@ -56,6 +56,11 @@ class HelmOutputs(ub.NiceRepr):
     def summarize(self):
         # TODO: what is the most useful summary information we can quickly get?
         summary = {}
+        suites = self.suites()
+        runs_per_suite = []
+        for suite in suites:
+            runs = suite.runs().run_spec()
+            runs_per_suite.append(len(runs))
         summary['num_suites'] = len(self._suite_dirs())
         summary['num_run_specs'] = len(self.list_run_specs())
         return summary
@@ -361,6 +366,100 @@ class _HelmRunDataclassView:
         return stats
 
 
+def _prepare_registry():
+    from magnet.utils import util_msgspec
+    from helm.benchmark.adaptation.scenario_state import ScenarioState
+    from helm.benchmark.run_spec import RunSpec
+    from helm.benchmark.metrics.statistic import Stat
+    from helm.benchmark.metrics.metric import PerInstanceStats
+    util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState)
+    util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
+    util_msgspec.MSGSPEC_REGISTRY.register(Stat)
+    util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
+
+_prepare_registry()
+
+
+class _HelmRunMsgspecView:
+    """
+    Helper to provide access to raw HELM data structures.
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo().msgspec
+        >>> # Raw HELM objects
+        >>> per_instance_stats = self.per_instance_stats()
+        >>> stats = self.stats()
+        >>> spec = self.run_spec()
+        >>> scenario_state = self.scenario_state()
+        >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
+        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
+        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
+    """
+    def __init__(self, parent):
+        self.parent = parent
+
+    def per_instance_stats(self) -> list:
+        """
+        per_instance_stats.json contains a serialized list of PerInstanceStats,
+        which contains the statistics produced for the metrics for each
+        instance (i.e. input).
+        """
+        from magnet.utils import util_msgspec
+        cls = util_msgspec.MSGSPEC_REGISTRY.cache[PerInstanceStats]
+        data = (self.parent.path / 'per_instance_stats.json').read_bytes()
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[cls])
+        return obj
+
+    def run_spec(self) -> object:
+        """
+        run_spec.json contains the RunSpec, which specifies the scenario,
+        adapter and metrics for the run.
+        """
+        from magnet.utils import util_msgspec
+        cls = util_msgspec.MSGSPEC_REGISTRY.cache[RunSpec]
+        data = (self.parent.path / 'run_spec.json').read_bytes()
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, cls)
+        return obj
+
+    def scenario(self):
+        """
+        scenario.json contains a serialized Scenario, which contains the
+        scenario for the run and specifies the instances (i.e. inputs) used.
+        """
+        # Note: not sure how to load scenario.json with dacite, or if it
+        # matters
+        raise NotImplementedError(ub.paragraph(
+            '''
+            There does not seem to be a way to create an instance of a raw
+            helm.benchmark.scenarios.scenario.Scenario from the json file.
+            '''))
+
+    def scenario_state(self) -> ScenarioState:
+        """
+        scenario_state.json contains a serialized ScenarioState, which contains
+        every request to and response from the model.
+        """
+        from magnet.utils import util_msgspec
+        cls = util_msgspec.MSGSPEC_REGISTRY.cache[ScenarioState]
+        data = (self.parent.path / 'scenario_state.json').read_bytes()
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, cls)
+        return obj
+
+    def stats(self) -> list:
+        """
+        stats.json contains a serialized list of PerInstanceStats, which
+        contains the statistics produced for the metrics, aggregated across all
+        instances (i.e. inputs).
+        """
+        from magnet.utils import util_msgspec
+        cls = util_msgspec.MSGSPEC_REGISTRY.cache[Stat]
+        data = (self.parent.path / 'stats.json').read_bytes()
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[cls])
+        return obj
+
+
 class _HelmRunDataFrameView:
     def __init__(self, parent):
         self.parent = parent
@@ -506,6 +605,14 @@ class HelmRun(ub.NiceRepr):
         Access HELM dataclass view
         """
         return _HelmRunDataclassView(self)
+
+
+    @cached_property
+    def msgspec(self):
+        """
+        Much faster access to HELM dataclass-like (msgspec) view
+        """
+        return _HelmRunMsgspecView(self)
 
     @cached_property
     def dataframe(self):
