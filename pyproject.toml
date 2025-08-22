@@ -12,7 +12,7 @@ name = "aiq-magnet"
 version = "0.0.1"
 description = "Kitware's MAGNET framework for AIQ"
 authors = [
-    {name = "MAGNET Kitware", email = "kitware@kitware.com"}
+    {name = "MAGNET Kitware", email = "aiq-ta2@kitware.com"}
 ]
 urls = { "Repository" = "https://github.com/AIQ-Kitware/aiq-magnet/" }
 requires-python = ">=3.11"

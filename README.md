@@ -1,6 +1,6 @@
 # Introduction
 
-This early version of the MAGNET package is intended to provide a look into how we're approach TA1 evaluation (for algorithms that don't require model training or finetuning).  Currently we only provide a "predictor" style interface, but will extend the framework to support other TA1 algorithms that don't fit into this bucket.
+This early version of the MAGNET package is intended to provide a look into how we're approaching TA1 evaluation (for algorithms that don't require model training or finetuning).  Currently we only provide a "predictor" style interface, but plan to extend the framework to support other TA1 algorithms that don't fit into this bucket.
 
 **IMPORTANT:** As this is a preliminary release, interfaces are subject to change.
 
@@ -43,7 +43,7 @@ Which can be run with the following command (assuming you've followed the develo
 xdoctest magnet/example_random_predictor.py
 ```
 
-In this example, we ask the framework to generate some demo data for us (which will run HELM on the backend).  After the demo data has been generate, we instantiate the `ExampleRandomPredictor` allowing it 5 response samples from the evaluation data.  Then we run the random predictor against the generated demo data, which should produce a `"predicted_exact_match"` metric in the form of a HELM `Stat` object, i.e.:
+In this example, we ask the framework to generate some demo data for us (which will run HELM on the backend).  After the demo data has been generated, we instantiate the `ExampleRandomPredictor` allowing it 5 response samples from the evaluation data.  Then we run the random predictor against the generated demo data, which should produce a `"predicted_exact_match"` metric in the form of a HELM `Stat` object, i.e.:
 
 ```
 [{'name': 'predicted_exact_match', 'split': 'valid'}[min=0.82, mean=0.82, max=0.82, sum=0.82 (1)]]
@@ -102,7 +102,7 @@ Note that many already computed HELM outputs (including for the `helm-lite` benc
 
 # Implementing your own Predictor
 
-The basic anatomy of a `Pedictor` is as follows (assuming a clean Python file):
+The basic anatomy of a `Predictor` is as follows (assuming a clean Python file):
 
 ```
 from helm.benchmark.metrics.statistic import Stat
@@ -119,7 +119,7 @@ class MyPredictor(Predictor):
         # Interesting prediction algorithm code goes here
 ```
 
-And this method should return a list of predicted stats (as HELM Stat
+And this method should return a list of predicted stats (as HELM `Stat`
 instances).  For example, assume we're predicting the `"exact_match"`
 stat:
 
@@ -148,3 +148,12 @@ We also recommend looking at the `magnet/example_random_predictor.py` and/or `ma
 - Expose model weights for a given run
 - Evaluation card & router implementations
 - ...
+
+# Acknowledgments
+
+This material is based upon work supported by the Defense Advanced
+Research Project Agency (DARPA) under Contract No. HR001125CE017. Any
+opinions, findings and conclusions or recommendations expressed in
+this material are those of the author(s) and do not necessarily
+reflect the views of the Defense Advanced Research Project Agency
+(DARPA).
