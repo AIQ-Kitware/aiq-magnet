@@ -39,7 +39,7 @@ class Predictor:
                 eval_scenario_states_df) -> List[Stat]:
         raise NotImplementedError
 
-    def __call__(self, root_dir, suite):
+    def prepare_predict_inputs(self, root_dir, suite):
         random = kwarray.ensure_rng(self.random_seed, api='python')
 
         outputs = HelmOutputs(ub.Path(root_dir))
@@ -82,11 +82,15 @@ class Predictor:
             range(len(_full_eval_scenario_state_df)), min(len(_full_eval_scenario_state_df), self.num_eval_samples))
         eval_scenario_state_df = _full_eval_scenario_state_df.iloc[random_eval_indices]
 
-        predicted_stats = self.predict(train_run_specs_df,
-                                       train_scenario_state_df,
-                                       train_stats_df,
-                                       eval_run_specs_df,
-                                       eval_scenario_state_df)
+        return (train_run_specs_df,
+                train_scenario_state_df,
+                train_stats_df,
+                eval_run_specs_df,
+                eval_scenario_state_df)
+
+    def __call__(self, root_dir, suite):
+        predicted_stats = self.predict(
+            *self.prepare_predict_inputs(root_dir, suite))
 
         # TODO: Do something meaningful with the predictions
         print(predicted_stats)

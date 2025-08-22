@@ -2,7 +2,7 @@
 
 This early version of the MAGNET package is intended to provide a look into how we're approach TA1 evaluation (for algorithms that don't require model training or finetuning).  Currently we only provide a "predictor" style interface, but will extend the framework to support other TA1 algorithms that don't fit into this bucket.
 
-*IMPORTANT* As this is a preliminary release, interfaces are subject to change.
+**IMPORTANT:** As this is a preliminary release, interfaces are subject to change.
 
 # Developer Quick Start
 
@@ -136,6 +136,6 @@ return [Stat(**{'name': {'name': 'predicted_exact_match',
                 'stddev': 0.0})]
 ```
 
-The arguments passed into the `predict` method are Pandas dataframes corresponding to the HELM data for the relevant runs.
+The arguments passed into the `predict` method are Pandas dataframes corresponding to the HELM data (flattened from it's nested form) for the relevant runs.  We've included an IPython notebook file here ([predict_inputs_exploration.ipynb](./predict_inputs_exploration.ipynb)) showing the exact form of the inputs to `predict`.
 
-We recommend looking at the `magnet/example_random_predictor.py` and/or `magnet/example_perturbation_predictor.py` examples to see what a complete (albeit simple) predictor looks like.
+We also recommend looking at the `magnet/example_random_predictor.py` and/or `magnet/example_perturbation_predictor.py` examples to see what a complete (albeit simple) predictor looks like.
