@@ -2,6 +2,7 @@
 Helpers to bridge dataclasses and msgspec.Struct
 """
 import dataclasses
+import ubelt as ub
 import msgspec
 import typing
 from typing import get_origin, get_args
@@ -65,14 +66,19 @@ class MsgspecRegistry:
     def __getitem__(self, key):
         return self.cache[key]
 
-    def register(self, dc_cls: Type) -> Type[msgspec.Struct]:
+    def register(self, dc_cls: Type, dict: dict = False) -> Type[msgspec.Struct]:
         """Convert dataclass into msgspec.Struct (recursively)."""
         if dc_cls in self.cache:
             return self.cache[dc_cls]
-        return dataclass_to_struct(dc_cls, self.cache)
+        return dataclass_to_struct(dc_cls, self.cache, dict=dict)
 
     def to_dataclass(self, obj: Any, target_cls: Type = None) -> Any:
-        """Recursively convert msgspec.Structs back to dataclasses."""
+        """
+        Recursively convert msgspec.Structs back to dataclasses.
+
+        Note: this is fairly slow, and effectively removes the msgspec
+        advantage.
+        """
         if obj is None:
             return None
 
@@ -130,7 +136,8 @@ class MsgspecRegistry:
 
 def dataclass_to_struct(
     dc_cls: Type,
-    cache: Dict[Type, Type] = None
+    cache: Dict[Type, Type] = None,
+    dict : bool = False,
 ) -> Type[msgspec.Struct]:
     """
     Recursively convert a dataclass into a msgspec.Struct, handling nested
@@ -143,7 +150,7 @@ def dataclass_to_struct(
     Example:
         >>> from magnet.utils.util_msgspec import *  # NOQA
         >>> import dataclasses, typing, msgspec
-        >>> @dataclasses.dataclass
+        >>> @dataclasses.dataclass(eq=True, frozen=True)
         ... class Address:
         ...     city: str
         ...     zipcode: str
@@ -162,10 +169,11 @@ def dataclass_to_struct(
         ...     tags: typing.List[str] = dataclasses.field(default_factory=list)
         ...
         >>> cache = {}
-        >>> UserStruct = dataclass_to_struct(User, cache)
+        >>> UserStruct = dataclass_to_struct(User, cache, dict=True)
         >>> decoder = msgspec.json.Decoder(UserStruct)
         >>> data = b'{"id": 1, "name": "Alice", "address": {"city": "Paris", "zipcode": "75000"}, "tags": ["a", "b"]}'
         >>> obj = decoder.decode(data)
+        >>> obj.not_frozen = True  # we set frozen to false so this should work
         >>> isinstance(obj, UserStruct)
         True
         >>> obj.id, obj.name, obj.address.city, obj.address.zipcode, obj.profile, obj.tags
@@ -179,6 +187,10 @@ def dataclass_to_struct(
 
     if dc_cls in cache:
         return cache[dc_cls]
+
+    dparams = getattr(dc_cls, "__dataclass_params__", None)
+    frozen = bool(getattr(dparams, "frozen", False))
+    dc_eq = bool(getattr(dparams, "eq", True))
 
     hints = get_type_hints(dc_cls, include_extras=True)
     annotations = {}
@@ -227,9 +239,74 @@ def dataclass_to_struct(
     namespace['__annotations__'] = annotations
     namespace['__kw_only__'] = True  # allow mixed required/optional order
 
-    struct_cls = type(dc_cls.__name__, (msgspec.Struct,), namespace, kw_only=True)
+    struct_cls = type(dc_cls.__name__, (msgspec.Struct,), namespace,
+                      kw_only=True, dict=dict, frozen=frozen, eq=dc_eq)
     cache[dc_cls] = struct_cls
     return struct_cls
 
 
+@ub.hash_data.register(msgspec.Struct)
+def _hash_msgspec(data):
+    """
+    Dataclasses don't dispatch.
+
+    Example:
+        >>> from magnet.utils.util_msgspec import *  # NOQA
+        >>> import msgspec
+        >>> class P(msgspec.Struct):
+        >>>     x: int
+        >>>     y: int
+        >>> #
+        >>> a = P(1, 2)
+        >>> b = P(1, 2)
+        >>> c = P(2, 1)
+        >>> #
+        >>> assert ub.hash_data(a) == ub.hash_data(b)
+        >>> assert ub.hash_data(a) != ub.hash_data(c)
+        >>> # CHeck dataclass compat
+        >>> import dataclasses
+        >>> @dataclasses.dataclass
+        >>> class P:
+        >>>     x: int
+        >>>     y: int
+        >>> #
+        >>> a2 = P(1, 2)
+        >>> b2 = P(1, 2)
+        >>> c2 = P(2, 1)
+        >>> #
+        >>> print(ub.hash_data(a))
+        >>> print(ub.hash_data(a2))
+        >>> print(ub.util_hash._hashable_sequence(a))
+        >>> print(ub.util_hash._hashable_sequence(a2))
+    """
+    from msgspec import structs
+    from ubelt import util_hash
+
+    cls = data.__class__
+    header = (cls.__module__, cls.__qualname__)
+
+    # fields() preserves the class' field definition order
+    flds = structs.fields(cls)  # or structs.fields(data)
+    items = [(f.name, getattr(data, f.name)) for f in flds]
+
+    # Reuse ubelt's existing machinery to recurse into values
+    seq = util_hash._hashable_sequence(
+        (header, items),
+        extensions=ub.hash_data.extensions,
+        types=util_hash._COMPATIBLE_HASHABLE_SEQUENCE_TYPES_DEFAULT,
+    )
+    prefix = b'DCLASS'
+    hashable = b''.join(seq)
+    return prefix, hashable
+
+
 MSGSPEC_REGISTRY = MsgspecRegistry()
+
+
+def asdict(struct):
+    """
+    Mirror dataclasses.asdict
+    """
+    import msgspec
+    import kwutil
+    return kwutil.Json.loads(msgspec.json.encode(struct), backend='orjson')
