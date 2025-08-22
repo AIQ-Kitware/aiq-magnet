@@ -139,3 +139,12 @@ return [Stat(**{'name': {'name': 'predicted_exact_match',
 The arguments passed into the `predict` method are Pandas dataframes corresponding to the HELM data (flattened from it's nested form) for the relevant runs.  We've included an IPython notebook file here ([predict_inputs_exploration.ipynb](./predict_inputs_exploration.ipynb)) showing the exact form of the inputs to `predict`.
 
 We also recommend looking at the `magnet/example_random_predictor.py` and/or `magnet/example_perturbation_predictor.py` examples to see what a complete (albeit simple) predictor looks like.
+
+# Roadmap
+
+- Comparison results of predicted vs. actual metric
+- More options for predict input (dataframes vs. HELM objects vs. dicts)
+- Support for non-prediction style TA1 algorithms (feedback needed)
+- Expose model weights for a given run
+- Evaluation card & router implementations
+- ...
