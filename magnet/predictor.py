@@ -49,7 +49,7 @@ class Predictor:
 
         selected_runs = []
         for run in suite_output.runs():
-            if self.run_spec_filter(run.raw.run_spec()):
+            if self.run_spec_filter(run.json.run_spec()):
                 selected_runs.append(run)
 
         selected_run_specs_df = pd.concat([r.run_spec() for r in selected_runs])

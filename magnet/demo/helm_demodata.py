@@ -8,8 +8,8 @@ class HelmDemoConfig(scfg.DataConfig):
     run_entries = scfg.Value(
         [
             "mmlu:subject=philosophy,model=openai/gpt2",
-            "mmlu:subject=history,model=openai/gpt2",
-            "mmlu:subject=history,model=eleutherai/pythia-1b-v0",
+            "mmlu:subject=anatomy,model=openai/gpt2",
+            "mmlu:subject=anatomy,model=eleutherai/pythia-1b-v0",
             "mmlu:subject=philosophy,model=eleutherai/pythia-1b-v0",
         ],
         help='Benchmark run entries',
@@ -34,7 +34,7 @@ def ensure_helm_demo_outputs(**kwargs):
     Example:
         >>> from magnet.demo.helm_demodata import *  # NOQA
         >>> kwargs = {}
-        >>> dpath = ensure_helm_demo_outputs()
+        >>> dpath = ensure_helm_demo_outputs(**kwargs)
     """
     import ubelt as ub
     base_dpath = ub.Path.appdir('magnet/tests/helm_output').ensuredir()
