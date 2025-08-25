@@ -36,10 +36,15 @@ class Predictor:
                 train_scenario_states_df,
                 train_stats_df,
                 eval_run_specs_df,
-                eval_scenario_states_df) -> List[Stat]:
+                eval_scenario_states_df) -> dict[str, list[Stat]]:
         raise NotImplementedError
 
     def prepare_predict_inputs(self, root_dir, suite):
+        *predict_inputs, eval_stats_df = self.prepare_all_dataframes(root_dir, suite)
+        # predict method doesn't get `eval_stats_df`
+        return predict_inputs
+
+    def prepare_all_dataframes(self, root_dir, suite):
         random = kwarray.ensure_rng(self.random_seed, api='python')
 
         outputs = HelmOutputs(ub.Path(root_dir))
@@ -70,6 +75,7 @@ class Predictor:
 
         _all_stats_df = pd.concat([r.stats() for r in selected_runs])
         train_stats_df = _all_stats_df[_all_stats_df['run_spec.name'].isin(train_runs)]
+        eval_stats_df = _all_stats_df[_all_stats_df['run_spec.name'] == eval_run]
 
         _all_scenario_state_df = pd.concat([r.scenario_state() for r in selected_runs])
         train_scenario_state_df = _all_scenario_state_df[_all_scenario_state_df['run_spec.name'].isin(train_runs)]
@@ -86,11 +92,116 @@ class Predictor:
                 train_scenario_state_df,
                 train_stats_df,
                 eval_run_specs_df,
-                eval_scenario_state_df)
+                eval_scenario_state_df,
+                eval_stats_df)
+
+    def compare_predicted_to_actual(self, predicted_stats, eval_stats_df):
+        import kwutil
+        from rich.console import Console
+        from rich.table import Table
+        from magnet.utils import util_pandas
+
+        console = Console()
+
+        for key, run_eval_stats_df in eval_stats_df.groupby(['run_spec.name']):
+            run_spec_name, = key
+
+            predicted_stats_for_run = predicted_stats.get(run_spec_name, [])
+
+            stats_flat = [kwutil.DotDict.from_nested(stats.__dict__)
+                          for stats in predicted_stats_for_run]
+            flat_table = util_pandas.DotDictDataFrame(stats_flat)
+            # Add a prefix to enable joins for join keys
+            flat_table = flat_table.insert_prefix('predicted_stats')
+            # Enrich with contextual metadata (primary key for run_spec joins)
+            flat_table['run_spec.name'] = run_spec_name
+            flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
+
+            predicted_stats_df = flat_table
+            # Remove 'predicted' from predicted Stats name to try and
+            # match with original metric
+            predicted_stats_df['predicted_stats.name.name'] =\
+                predicted_stats_df['predicted_stats.name.name'].apply(
+                    lambda n: n.replace('predicted_', ''))
+
+            # If not populated already, these are required for merging
+            predicted_stats_missing_columns =\
+                (set(eval_stats_df.columns)
+                 - (set(map(lambda x: x.replace('predicted_', ''), predicted_stats_df.columns))))
+            predicted_stats_missing_columns = map(lambda x: f"predicted_{x}", predicted_stats_missing_columns)
+
+            for col in predicted_stats_missing_columns:
+                if col not in predicted_stats_df.columns:
+                    predicted_stats_df[col] = float('nan')
+                    col_dtype = str(eval_stats_df[col.replace('predicted_', '')].dtype)
+                    predicted_stats_df[col] = predicted_stats_df[col].astype(col_dtype)
+
+            possible_join_fields = {'stats.name.name',
+                                    'stats.name.perturbation.computed_on',
+                                    'stats.name.perturbation.fairness',
+                                    'stats.name.perturbation.name',
+                                    'stats.name.perturbation.prob',
+                                    'stats.name.perturbation.robustness',
+                                    'stats.name.split'}
+            join_fields = possible_join_fields & set(eval_stats_df.columns)
+
+            merged = pd.merge(run_eval_stats_df, predicted_stats_df,
+                     left_on=sorted(list(join_fields)),
+                     right_on=sorted(list(map(lambda x: f"predicted_{x}", join_fields))))
+
+            table = Table()
+            for header in ('run_spec',
+                           'source',
+                           'name',
+                           'mean',
+                           'min',
+                           'max',
+                           'count',
+                           'stddev',
+                           'sum',
+                           'sum_squared',
+                           'variance'):
+                table.add_column(header)
+
+            def _field_formatter(x):
+                if isinstance(x, float):
+                    return f"{x:.3f}"
+                else:
+                    return str(x)
+
+            for _, row in merged.iterrows():
+                table.add_row(*map(_field_formatter,
+                                   (row['run_spec.name_x'],
+                                    'predicted',
+                                    row['predicted_stats.name.name'],
+                                    row['predicted_stats.mean'],
+                                    row['predicted_stats.min'],
+                                    row['predicted_stats.max'],
+                                    row['predicted_stats.count'],
+                                    row['predicted_stats.stddev'],
+                                    row['predicted_stats.sum'],
+                                    row['predicted_stats.sum_squared'],
+                                    row['predicted_stats.variance'])))
+                table.add_row(*map(_field_formatter,
+                                   (row['run_spec.name_x'],
+                                    'actual',
+                                    row['stats.name.name'],
+                                    row['stats.mean'],
+                                    row['stats.min'],
+                                    row['stats.max'],
+                                    row['stats.count'],
+                                    row['stats.stddev'],
+                                    row['stats.sum'],
+                                    row['stats.sum_squared'],
+                                    row['stats.variance'])))
+
+            console.print(table)
+
 
     def __call__(self, root_dir, suite):
-        predicted_stats = self.predict(
-            *self.prepare_predict_inputs(root_dir, suite))
+        *predict_inputs, eval_stats_df = self.prepare_all_dataframes(
+            root_dir, suite)
 
-        # TODO: Do something meaningful with the predictions
-        print(predicted_stats)
+        predicted_stats = self.predict(*predict_inputs)
+
+        self.compare_predicted_to_actual(predicted_stats, eval_stats_df)

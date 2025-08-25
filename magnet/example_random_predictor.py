@@ -23,12 +23,13 @@ class ExampleRandomPredictor(Predictor):
                 train_scenario_state_df,
                 train_stats_df,
                 eval_run_specs_df,
-                eval_scenario_state_df) -> List[Stat]:
-        predicted_stats = []
+                eval_scenario_state_df) -> dict[str, list[Stat]]:
+        predicted_stats = {}
 
-        for run_spec in eval_scenario_state_df.groupby(['run_spec.name']):
+        for key, _ in eval_scenario_state_df.groupby(['run_spec.name']):
+            run_spec_name, = key
             prediction = (random.choice(range(0,101)) / 100)
-            predicted_stats.append(
+            predicted_stats.setdefault(run_spec_name, []).append(
                 Stat(**{'name':
                         {'name': 'predicted_exact_match',
                          'split': 'valid'},
