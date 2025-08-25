@@ -25,8 +25,8 @@ class ExamplePerturbationPredictor(Predictor):
                 train_scenario_states_df,
                 train_stats_df,
                 eval_run_specs_df,
-                eval_scenario_states_df) -> List[Stat]:
-        predicted_stats = []
+                eval_scenario_states_df) -> dict[str, list[Stat]]:
+        predicted_stats = {}
 
         perturbed_exact_match_stats_df = train_stats_df[
             (train_stats_df['stats.name.name'] == 'exact_match') &
@@ -53,7 +53,7 @@ class ExamplePerturbationPredictor(Predictor):
             # `model.predict` outputs a 2d numpy array, need to unpack the single value
             prediction = prediction[0][0]
 
-            predicted_stats.append(
+            predicted_stats.setdefault(row['run_spec.name'], []).append(
                 Stat(**{'name':
                         {'name': 'predicted_exact_match',
                          'split': 'valid',
