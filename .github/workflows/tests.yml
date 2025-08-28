@@ -36,11 +36,11 @@ jobs:
         python -m pip install pip uv -U
         python -m uv pip install setuptools>=0.8 wheel build twine
         python -m build --sdist --outdir wheelhouse
-        python -m twine check ./wheelhouse/aiq-magnet*.tar.gz
+        python -m twine check ./wheelhouse/aiq_magnet*.tar.gz
     - name: Install sdist
       run: |-
         ls -al wheelhouse
-        python -m uv pip install wheelhouse/aiq-magnet*.tar.gz -v
+        python -m uv pip install wheelhouse/aiq_magnet*.tar.gz -v
     - name: Test minimal loose sdist
       env: {}
       run: |-
@@ -76,7 +76,7 @@ jobs:
       name: Upload sdist artifact
       with:
         name: sdist_wheels
-        path: ./wheelhouse/aiq-magnet*.tar.gz
+        path: ./wheelhouse/aiq_magnet*.tar.gz
   build_purepy_wheels:
     ##
     # Download and test the pure-python wheels that were build in the
@@ -111,7 +111,7 @@ jobs:
         python -m pip install pip uv -U
         python -m uv pip install setuptools>=0.8 wheel build twine
         python -m build --wheel --outdir wheelhouse
-        python -m twine check ./wheelhouse/aiq-magnet*.whl
+        python -m twine check ./wheelhouse/aiq_magnet*.whl
     - name: Show built files
       shell: bash
       run: ls -la wheelhouse
@@ -119,7 +119,7 @@ jobs:
       name: Upload wheels artifact
       with:
         name: wheels-${{ matrix.os }}-${{ matrix.arch }}
-        path: ./wheelhouse/aiq-magnet*.whl
+        path: ./wheelhouse/aiq_magnet*.whl
   test_purepy_wheels:
     name: ${{ matrix.python-version }} on ${{ matrix.os }}, arch=${{ matrix.arch }} with ${{ matrix.install-extras }}
     if: "! startsWith(github.event.ref, 'refs/heads/release')"
@@ -187,8 +187,8 @@ jobs:
         export WHEEL_FPATH=$(python -c "if 1:
             import pathlib
             dist_dpath = pathlib.Path('wheelhouse')
-            candidates = list(dist_dpath.glob('aiq-magnet*.whl'))
-            candidates += list(dist_dpath.glob('aiq-magnet*.tar.gz'))
+            candidates = list(dist_dpath.glob('aiq_magnet*.whl'))
+            candidates += list(dist_dpath.glob('aiq_magnet*.tar.gz'))
             fpath = sorted(candidates)[-1]
             print(str(fpath).replace(chr(92), chr(47)))
         ")
