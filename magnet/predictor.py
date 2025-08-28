@@ -82,11 +82,37 @@ class Predictor:
             range(len(_full_eval_scenario_state_df)), min(len(_full_eval_scenario_state_df), self.num_eval_samples))
         eval_scenario_state_df = _full_eval_scenario_state_df.iloc[random_eval_indices]
 
-        predicted_stats = self.predict(train_run_specs_df,
-                                       train_scenario_state_df,
-                                       train_stats_df,
-                                       eval_run_specs_df,
-                                       eval_scenario_state_df)
+        train_split = TrainSplit(
+            run_specs=train_run_specs_df,
+            scenario_state=train_scenario_state_df,
+            stats=train_stats_df,
+        )
+
+        test_split = TestSplit(
+            run_specs=eval_run_specs_df,
+            scenario_state=eval_scenario_state_df,
+        )
+
+        predicted_stats = self.predict(train_split, test_split)
 
         # TODO: Do something meaningful with the predictions
         print(predicted_stats)
+
+
+class DataSplit:
+    """
+    Enapsulates data for a particualr data split
+    """
+    def __init__(self, run_specs=None, scenario_state=None, stats=None):
+        self.run_specs = run_specs
+        self.scenario_state = scenario_state
+        self.stats = stats
+
+
+class TrainSplit(DataSplit):
+    ...
+
+
+class TestSplit:
+    def __init__(self, run_specs=None, scenario_state=None):
+        super().__init__(run_specs=run_specs, scenario_state=scenario_state)
