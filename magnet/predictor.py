@@ -145,6 +145,11 @@ class Predictor:
                                     'stats.name.split'}
             join_fields = possible_join_fields & set(eval_stats_df.columns)
 
+            for col in join_fields:
+                pred_col = f"predicted_{col}"
+                col_dtype = str(eval_stats_df[col].dtype)
+                predicted_stats_df[pred_col] = predicted_stats_df[pred_col].astype(col_dtype)
+
             merged = pd.merge(run_eval_stats_df, predicted_stats_df,
                      left_on=sorted(list(join_fields)),
                      right_on=sorted(list(map(lambda x: f"predicted_{x}", join_fields))))
