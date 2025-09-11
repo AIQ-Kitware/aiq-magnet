@@ -590,19 +590,16 @@ class _HelmRunMsgspecView:
         FIXME:
             ScenarioState has a __post_init__
 
+        CommandLine:
+            xdoctest -m magnet.helm_outputs _HelmRunMsgspecView.scenario_state
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> run = HelmRun.demo()
             >>> self = run.msgspec
             >>> state1 = self.scenario_state()
             >>> state2 = run.dataclass.scenario_state()
-            >>> dir(state1)
-            >>> dir(state2)
-            ScenarioState.__post_init__(state1)
-            ScenarioState.__post_init__(state1)
-            from helm.benchmark.scenarios.scenario import Instance
-            util_msgspec.MSGSPEC_REGISTRY[Instance]
-            ...
+            >>> assert state1.__annotations__.keys() == state2.__annotations__.keys()
         """
         from magnet.utils import util_msgspec
         data = (self.parent.path / 'scenario_state.json').read_bytes()
