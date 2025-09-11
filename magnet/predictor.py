@@ -208,7 +208,7 @@ class Predictor:
     def __call__(self, root_dir, suite):
         train_split, test_split = self.prepare_all_dataframes(root_dir, suite)
         sequestered_test_split = test_split.sequester()
-        eval_stats_df = sequestered_test_split.stats
+        eval_stats_df = test_split.stats
 
         # TODO: Move the encapsulated splits
         predicted_stats = self.predict(train_split, sequestered_test_split)
@@ -219,6 +219,11 @@ class Predictor:
 class DataSplit:
     """
     Enapsulates data for a particualr data split
+
+    Attributes:
+        run_specs: DataFrame | None
+        scenario_state: DataFrame | None
+        stats: DataFrame | None
     """
     def __init__(self, run_specs=None, scenario_state=None, stats=None):
         self.run_specs = run_specs
@@ -236,7 +241,10 @@ class TestSplit(DataSplit):
         """
         Drop the results for components that should not have access to it.
         """
-        sequestered_split = SequesteredTestSplit(self.run_specs, self.scenario_state)
+        sequestered_split = SequesteredTestSplit(
+            run_specs=self.run_specs,
+            scenario_state=self.scenario_state
+        )
         return sequestered_split
 
 

@@ -1,4 +1,3 @@
-from typing import List
 import argparse
 
 from sklearn.linear_model import LinearRegression
@@ -6,6 +5,7 @@ from helm.benchmark.metrics.statistic import Stat
 import pandas as pd
 
 from magnet.predictor import Predictor
+
 
 class ExamplePerturbationPredictor(Predictor):
     """
@@ -20,12 +20,16 @@ class ExamplePerturbationPredictor(Predictor):
         >>> predictor_instance(root_dir, suite)
     """
 
-    def predict(self,
-                train_run_specs_df,
-                train_scenario_states_df,
-                train_stats_df,
-                eval_run_specs_df,
-                eval_scenario_states_df) -> dict[str, list[Stat]]:
+    def predict(self, train_split, sequestered_test_split) -> dict[str, list[Stat]]:
+
+        # Unpack split classes into dataframes
+        train_run_specs_df = train_split.run_specs
+        train_scenario_states_df = train_split.scenario_state  # NOQA
+        train_stats_df = train_split.stats
+
+        eval_run_specs_df = sequestered_test_split.run_specs
+        eval_scenario_states_df = sequestered_test_split.scenario_state  # NOQA
+
         predicted_stats = {}
 
         perturbed_exact_match_stats_df = train_stats_df[
