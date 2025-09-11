@@ -207,6 +207,40 @@ class Predictor:
         *predict_inputs, eval_stats_df = self.prepare_all_dataframes(
             root_dir, suite)
 
+        # TODO: Move the encapsulated splits
+
+        # train_split = TrainSplit(
+        #     run_specs=train_run_specs_df,
+        #     scenario_state=train_scenario_state_df,
+        #     stats=train_stats_df,
+        # )
+
+        # test_split = TestSplit(
+        #     run_specs=eval_run_specs_df,
+        #     scenario_state=eval_scenario_state_df,
+        # )
+
+        # predicted_stats = self.predict(train_split, test_split)
+
         predicted_stats = self.predict(*predict_inputs)
 
         self.compare_predicted_to_actual(predicted_stats, eval_stats_df)
+
+
+class DataSplit:
+    """
+    Enapsulates data for a particualr data split
+    """
+    def __init__(self, run_specs=None, scenario_state=None, stats=None):
+        self.run_specs = run_specs
+        self.scenario_state = scenario_state
+        self.stats = stats
+
+
+class TrainSplit(DataSplit):
+    ...
+
+
+class TestSplit:
+    def __init__(self, run_specs=None, scenario_state=None):
+        super().__init__(run_specs=run_specs, scenario_state=scenario_state)
