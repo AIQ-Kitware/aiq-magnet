@@ -1,10 +1,10 @@
 import random
-from typing import List
 import argparse
 
 from helm.benchmark.metrics.statistic import Stat
 
-from magnet.predictor import Predictor
+from magnet.predictor import Predictor, TrainSplit, SequesteredTestSplit
+
 
 class ExampleRandomPredictor(Predictor):
     """
@@ -19,16 +19,22 @@ class ExampleRandomPredictor(Predictor):
         >>> predictor_instance(root_dir, suite)
     """
     def predict(self,
-                train_run_specs_df,
-                train_scenario_state_df,
-                train_stats_df,
-                eval_run_specs_df,
-                eval_scenario_state_df) -> dict[str, list[Stat]]:
+                train_split: TrainSplit,
+                sequestered_test_split: SequesteredTestSplit
+                ) -> dict[str, list[Stat]]:
         predicted_stats = {}
+
+        # Unpack split classes into dataframes
+        train_run_specs_df = train_split.run_specs  # NOQA
+        train_scenario_states_df = train_split.scenario_state  # NOQA
+        train_stats_df = train_split.stats  # NOQA
+
+        eval_run_specs_df = sequestered_test_split.run_specs  # NOQA
+        eval_scenario_state_df = sequestered_test_split.scenario_state
 
         for key, _ in eval_scenario_state_df.groupby(['run_spec.name']):
             run_spec_name, = key
-            prediction = (random.choice(range(0,101)) / 100)
+            prediction = (random.choice(range(0, 101)) / 100)
             predicted_stats.setdefault(run_spec_name, []).append(
                 Stat(**{'name':
                         {'name': 'predicted_exact_match',
