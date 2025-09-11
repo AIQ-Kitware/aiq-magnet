@@ -32,17 +32,14 @@ class Predictor:
         return True
 
     def predict(self,
-                train_run_specs_df,
-                train_scenario_states_df,
-                train_stats_df,
-                eval_run_specs_df,
-                eval_scenario_states_df) -> dict[str, list[Stat]]:
+                train_split, sequestered_test_split) -> dict[str, list[Stat]]:
         raise NotImplementedError
 
     def prepare_predict_inputs(self, root_dir, suite):
-        *predict_inputs, eval_stats_df = self.prepare_all_dataframes(root_dir, suite)
+        train_split, test_split = self.prepare_all_dataframes(root_dir, suite)
+        sequestered_test_split = test_split.sequester()
         # predict method doesn't get `eval_stats_df`
-        return predict_inputs
+        return train_split, sequestered_test_split
 
     def prepare_all_dataframes(self, root_dir, suite):
         random = kwarray.ensure_rng(self.random_seed, api='python')
@@ -88,12 +85,18 @@ class Predictor:
             range(len(_full_eval_scenario_state_df)), min(len(_full_eval_scenario_state_df), self.num_eval_samples))
         eval_scenario_state_df = _full_eval_scenario_state_df.iloc[random_eval_indices]
 
-        return (train_run_specs_df,
-                train_scenario_state_df,
-                train_stats_df,
-                eval_run_specs_df,
-                eval_scenario_state_df,
-                eval_stats_df)
+        train_split = TrainSplit(
+            run_specs=train_run_specs_df,
+            scenario_state=train_scenario_state_df,
+            stats=train_stats_df,
+        )
+
+        test_split = TestSplit(
+            run_specs=eval_run_specs_df,
+            scenario_state=eval_scenario_state_df,
+            stats=eval_stats_df,
+        )
+        return train_split, test_split
 
     def compare_predicted_to_actual(self, predicted_stats, eval_stats_df):
         import kwutil
@@ -202,27 +205,13 @@ class Predictor:
 
             console.print(table)
 
-
     def __call__(self, root_dir, suite):
-        *predict_inputs, eval_stats_df = self.prepare_all_dataframes(
-            root_dir, suite)
+        train_split, test_split = self.prepare_all_dataframes(root_dir, suite)
+        sequestered_test_split = test_split.sequester()
+        eval_stats_df = sequestered_test_split.stats
 
         # TODO: Move the encapsulated splits
-
-        # train_split = TrainSplit(
-        #     run_specs=train_run_specs_df,
-        #     scenario_state=train_scenario_state_df,
-        #     stats=train_stats_df,
-        # )
-
-        # test_split = TestSplit(
-        #     run_specs=eval_run_specs_df,
-        #     scenario_state=eval_scenario_state_df,
-        # )
-
-        # predicted_stats = self.predict(train_split, test_split)
-
-        predicted_stats = self.predict(*predict_inputs)
+        predicted_stats = self.predict(train_split, sequestered_test_split)
 
         self.compare_predicted_to_actual(predicted_stats, eval_stats_df)
 
@@ -241,6 +230,17 @@ class TrainSplit(DataSplit):
     ...
 
 
-class TestSplit:
-    def __init__(self, run_specs=None, scenario_state=None):
+class TestSplit(DataSplit):
+
+    def sequester(self):
+        """
+        Drop the results for components that should not have access to it.
+        """
+        sequestered_split = SequesteredTestSplit(self.run_specs, self.scenario_state)
+        return sequestered_split
+
+
+class SequesteredTestSplit(TestSplit):
+    def __init__(self, run_specs=None, scenario_state=None, stats=None):
+        assert stats is None, 'cannot specify stats here'
         super().__init__(run_specs=run_specs, scenario_state=scenario_state)
