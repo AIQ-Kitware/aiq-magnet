@@ -20,7 +20,7 @@ from magnet.utils.util_iterable import add_length_hint
 from functools import cached_property
 
 # Pre-register msgspec structure variants of the HELM dataclass types
-ScenarioStateStruct = util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState)
+ScenarioStateStruct = util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState, dict=True)
 RunSpecStruct = util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
 StatStruct = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
 PerInstanceStatsStruct = util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
@@ -201,6 +201,36 @@ class HelmSuite(ub.NiceRepr):
         self = HelmOutputs.demo().suites()[0]
         return self
 
+    @classmethod
+    def coerce(cls, input):
+        """
+        Convert some reasonable representation of a HelmSuite into an object.
+
+        Args:
+            input (str | PathLike | HelmSuite):
+                An existing HelmSuite object or a path to the suite.
+                We may expand this definition in the future.
+
+        Returns:
+            HelmSuite
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmSuite.demo()
+            >>> assert HelmSuite.coerce(self) is self, 'check inplace return'
+            >>> assert HelmSuite.coerce(self.path).path == self.path, 'check path coerce'
+        """
+        import os
+        if isinstance(input, cls):
+            # return in put inplace
+            self = input
+        elif isinstance(input, (str, os.PathLike)):
+            # input is likely a path to a suite, todo: could add validation
+            self = cls(input)
+        else:
+            raise TypeError(f'Unable to coerce {type(input)}')
+        return self
+
     def _run_dirs(self, pattern='*'):
         # not robust to extra directories being written.  is there a way to
         # determine that these directories are actually run specs?
@@ -246,6 +276,44 @@ class HelmSuiteRuns(ub.NiceRepr):
                 p / 'stats.json',
             ])
         ])
+
+    @classmethod
+    def coerce(cls, input):
+        """
+        Convert some reasonable representation of a HelmSuiteRuns into an object.
+
+        Args:
+            input (str | PathLike | HelmSuite | HelmSuiteRuns | List[str | PathLike]):
+                An existing HelmSuiteRuns object, path to runs within a suite,
+                a single run path, or a HelmSuite.
+
+        Returns:
+            HelmSuiteRuns
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmSuiteRuns.demo()
+            >>> assert HelmSuiteRuns.coerce(self) is self, 'check inplace return'
+            >>> assert HelmSuiteRuns.coerce(self.paths).paths == self.paths, 'check coerce from List[path]'
+            >>> assert HelmSuiteRuns.coerce(self.paths[0]).paths == self.paths[0:1], 'check coerce from path'
+            >>> assert len(HelmSuiteRuns.coerce(HelmSuite.demo()).paths) > 2, 'check coerce from HelmSuite'
+        """
+        import os
+        if isinstance(input, cls):
+            # return in put inplace
+            self = input
+        elif isinstance(input, HelmSuite):
+            # return in put inplace
+            self = input.runs()
+        elif isinstance(input, (str, os.PathLike)):
+            # input is likely a path to a run, todo: could add validation
+            # todo: determine if the path is more likely a run or a suite
+            self = cls([ub.Path(input)])
+        elif isinstance(input, list):
+            self = cls([ub.Path(p) for p in input])
+        else:
+            raise TypeError(f'Unable to coerce {type(input)}')
+        return self
 
     @classmethod
     def demo(cls):
@@ -295,6 +363,8 @@ class _HelmRunJsonView:
 
     def per_instance_stats(self) -> list[dict]:
         """
+        A json view for a list of :class:`PerInstanceStats` objects
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -304,6 +374,8 @@ class _HelmRunJsonView:
 
     def run_spec(self) -> dict:
         """
+        A json view of :class:`RunSpec` objects
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -313,6 +385,8 @@ class _HelmRunJsonView:
 
     def scenario(self) -> dict:
         """
+        A json view of a :class:`Scenario` object
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -322,6 +396,8 @@ class _HelmRunJsonView:
 
     def scenario_state(self) -> dict:
         """
+        A json view of a :class:`ScenarioState` object
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -331,6 +407,8 @@ class _HelmRunJsonView:
 
     def stats(self) -> list[dict]:
         """
+        A json view of a :class:`Stat` object
+
         Example:
             >>> from magnet.helm_outputs import *
             >>> self = HelmRun.demo().json
@@ -508,10 +586,25 @@ class _HelmRunMsgspecView:
         """
         scenario_state.json contains a serialized ScenarioState, which contains
         every request to and response from the model.
+
+        FIXME:
+            ScenarioState has a __post_init__
+
+        CommandLine:
+            xdoctest -m magnet.helm_outputs _HelmRunMsgspecView.scenario_state
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> run = HelmRun.demo()
+            >>> self = run.msgspec
+            >>> state1 = self.scenario_state()
+            >>> state2 = run.dataclass.scenario_state()
+            >>> assert state1.__annotations__.keys() == state2.__annotations__.keys()
         """
         from magnet.utils import util_msgspec
         data = (self.parent.path / 'scenario_state.json').read_bytes()
         obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, ScenarioStateStruct)
+        ScenarioState.__post_init__(obj)  # Hack
         return obj
 
     def stats(self) -> list[StatStruct]:
