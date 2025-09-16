@@ -7,6 +7,7 @@ from helm.benchmark.config_registry import (
     register_builtin_configs_from_helm_package,
 )
 from helm.common.hierarchical_logger import hwarn
+from helm.clients.huggingface_client import HuggingFaceServerFactory
 
 
 class HELMInferenceEngine:
@@ -50,3 +51,12 @@ class HELMInferenceEngine:
             else:
                 raise ExecutorError(f"{str(result.error)} Request: {request}")
         return result
+
+    @staticmethod
+    def get_loaded_model(model_name):
+        server = HuggingFaceServerFactory._servers.get(model_name)
+
+        if server is not None:
+            return server.model
+        else:
+            return None
