@@ -1,3 +1,6 @@
+import contextlib
+import os
+
 from helm.common.request import Request
 from helm.common.request import RequestResult, GeneratedOutput
 from helm.common.authentication import Authentication
@@ -10,7 +13,32 @@ from helm.common.hierarchical_logger import hwarn
 from helm.clients.huggingface_client import HuggingFaceServerFactory
 
 
-class HELMInferenceEngine:
+class HelmInferenceEngine:
+    """
+    Class allowing model inference requests through HELM.
+
+    NOTE ** The responses generated here are not captured on disk as
+    they are when running HELM proper.  This class is intended to
+    allow ad-hoc requests, and not intended to replace complete
+    dataset runs (as would typically be done through `helm-run`)
+
+    Example:
+        >>> import magnet
+        >>> from dataclasses import replace
+        >>> self = magnet.HelmInferenceEngine()
+        >>> request = Request(model_deployment='huggingface/gpt2',
+        >>>                   model='openai/gpt2',
+        >>>                   prompt='Is the moon made of cheese?',
+        >>>                   stop_sequences=[],
+        >>>                   temperature=0.0,
+        >>>                   num_completions=1,
+        >>>                   max_tokens=10)
+        >>> response = self.inference_request(request)
+        >>> response = replace(response, request_time=None, request_datetime=None)
+        >>> print(response)
+        RequestResult(success=True, embedding=[], completions=[GeneratedOutput(text='\\n\\nThe answer is yes. The moon is', logprob=0.0, tokens=[Token(text='\\n', logprob=0.0), Token(text='\\n', logprob=0.0), Token(text='The', logprob=0.0), Token(text=' answer', logprob=0.0), Token(text=' is', logprob=0.0), Token(text=' yes', logprob=0.0), Token(text='.', logprob=0.0), Token(text=' The', logprob=0.0), Token(text=' moon', logprob=0.0), Token(text=' is', logprob=0.0)], finish_reason=None, multimodal_content=None, thinking=None)], cached=False, request_time=None, request_datetime=None, error=None, error_flags=None, batch_size=None, batch_request_time=None)
+    """
+
     def __init__(self, execution_spec=None):
         # Not sure this is the best place to do this, or if it's
         # idempotent
@@ -34,7 +62,10 @@ class HELMInferenceEngine:
                 sqlite_cache_backend_config=sqlite_cache_backend_config,
                 mongo_cache_backend_config=mongo_cache_backend_config)
 
-        self.executor = Executor(execution_spec)
+        with open(os.devnull, 'w') as devnull:
+            with contextlib.redirect_stdout(devnull):
+                # Intended to suppress the 'Looking in path: prod_env' message
+                self.executor = Executor(execution_spec)
 
     def inference_request(self, request: Request) -> RequestResult:
         # Largely copied (with a few tweaks to remove the RequestState

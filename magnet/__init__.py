@@ -6,6 +6,7 @@ __autogen__ = (
 # Manually declare what should be exposed when regenerating with mkinit
 __submodules__ = {
     'helm_outputs': ['HelmOutputs'],
+    'helm_inference': ['HelmInferenceEngine'],
     'example_random_predictor': [],
     'demo': [],
     'loaders': [],
@@ -32,8 +33,11 @@ __getattr__, __dir__, __all__ = lazy_loader.attach(
         'helm_outputs': [
             'HelmOutputs',
         ],
+        'helm_inference': [
+            'HelmInferenceEngine',
+        ],
     },
 )
 
-__all__ = ['HelmOutputs', 'demo', 'example_random_predictor', 'helm_outputs',
+__all__ = ['HelmOutputs', 'HelmInferenceEngine', 'demo', 'example_random_predictor', 'helm_outputs',
            'loaders', 'predictor', 'utils']
