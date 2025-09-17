@@ -9,30 +9,6 @@ The instances.json file has the original and perturbed input text mapped to inst
 
 So now I have a list of text and corresponding clip scores. But as I go back to SRI's code, I see they do each score from the multiple outputs, which I don't think exists in the heim outputs. Maybe I can fudge it by building a normal distribution using the mean and max stats I do have, and then sampling 4 items from it, which is kinda iffy, but I'm not sure there is a better way forward.
 
-
----
-
-Something else that's fun. I thought - because the heim outputs are 226GB, that the cache / generated images were going to be there (they are referenced in the scenario_state.json file), but it turns out all that size is just from .json files. Oh, but that's all due to display_predictions.json files, which have base64 encoded images.
-
-
-Questions on SRI code:
-
-The code currently seems to rely there being exactly 5 generated results per prompt, but if I'm reading it right, that's only the case because they are taking advantage of the structure to only compute an embedding per prompt and then replicate that embedding to make embedding-clipscore corresponds.
- My first questions are:
-
-* How important is it that the training method has multiple y values per X embedding? If we only had 1 clip score per prompt, would any assumptions be violated?
-
-* Similarly, what if the number of clip scores per prompt varies (i.e. some have up to 4, but most have only 1).
-
-Additionally, I've found that we can get the CLIP scores for multiple prompts in the HEIM benchmarks, but it will require recomputing them. The outputs only store the mean and maximum CLIP score over all generated images per prompt. It looks like most scenarios will generate 4 image variants, and then associate the mean/max clip score with the prompt. If possible, I would like to avoid recomputing CLIP scores, I had 2 ideas on what might be a reasonable proxy:
-
-1. Just use the mean or max clip score as the y value. For the max case, this is actually fine because it must have been an original real data point. The mean isn't guaranteed to be a real clip score, but I could use it to get 2 y values per X embedding.
-2. If we really need more than 2 y values per X embedding, maybe we could assume a normal distribution using the max to estimate the variance, and draw dummy samples to get 5 values. We can use the actual mean / max and then fill in with 3 of those sampled values to get slightly more representative training data, but making that normal assumption seems like it probably wont hold and might weaken the model.
-
-
-----
-
-
 Issue with getting the HELM results.
 
 Perterbation ids seem to tell you that it is perterbed, e.g. style, but you
@@ -236,8 +212,8 @@ import ubelt as ub
 import magnet
 import kwutil
 from line_profiler import profile
-from magnet.utils.util_pandas import DotDictDataFrame
 from functools import cache
+from magnet.utils.util_pandas import DotDictDataFrame
 
 
 @cache
@@ -268,18 +244,25 @@ def main():
     from helm.common.object_spec import parse_object_spec
     run_specs = {k: parse_object_spec(k) for k in big_table['run_spec.name'].unique()}
     big_table['run_spec.model'] = big_table['run_spec.name'].apply(lambda k: run_specs[k].args['model'])
-    big_table.suffix_subframe(['instance_id', 'mean', 'request_states.request.prompt', 'run_spec.model', 'run_spec.name']).shorten_columns()
     big_table['input_text_id'] = big_table['request_states.instance.input.text'].apply(cached_hash)
 
-    big_table[[
-        'request_states.request.prompt',
-        'request_states.instance.input.text'
-    ]]
+    import numpy as np
+    unique_indices = get_unique_model_prompt_indices(big_table)
+    unique_indices = np.array(unique_indices)
+    unique_big_table = big_table.loc[unique_indices]
 
-    big_table.search_columns('perturb')
-    big_table.search_columns('modifications')
-    big_table[['run_spec.name'] + big_table.search_columns('modifications')]
+    for key, group in unique_big_table.groupby(['run_spec.model']):
+        print(key, len(group))
 
+        group.prefix_subframe('per_instance_stats.stat.max_clip_score')
+
+        group['per_instance_stats.stat.max_clip_score.max']
+        # We now have a list of prompts and scores.
+        prompts = group['request_states.instance.input.text']
+        scores = group['per_instance_stats.stat.expected_clip_score.max']
+
+
+def get_unique_model_prompt_indices(big_table):
     unique_indices = []
     for _, group in big_table.groupby(['run_spec.model', 'input_text_id']):
         # Just take the first to resolve duplicates
@@ -325,24 +308,13 @@ def main():
                 print(f'constant = {ub.urepr(constant, nl=2)}')
                 print(f'varied = {ub.urepr(varied, nl=2)}')
                 raise Exception
-    import numpy as np
-    unique_indices = np.array(unique_indices)
-    unique_big_table = big_table.loc[unique_indices]
-
-    for _, group in unique_big_table.groupby(['run_spec.model']):
-        print(len(group))
-        if 0:
-            print(group.prefix_subframe('per_instance_stats.stat.max_clip_score').shorten_columns().T)
-
-        group.prefix_subframe('per_instance_stats.stat.max_clip_score')
-
-        group['per_instance_stats.stat.max_clip_score.max']
-        prompts = group['request_states.instance.input.text']
-        scores = group['per_instance_stats.stat.expected_clip_score.max']
+    return unique_indices
 
 
 def load_run_clip_info(run):
     """
+    Build a data frame where perterbations and instances have unique ids.
+
     Relevant HELM data structures we are working with:
 
         helm.benchmark.metrics.metric.PerInstanceStats
@@ -351,6 +323,9 @@ def load_run_clip_info(run):
         helm.benchmark.augmentations.perturbation_description.PerturbationDescription
 
     """
+    import pandas as pd
+
+    # Only load data that has these stats computed
     stats_of_interest = [
         'expected_clip_score',
         'max_clip_score',
@@ -371,8 +346,6 @@ def load_run_clip_info(run):
             base = ub.udict.difference(instance_stats, {'stats'})
             # Include custom id for future use
             perturbation = instance_stats.get('perturbation', None)
-            # if perturbation is not None:
-            #     raise Exception
             perturb_id = ub.hash_data(perturbation)
             perturb_instance_id = ub.hash_data([instance_stats['instance_id'], perturb_id])
 
@@ -437,119 +410,12 @@ def load_run_clip_info(run):
         filtered_states_df.iloc[idxs].map(str).varied_values(min_variations=2)
         raise AssertionError('dups found')
 
-    import pandas as pd
     table = pd.concat([
         filtered_stats_df.set_index('per_instance_stats.perturb_instance_id', drop=False),
         filtered_states_df.set_index('request_states.instance.perturb_instance_id', drop=False),
     ], axis=1).reset_index(drop=True)
     table['run_path'] = run.path
     return table
-
-
-def debug():
-    heim_output_dpath = ub.Path('/data/crfm-helm-public/heim/benchmark_output')
-    outs = magnet.HelmOutputs(heim_output_dpath)
-    suite = outs.suites('v1.0.0')[0]
-    runs = suite.runs('mscoco:*').existing()
-
-    stats_table = suite.runs('mscoco:*').stats()
-
-    stats_of_interest = [
-        'expected_clip_score',
-        'max_clip_score',
-        # 'expected_clip_score_multilingual',
-        # 'max_clip_score_multilingual'
-    ]
-    flags = stats_table['stats.name.name'].apply(lambda x: x in stats_of_interest)
-    subtable = stats_table[flags]
-    run_specs_of_interest = subtable['run_spec.name'].unique()
-
-    from magnet.helm_outputs import HelmSuiteRuns
-    runs = HelmSuiteRuns([p for p in runs.paths if p.name in run_specs_of_interest])
-
-    import kwutil
-    import pandas as pd
-    from magnet.utils.util_pandas import DotDictDataFrame
-    from magnet.utils.util_msgspec import asdict as struct_asdict
-
-    for run in runs:
-        instance_rows = []
-        # import timerit
-        # ti = timerit.Timerit(100, bestof=10, verbose=2)
-        # for timer in ti.reset('time'):
-        #     with timer:
-        scenario_state = run.msgspec.scenario_state()
-        scenario_state = run.dataclass.scenario_state()
-
-        instances = scenario_state.instances
-        for instance in instances:
-            print(f'instance.perturbation={instance.perturbation}')
-            perturb_id = ub.hash_data(instance.perturbation)
-            row = kwutil.DotDict.from_nested(struct_asdict(instance))
-            row['perturb_id'] = perturb_id
-            row['perturb_instance_id'] = ub.hash_data([instance.id, perturb_id])[0:24]
-            instance_rows.append(row)
-        instance_table = DotDictDataFrame(instance_rows)
-        instance_table['input.text']
-
-        clip_accum = []
-        for instance_stat in run.dataclass.per_instance_stats():
-            perturb_id = ub.hash_data(instance_stat.perturbation)
-
-            mean_clip = None
-            max_clip = None
-            for stat in instance_stat.stats:
-                if 'expected_clip_score' == stat.name.name:
-                    mean_clip = stat.mean
-                if 'max_clip_score' == stat.name.name:
-                    max_clip = stat.mean
-            assert (mean_clip is not None) == (max_clip is not None)
-            if mean_clip is not None:
-                new = ub.udict(instance_stat.__dict__) - {'stats'}
-                new['mean_clip'] = mean_clip
-                new['max_clip'] = max_clip
-                new['perturb_id'] = perturb_id
-                new['perturb_instance_id'] = ub.hash_data([instance_stat.instance_id, perturb_id])[0:24]
-                clip_accum.append(new)
-
-        clip_table = pd.DataFrame(clip_accum)
-
-        combo = pd.concat([
-            instance_table.set_index('perturb_instance_id'),
-            clip_table.set_index('perturb_instance_id')
-        ], axis=1)
-
-        run.dataclass.run_spec().adapter_spec.model
-        print(combo)
-
-        texts = combo['input.text'].values
-        clip_scores = combo['max_clip'].values
-
-#     data = []
-#     for row in combo.iterrows():
-#         row['input.text']
-#         row['max_clip']
-
-#     combo['mean_clip']
-
-
-#     clip_table.join(instance_table, on='perturb_instance_id')
-
-#     self = run
-
-
-#     run = runs[0]
-#     stats_table = run.stats_dataframe()
-
-#     run.scenario_state_dataframe()
-#     run.run_spec_dataframe()
-
-#     suite = outs.suites[-1]
-
-#     run_specs = outs.list_run_specs(suite)
-#     run_specs = run_specs[0:1]
-
-#     stats = load_all_stats_as_dataframe(suite, run_specs, root_dir=root_dir)
 
 
 if __name__ == '__main__':
