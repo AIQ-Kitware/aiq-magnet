@@ -37,6 +37,35 @@ class HelmInferenceEngine:
         >>> response = replace(response, request_time=None, request_datetime=None)
         >>> print(response)
         RequestResult(success=True, embedding=[], completions=[GeneratedOutput(text='\\n\\nThe answer is yes. The moon is', logprob=0.0, tokens=[Token(text='\\n', logprob=0.0), Token(text='\\n', logprob=0.0), Token(text='The', logprob=0.0), Token(text=' answer', logprob=0.0), Token(text=' is', logprob=0.0), Token(text=' yes', logprob=0.0), Token(text='.', logprob=0.0), Token(text=' The', logprob=0.0), Token(text=' moon', logprob=0.0), Token(text=' is', logprob=0.0)], finish_reason=None, multimodal_content=None, thinking=None)], cached=False, request_time=None, request_datetime=None, error=None, error_flags=None, batch_size=None, batch_request_time=None)
+        >>> model = self.get_loaded_model('openai/gpt2')
+        >>> print(model)
+        GPT2LMHeadModel(
+          (transformer): GPT2Model(
+            (wte): Embedding(50257, 768)
+            (wpe): Embedding(1024, 768)
+            (drop): Dropout(p=0.1, inplace=False)
+            (h): ModuleList(
+              (0-11): 12 x GPT2Block(
+                (ln_1): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+                (attn): GPT2Attention(
+                  (c_attn): Conv1D(nf=2304, nx=768)
+                  (c_proj): Conv1D(nf=768, nx=768)
+                  (attn_dropout): Dropout(p=0.1, inplace=False)
+                  (resid_dropout): Dropout(p=0.1, inplace=False)
+                )
+                (ln_2): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+                (mlp): GPT2MLP(
+                  (c_fc): Conv1D(nf=3072, nx=768)
+                  (c_proj): Conv1D(nf=768, nx=3072)
+                  (act): NewGELUActivation()
+                  (dropout): Dropout(p=0.1, inplace=False)
+                )
+              )
+            )
+            (ln_f): LayerNorm((768,), eps=1e-05, elementwise_affine=True)
+          )
+          (lm_head): Linear(in_features=768, out_features=50257, bias=False)
+        )
     """
 
     def __init__(self, execution_spec=None):
