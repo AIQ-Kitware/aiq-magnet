@@ -151,6 +151,20 @@ The arguments passed into the `predict` method are Pandas dataframes correspondi
 
 We also recommend looking at the `magnet/example_random_predictor.py` and/or `magnet/example_perturbation_predictor.py` examples to see what a complete (albeit simple) predictor looks like.
 
+## Downloading HELM results
+
+We provide a utility to download precomputed HELM results. For details on how to use this tool see:
+
+```bash
+python -m magnet.backends.helm.download_helm_results --help
+```
+
+For a quick getting started, we can download the HELM lite results to `/data/crfm-helm-public`.
+
+```bash
+python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.13.0 --download-dir /data/crfm-helm-public
+```
+
 # Roadmap
 
 - More options for predict input (dataframes vs. HELM objects vs. dicts)

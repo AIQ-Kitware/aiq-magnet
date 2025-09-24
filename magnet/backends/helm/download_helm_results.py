@@ -380,6 +380,12 @@ class FsspecStorageBackend:
         self.fs = fsspec.filesystem('gcs', token='anon')
 
     def list_dirs(self, prefix: str) -> List[str]:
+        """
+        Ignore:
+            self = FsspecStorageBackend('gs://crfm-helm-public')
+            prefix = 'gs://crfm-helm-public/lite/benchmark_output/runs/v1.0.0'
+            self.list_dirs(prefix)
+        """
         # Accept either 'gs://...' or 'bucket/...'
         root = _strip_gs(prefix).rstrip('/') + '/'
         try:
