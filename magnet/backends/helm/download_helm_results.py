@@ -28,19 +28,21 @@ Example:
     >>> # Start fresh
     >>> dpath = ub.Path.appdir('magnet/tests/download_helm_list')
     >>> dpath.delete()
-    >>> assert len(list(dpath.glob('**'))) == 0, 'delete should remove everything'
+    >>> existing = [r / f for r, ds, fs in dpath.walk() for f in fs + ['.']]
+    >>> assert len(existing) == 0, 'delete should remove everything'
     >>> #
     >>> # Test downloading with a bat pattern
     >>> with ub.CaptureStdout(suppress=False) as cap:
     >>>     download_helm_results.main(argv=False, download_dir=dpath, runs='bad-pattern')
-    >>> assert len(list(dpath.glob('**'))) == 0, 'should not have downloaded anything'
+    >>> existing = [r / f for r, ds, fs in dpath.walk() for f in fs + ['.']]
+    >>> assert len(existing) == 0, 'should not have downloaded anything'
     >>> #
     >>> # Test downloading with a bat pattern
     >>> with ub.CaptureStdout(suppress=False) as cap:
     >>>     download_helm_results.main(argv=False, download_dir=dpath, runs='med_qa:model=deepseek-ai_deepseek-v3', version='v1.13.0')
-    >>> downloaded_paths = list(dpath.glob('**'))
-    >>> print(f'downloaded_paths = {ub.urepr(downloaded_paths, nl=1)}')
-    >>> assert len(downloaded_paths) == 14, 'should have only downloaded a few results'
+    >>> existing = [r / f for r, ds, fs in dpath.walk() for f in fs + ['.']]
+    >>> print(f'existing = {ub.urepr(existing, nl=1)}')
+    >>> assert len(existing) == 14, 'should have only downloaded a few results'
 """
 
 import re
