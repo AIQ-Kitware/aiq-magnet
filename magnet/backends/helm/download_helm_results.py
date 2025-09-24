@@ -195,85 +195,16 @@ def eprint(*args, **kwargs):
 # ===============================
 
 
-class _GSBaseBackend:
-    """
-    Unsure if the cli or fsspec is more reliable, for now impelemnt both as a
-    backend and abstract over them.
-
-    Minimal interface the main flow depends on.
-      - list_benchmarks() -> List[str]
-      - list_versions(bench) -> List[str]
-      - latest_version(bench) -> str
-      - list_runs(bench, version) -> List[str]
-      - download_version(bench, version, dest, checksum=False) -> None
-      - download_runs(bench, version, dest, run_ids, checksum=False) -> None
-
-    Example:
-        >>> # xdoctest: +REQUIRES(module:gcsfs)
-        >>> # Test backends are the same
-        >>> from magnet.backends.helm.download_helm_results import *  # NOQA
-        >>> import pytest
-        >>> if not GSCLIBackend.is_available():
-        >>>     pytest.skip('cli tool not available, cannot test')
-        >>> bucket = "gs://crfm-helm-public"
-        >>> benchmark = 'lite'
-        >>> version = 'v1.0.0'
-        >>> backend1 = GSCLIBackend(bucket)
-        >>> backend2 = GSFSSspecBackend(bucket)
-        >>> result1 = backend1.list_benchmarks()
-        >>> result2 = backend2.list_benchmarks()
-        >>> assert result1 == result2
-        >>> result1 = backend1.list_versions(benchmark)
-        >>> result2 = backend2.list_versions(benchmark)
-        >>> assert result1 == result2
-        >>> result1 = backend1.list_runs(benchmark, version)
-        >>> result2 = backend2.list_runs(benchmark, version)
-        >>> assert result1 == result2
-        >>> run_ids = ['gsm:model=meta_llama-2-13b']
-        >>> dpath1 = ub.Path.appdir('magnet/tests/gsbackends/cli').delete()
-        >>> dpath2 = ub.Path.appdir('magnet/tests/gsbackends/fsspec').delete()
-        >>> with ub.Timer(f'backend: {backend1}'):
-        >>>     backend1.download_runs(benchmark, version, dpath1, run_ids)
-        >>> with ub.Timer(f'backend: {backend2}'):
-        >>>     backend2.download_runs(benchmark, version, dpath2, run_ids)
-        >>> result1 = sorted([r.relative_to(dpath1) / f for r, ds, fs in dpath1.walk() for f in fs + ['.']])
-        >>> result2 = sorted([r.relative_to(dpath2) / f for r, ds, fs in dpath2.walk() for f in fs + ['.']])
-        >>> assert result2 == result1
-    """
-
-    def __init__(self, bucket: str):
-        self.bucket = bucket.rstrip('/')
-
-    # Optional helper for uniform GS path handling
-    def _version_relpath(self, version_src_gs: str) -> str:
-        # Convert 'gs://bucket/x/y' -> 'x/y'
-        return version_src_gs.replace(self.bucket + '/', '', 1).lstrip('/')
-
-    @staticmethod
-    def _hack_helm_remote_path(bucket, bench, version=None):
-        if bench == 'classic':
-            # Hack because they just put it in the top level
-            path = f'{bucket}/benchmark_output/runs'
-        else:
-            # normal case
-            path = f'{bucket}/{bench}/benchmark_output/runs'
-        if version is not None:
-            path = f'{path}/{version}'
-        return path
-        ...
-
-
-class GSCLIBackend(_GSBaseBackend):
-    """
-    gsutil/CLI implementation.
+class GsutilStorageBackend:
+    """Implementation via Google Cloud SDK `gsutil` CLI.
 
     Note: this backend can likely be removed if we find that fsspec doesn't
     have any issues, so far it seems faster, better, and more reliable than
     using the cli tool. Leaving this in for now.
     """
 
-    def __init__(self, bucket: str):
-        super().__init__(bucket)
+    def __init__(self, bucket):
+        self.bucket = bucket.rstrip('/')
 
     @cached_property
     def gsutil(self):
@@ -409,185 +340,190 @@ class GSCLIBackend(_GSBaseBackend):
         for c in cmds:
             ub.cmd(c, verbose=3)
 
-    def list_benchmarks(self, verbose: bool = False) -> List[str]:
-        cp = ub.cmd([self.gsutil, 'ls', f'{self.bucket}/'], verbose=verbose)
-        lines = [x.strip() for x in (cp.stdout or '').splitlines()]
-        out = set()
-        for line in lines:
-            m = re.match(rf'{re.escape(self.bucket)}/([^/]+)/?$', line)
-            if m:
-                out.add(m.group(1))
-        out.add('classic')  # hack this in
-        out = out - {'benchmark_output', 'assets', 'tmp', 'config', 'prod_env', 'source_datasets'}  # hack these out
-        return sorted(out)
-
-    def list_versions(self, bench: str, verbose: bool = False) -> List[str]:
-        runs_path = self._hack_helm_remote_path(self.bucket, bench)
-        cp = ub.cmd([self.gsutil, 'ls', f'{runs_path}/'], verbose=verbose)
-        lines = [x.strip() for x in (cp.stdout or '').splitlines()]
-        vers = []
-        for line in lines:
-            m = re.match(rf'{re.escape(runs_path)}/([^/]+)/?$', line)
-            if m:
-                vers.append(m.group(1))
-        return sorted(set(vers), key=_version_key)
-
-    def latest_version(self, bench: str, verbose: bool = False) -> str:
-        vers = self.list_versions(bench, verbose=verbose)
-        return vers[-1] if vers else ''
-
-    def list_runs(self, bench: str, version: str, verbose: bool = False) -> List[str]:
-        """
-        List runs under a specific benchmark and version
-        Returns a list of run_id strings (without trailing slash).
-        """
-        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
-        cp = ub.cmd([self.gsutil, 'ls', f'{version_src_gs}/'], verbose=verbose)
+    # ---- protocol ----
+    def list_dirs(self, prefix: str) -> List[str]:
+        # Normalize to gs://...
+        prefix = prefix.rstrip('/') + '/'
+        cp = ub.cmd([self.gsutil, 'ls', prefix], verbose=0)
         lines = [x.strip() for x in (cp.stdout or '').splitlines()]
         out = []
-        # Match: <src_version_path>/<run_id>/
-        pat = re.compile(rf'{re.escape(version_src_gs)}/([^/]+)/?$')
+        # match 'gs://bucket/prefix/child/'
+        pat = re.compile(rf'^{re.escape(prefix)}([^/]+)/?$')
         for line in lines:
             m = pat.match(line)
             if m:
                 out.append(m.group(1))
-        # Some buckets may list files too; keep only unique run-like prefixes.
         return sorted(set(out))
 
-    # Transfers
-    def download_version(
-        self, bench: str, version: str, dest: ub.Path, checksum: bool = False
+    def download_tree(
+        self, src_prefix: str, dest_dir: ub.Path, checksum: bool = False
     ) -> None:
-        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
-        dest = ub.Path(dest).ensuredir()
-        self._gsutil_rsync(version_src_gs, str(dest), checksum=checksum)
-
-    def download_runs(
-        self,
-        bench: str,
-        version: str,
-        dest: ub.Path,
-        run_ids: List[str],
-        checksum: bool = False,
-    ) -> None:
-        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
-        dest = ub.Path(dest).ensuredir()
-        for r in run_ids:
-            sub_src = f'{version_src_gs}/{r}'
-            sub_dest = dest / r
-            sub_dest.mkdir(parents=True, exist_ok=True)
-            self._gsutil_rsync(sub_src, str(sub_dest), checksum=checksum)
-
-    def _gsutil_rsync(self, src: str, dest: str, checksum: bool) -> None:
+        dest_dir.ensuredir()
         cmd = [self.gsutil, '-m', 'rsync', '-r']
         if checksum:
             cmd.append('-c')
-        cmd += [src, dest]
+        cmd += [src_prefix, str(dest_dir)]
         ub.cmd(cmd, verbose=1, capture=False)
 
 
-class GSFSSspecBackend(_GSBaseBackend):
-    """
-    Pure-Python fsspec/gcsfs implementation
-    (anonymous access for public buckets).
-    """
+class FsspecStorageBackend:
+    """Pure-Python implementation via fsspec/gcsfs (anonymous access)."""
 
     def __init__(self, bucket: str):
-        super().__init__(bucket)
+        self.bucket = bucket.rstrip('/')
         try:
-            import fsspec  # noqa: F401
-        except Exception as ex:
+            import fsspec  # type: ignore
+        except Exception as ex:  # pragma: no cover (import-time edge)
             raise ExitError(
-                msg=ub.paragraph(
-                    f"""
-                    backend=gcsfs requested, but fsspec/gcsfs is not installed.
-                    Please: pip install gcsfs fsspec
-                    (original error: {ex})
-                    """
-                ),
-                code=1,
+                f'backend=fsspec requested, but fsspec/gcsfs is not installed: {ex}', 1
             )
         self.fs = fsspec.filesystem('gcs', token='anon')
 
-    # Listing
-    def list_benchmarks(self, verbose: bool = False) -> List[str]:
-        root = _strip_gs(self.bucket).rstrip('/')
+    def list_dirs(self, prefix: str) -> List[str]:
+        # Accept either 'gs://...' or 'bucket/...'
+        root = _strip_gs(prefix).rstrip('/') + '/'
         try:
-            entries = self.fs.ls(root + '/', detail=True)
+            entries = self.fs.ls(root, detail=True)
         except FileNotFoundError:
             return []
-        out = set()
+        out = []
         for e in entries:
             if e.get('type') == 'directory':
-                out.add(e['name'].rstrip('/').split('/')[-1])
-        out.add('classic')  # hack this in
-        out = out - {'benchmark_output', 'assets', 'tmp', 'config', 'prod_env', 'source_datasets'}  # hack these out
+                out.append(e['name'].rstrip('/').split('/')[-1])
         return sorted(set(out))
 
-    def list_versions(self, bench: str, verbose: bool = False) -> List[str]:
-        runs_path = self._hack_helm_remote_path(self.bucket, bench)
-        print(f'runs_path={runs_path}')
-        try:
-            entries = self.fs.ls(runs_path + '/', detail=True)
-        except FileNotFoundError:
-            return []
-        vers = []
-        for e in entries:
-            if e.get('type') == 'directory':
-                vers.append(e['name'].rstrip('/').split('/')[-1])
-        return sorted(set(vers), key=_version_key)
-
-    def latest_version(self, bench: str, verbose: bool = False) -> str:
-        vers = self.list_versions(bench, verbose=verbose)
-        return vers[-1] if vers else ''
-
-    def list_runs(self, bench: str, version: str, verbose: bool = False) -> List[str]:
-        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
-        base = _strip_gs(version_src_gs).rstrip('/')
-        try:
-            entries = self.fs.ls(base + '/', detail=True)
-        except FileNotFoundError:
-            return []
-        runs = []
-        for e in entries:
-            if e.get('type') == 'directory':
-                runs.append(e['name'].rstrip('/').split('/')[-1])
-        return sorted(set(runs))
-
-    # Transfers
-    def download_version(
-        self, bench: str, version: str, dest: ub.Path, checksum: bool = False
+    def download_tree(
+        self, src_prefix: str, dest_dir: ub.Path, checksum: bool = False
     ) -> None:
-        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
         if checksum:
             eprint(
-                'Note: checksum is not supported with backend=gcsfs; proceeding without.'
+                'Note: checksum verification is not supported with fsspec; proceeding without it.'
             )
+        base = _strip_gs(src_prefix).rstrip('/')
+        dest_dir.ensuredir()
         from fsspec.callbacks import TqdmCallback
-        src = _strip_gs(version_src_gs).rstrip('/')
-        dest = ub.Path(dest).ensuredir()
-        callback = TqdmCallback(tqdm_kwargs={"desc": f"Downloading {version_src_gs}"})
         # TODO: can we use fsspec.generic.rsync here?
-        self.fs.get(src, str(dest.parent) + '/', recursive=True, callback=callback)
+        callback = TqdmCallback(tqdm_kwargs={"desc": f"Downloading {base}"})
+        self.fs.get(base, str(dest_dir.parent) + '/', recursive=True, callback=callback)
+
+
+class HelmRemoteStore:
+    """
+    Using some abstract backend storage, provide a way to navivage and download
+    precomptued HELM results.
+
+    Example:
+        >>> # xdoctest: +REQUIRES(module:gcsfs)
+        >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+        >>> self = HelmRemoteStore()
+        >>> benchmarks = self.list_benchmarks()
+        >>> benchmark = benchmarks[0]
+        >>> verions = self.list_versions(benchmark)
+        >>> verion = verions[0]
+        >>> runs = self.list_runs(benchmark, verion)
+        >>> print(f'benchmarks = {ub.urepr(benchmarks, nl=0)}')
+        >>> print(f'verions = {ub.urepr(verions, nl=0)}')
+        >>> print(f'runs = {ub.urepr(runs, nl=0)}')
+
+    Example:
+        >>> # xdoctest: +REQUIRES(module:gcsfs)
+        >>> # Test backends are the same
+        >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+        >>> import pytest
+        >>> if not GsutilStorageBackend.is_available():
+        >>>     pytest.skip('cli tool not available, cannot test')
+        >>> benchmark = 'lite'
+        >>> version = 'v1.0.0'
+        >>> storage1 = HelmRemoteStore(backend='gsutil')
+        >>> storage2 = HelmRemoteStore(backend='fsspec')
+        >>> result1 = storage1.list_benchmarks()
+        >>> result2 = storage2.list_benchmarks()
+        >>> assert result1 == result2
+        >>> result1 = storage1.list_versions(benchmark)
+        >>> result2 = storage2.list_versions(benchmark)
+        >>> assert result1 == result2
+        >>> result1 = storage1.list_runs(benchmark, version)
+        >>> result2 = storage2.list_runs(benchmark, version)
+        >>> assert result1 == result2
+        >>> run_ids = ['gsm:model=meta_llama-2-13b']
+        >>> dpath1 = ub.Path.appdir('magnet/tests/gsbackends/cli').delete()
+        >>> dpath2 = ub.Path.appdir('magnet/tests/gsbackends/fsspec').delete()
+        >>> with ub.Timer(f'backend: {storage1}'):
+        >>>     storage1.download_runs(benchmark, version, dpath1, run_ids)
+        >>> with ub.Timer(f'backend: {storage2}'):
+        >>>     storage2.download_runs(benchmark, version, dpath2, run_ids)
+        >>> result1 = sorted([r.relative_to(dpath1) / f for r, ds, fs in dpath1.walk() for f in fs + ['.']])
+        >>> result2 = sorted([r.relative_to(dpath2) / f for r, ds, fs in dpath2.walk() for f in fs + ['.']])
+        >>> assert result2 == result1
+    """
+    def __init__(self, bucket='gs://crfm-helm-public', backend='fsspec'):
+        if backend == 'fsspec':
+            self.backend = FsspecStorageBackend(bucket=bucket)
+        elif backend == 'gsutil':
+            self.backend = GsutilStorageBackend(bucket=bucket)
+
+    @property
+    def bucket(self) -> str:
+        return self.backend.bucket
+
+    # --- path helpers ---
+    def _runs_root(self, benchmark: str) -> str:
+        # HELM layout quirk: classic lives at top-level benchmark_output
+        if benchmark == 'classic':
+            return f'{self.bucket}/benchmark_output/runs'
+        return f'{self.bucket}/{benchmark}/benchmark_output/runs'
+
+    # --- list API ---
+    def list_benchmarks(self) -> List[str]:
+        # everything at bucket root are candidate benchmarks; filter out non-bench dirs
+        names = set(self.backend.list_dirs(self.bucket))
+        # include classic; remove non-bench directories we know about
+        names.add('classic')
+        blocklist = {
+            'benchmark_output',
+            'assets',
+            'tmp',
+            'config',
+            'prod_env',
+            'source_datasets',
+        }
+        return sorted(names - blocklist)
+
+    def list_versions(self, benchmark: str) -> List[str]:
+        root = self._runs_root(benchmark)
+        vers = self.backend.list_dirs(root)
+        return sorted(set(vers), key=_version_key)
+
+    def latest_version(self, benchmark: str) -> str:
+        vers = self.list_versions(benchmark)
+        return vers[-1] if vers else ''
+
+    def list_runs(self, benchmark: str, version: str) -> List[str]:
+        root = self._runs_root(benchmark)
+        return self.backend.list_dirs(f'{root}/{version}')
+
+    # --- download API ---
+    def download_version(
+        self, benchmark: str, version: str, dest: ub.Path, *, checksum: bool = False
+    ) -> None:
+        root = self._runs_root(benchmark)
+        self.backend.download_tree(f'{root}/{version}', dest, checksum=checksum)
 
     def download_runs(
         self,
-        bench: str,
+        benchmark: str,
         version: str,
         dest: ub.Path,
         run_ids: List[str],
+        *,
         checksum: bool = False,
     ) -> None:
-        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
-        if checksum:
-            eprint(
-                'Note: checksum is not supported with backend=gcsfs; proceeding without.'
+        root = self._runs_root(benchmark)
+        for run_id in run_ids:
+            run_dpath = (dest / run_id).ensuredir()
+            self.backend.download_tree(
+                f'{root}/{version}/{run_id}', run_dpath, checksum=checksum
             )
-        base = _strip_gs(version_src_gs).rstrip('/')
-        dest = ub.Path(dest).ensuredir()
-        for r in ub.ProgIter(run_ids, desc='downloading runs'):
-            (dest / r).ensuredir()
-            self.fs.get(f'{base}/{r}', str(dest) + '/', recursive=True)
 
 
 def _strip_gs(url: str) -> str:
@@ -617,11 +553,11 @@ def filter_runs(all_runs, runs):
     return matched
 
 
-def _do_requested_download(backend, benchmark, version, dest, verbose, runs, checksum):
+def _do_requested_download(storage, benchmark, version, dest, verbose, runs, checksum):
     """
     Main download logic, either filtered or not.
     """
-    bucket_base = f'{backend.bucket}/{benchmark}/benchmark_output/runs'
+    bucket_base = f'{storage.bucket}/{benchmark}/benchmark_output/runs'
     src = f'{bucket_base}/{version}'
 
     import subprocess
@@ -631,7 +567,7 @@ def _do_requested_download(backend, benchmark, version, dest, verbose, runs, che
             import kwutil
 
             # Filter to a subset of run IDs by regex (comma-separated supported).
-            all_runs = backend.list_runs(benchmark, version, verbose=verbose)
+            all_runs = storage.list_runs(benchmark, version)
             if not all_runs:
                 eprint(f'No runs found under version path: {src}')
                 return 1
@@ -654,12 +590,12 @@ def _do_requested_download(backend, benchmark, version, dest, verbose, runs, che
 
             # Sync each selected run subdirectory independently.
             dest.mkdir(parents=True, exist_ok=True)
-            backend.download_runs(
+            storage.download_runs(
                 benchmark, version, dest, matched, checksum=bool(checksum)
             )
         else:
             # Download entire version.
-            backend.download_version(benchmark, version, dest, checksum=bool(checksum))
+            storage.download_version(benchmark, version, dest, checksum=bool(checksum))
 
     except subprocess.CalledProcessError as ex:
         eprint('gsutil rsync failed.')
@@ -688,21 +624,17 @@ def main(argv=None, **kwargs) -> int:
 
     # Choose backend for list operations
     try:
-        if args.backend == 'gsutil':
-            backend = GSCLIBackend(args.bucket)
-            backend.ensure_gsutil(install=args.install)
-        else:
-            backend = GSFSSspecBackend(args.bucket)
+        storage = HelmRemoteStore(args.bucket, backend=args.backend)
     except ExitError as ex:
         eprint(ex.msg)
         return ex.code
 
     if args.list_benchmarks:
-        for name in backend.list_benchmarks(verbose=verbose):
+        for name in storage.list_benchmarks():
             print(name)
         return 0
     if args.list_versions:
-        for v in backend.list_versions(benchmark, verbose=verbose):
+        for v in storage.list_versions(benchmark):
             print(v)
         return 0
 
@@ -712,14 +644,14 @@ def main(argv=None, **kwargs) -> int:
         eprint(
             f"Resolving latest version for benchmark '{args.benchmark}' (backend={args.backend})..."
         )
-        version = backend.latest_version(benchmark, verbose=verbose)
+        version = storage.latest_version(benchmark)
         if not version:
             eprint('Error: could not determine latest version (no runs found?).')
             return 1
         eprint(f'Using latest version: {version}')
 
     if args.list_runs:
-        all_runs = backend.list_runs(benchmark, version, verbose=verbose)
+        all_runs = storage.list_runs(benchmark, version)
         if runs:
             matched = filter_runs(all_runs, runs)
         else:
@@ -736,7 +668,7 @@ def main(argv=None, **kwargs) -> int:
     # TODO: probably should have the backend class handle this path stuff to
     # keep the API at the level of benchmark (i.e. suite) name, versions, and
     # run names.
-    bucket_base = f'{backend.bucket}/{benchmark}/benchmark_output/runs'
+    bucket_base = f'{storage.bucket}/{benchmark}/benchmark_output/runs'
     src = f'{bucket_base}/{version}'
     download_dir = ub.Path(args.download_dir)
     dest_root = download_dir / benchmark / 'benchmark_output' / 'runs'
@@ -750,7 +682,7 @@ def main(argv=None, **kwargs) -> int:
 
     # Idempotent sync
     ret = _do_requested_download(
-        backend, benchmark, version, dest, verbose, runs, checksum
+        storage, benchmark, version, dest, verbose, runs, checksum
     )
     return ret
 
