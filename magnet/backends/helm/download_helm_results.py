@@ -38,7 +38,9 @@ Example:
     >>> # Test downloading with a bat pattern
     >>> with ub.CaptureStdout(suppress=False) as cap:
     >>>     download_helm_results.main(argv=False, download_dir=dpath, runs='med_qa:model=deepseek-ai_deepseek-v3', version='v1.13.0')
-    >>> assert len(list(dpath.glob('**'))) == 14, 'should have only downloaded a few results'
+    >>> downloaded_paths = list(dpath.glob('**'))
+    >>> print(f'downloaded_paths = {ub.urepr(downloaded_paths, nl=1)}')
+    >>> assert len(downloaded_paths) == 14, 'should have only downloaded a few results'
 """
 
 import re
