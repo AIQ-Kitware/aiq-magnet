@@ -153,16 +153,20 @@ We also recommend looking at the `magnet/example_random_predictor.py` and/or `ma
 
 ## Downloading HELM results
 
-We provide a utility to download precomputed HELM results. For details on how to use this tool see:
-
-```bash
-python -m magnet.backends.helm.download_helm_results --help
-```
+We provide a utility to download precomputed HELM results. 
 
 For a quick getting started, we can download the HELM lite results to `/data/crfm-helm-public`.
 
 ```bash
 python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.13.0 --download-dir /data/crfm-helm-public
+```
+
+Using different command line options you can explore what data is available on
+the remote, as well as download different benchmarks and versions or subsets of
+results. For more details see:
+
+```bash
+python -m magnet.backends.helm.download_helm_results --help
 ```
 
 # Roadmap
