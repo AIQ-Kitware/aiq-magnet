@@ -412,13 +412,14 @@ class GSCLIBackend(_GSBaseBackend):
     def list_benchmarks(self, verbose: bool = False) -> List[str]:
         cp = ub.cmd([self.gsutil, 'ls', f'{self.bucket}/'], verbose=verbose)
         lines = [x.strip() for x in (cp.stdout or '').splitlines()]
-        out = []
+        out = set()
         for line in lines:
             m = re.match(rf'{re.escape(self.bucket)}/([^/]+)/?$', line)
             if m:
-                out.append(m.group(1))
-        out.append('classic')  # hack this in
-        return sorted(set(out))
+                out.add(m.group(1))
+        out.add('classic')  # hack this in
+        out = out - {'benchmark_output', 'assets', 'tmp', 'config', 'prod_env', 'source_datasets'}  # hack these out
+        return sorted(out)
 
     def list_versions(self, bench: str, verbose: bool = False) -> List[str]:
         runs_path = self._hack_helm_remote_path(self.bucket, bench)
@@ -515,11 +516,12 @@ class GSFSSspecBackend(_GSBaseBackend):
             entries = self.fs.ls(root + '/', detail=True)
         except FileNotFoundError:
             return []
-        out = []
+        out = set()
         for e in entries:
             if e.get('type') == 'directory':
-                out.append(e['name'].rstrip('/').split('/')[-1])
-        out.append('classic')  # hack this in
+                out.add(e['name'].rstrip('/').split('/')[-1])
+        out.add('classic')  # hack this in
+        out = out - {'benchmark_output', 'assets', 'tmp', 'config', 'prod_env', 'source_datasets'}  # hack these out
         return sorted(set(out))
 
     def list_versions(self, bench: str, verbose: bool = False) -> List[str]:

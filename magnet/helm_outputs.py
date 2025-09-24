@@ -145,9 +145,14 @@ class HelmOutputs(ub.NiceRepr):
         return summary
 
     @classmethod
-    def demo(cls, **kwargs):
+    def demo(cls, method='compute', **kwargs):
         import magnet
-        dpath = magnet.demo.ensure_helm_demo_outputs(**kwargs)
+        if method == 'compute':
+            dpath = magnet.demo.helm_demodata.ensure_helm_demo_outputs(**kwargs)
+        elif method == 'download':
+            dpath = magnet.demo.helm_demodata.grab_helm_demo_outputs(**kwargs)
+        else:
+            raise KeyError(method)
         root_dir = dpath / 'benchmark_output'
         self = cls(root_dir)
         return self
