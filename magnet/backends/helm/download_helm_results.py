@@ -7,6 +7,7 @@ Download HELM benchmark run artifacts from the public GCS bucket.
 - Use --list-version and --list-benchmarks to explore available data
 
 Example:
+    >>> # xdoctest: +REQUIRES(module:gcsfs)
     >>> from magnet.backends.helm import download_helm_results
     >>> import ubelt as ub
     >>> #
@@ -21,6 +22,7 @@ Example:
     >>> assert len(cap.text.split()) >= 14
 
 Example:
+    >>> # xdoctest: +REQUIRES(module:gcsfs)
     >>> from magnet.backends.helm import download_helm_results
     >>> import ubelt as ub
     >>> # Start fresh
@@ -68,7 +70,7 @@ class DownloadHelmConfig(scfg.DataConfig):
       python -m magnet.backends.helm.download_helm_results --list-benchmarks
       python -m magnet.backends.helm.download_helm_results --list-runs
 
-      # Downoad
+      # Download
       python -m magnet.backends.helm.download_helm_results
       python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public
       python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=helm
@@ -187,6 +189,7 @@ class _GSBaseBackend:
       - download_runs(bench, version, dest, run_ids, checksum=False) -> None
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:gcsfs)
         >>> # Test backends are the same
         >>> from magnet.backends.helm.download_helm_results import *  # NOQA
         >>> import pytest
@@ -230,6 +233,10 @@ class _GSBaseBackend:
 class GSCLIBackend(_GSBaseBackend):
     """
     gsutil/CLI implementation.
+
+    Note: this backend can likely be removed if we find that fsspec doesn't
+    have any issues, so far it seems faster, better, and more reliable than
+    using the cli tool. Leaving this in for now.
     """
 
     def __init__(self, bucket: str):

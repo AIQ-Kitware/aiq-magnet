@@ -49,8 +49,8 @@ optional = [
 ]
 
 all = [
-    "magnet[optional]",
-    "magnet[tests]",
+    "aiq-magnet[optional]",
+    "aiq-magnet[tests]",
 ]
 
 [tool.pytest.ini_options]
