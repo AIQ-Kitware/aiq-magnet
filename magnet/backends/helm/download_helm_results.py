@@ -12,12 +12,12 @@ Example:
     >>> #
     >>> # Test listing benchamrks
     >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(list_benchmarks=True)
+    >>>     download_helm_results.main(argv=False, list_benchmarks=True)
     >>> assert len(cap.text.split()) >= 29
     >>> #
     >>> # Test listing versions
     >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(list_versions=True, benchmark='lite')
+    >>>     download_helm_results.main(argv=False, list_versions=True, benchmark='lite')
     >>> assert len(cap.text.split()) >= 14
 
 Example:
@@ -30,12 +30,12 @@ Example:
     >>> #
     >>> # Test downloading with a bat pattern
     >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(download_dir=dpath, runs='bad-pattern')
+    >>>     download_helm_results.main(argv=False, download_dir=dpath, runs='bad-pattern')
     >>> assert len(list(dpath.glob('**'))) == 0, 'should not have downloaded anything'
     >>> #
     >>> # Test downloading with a bat pattern
     >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(download_dir=dpath, runs='med_qa:model=deepseek-ai_deepseek-v3', version='v1.13.0')
+    >>>     download_helm_results.main(argv=False, download_dir=dpath, runs='med_qa:model=deepseek-ai_deepseek-v3', version='v1.13.0')
     >>> assert len(list(dpath.glob('**'))) == 14, 'should have only downloaded a few results'
 """
 import re
@@ -59,16 +59,22 @@ class DownloadHelmConfig(scfg.DataConfig):
       ./download_helm_results.py --list-versions [--benchmark=lite]
 
     Examples:
+      # Show docs
+      python -m magnet.backends.helm.download_helm_results --help
+
+      # Explore
+      python -m magnet.backends.helm.download_helm_results --list-benchmarks
       python -m magnet.backends.helm.download_helm_results --list-runs
 
+      # Downoad
       python -m magnet.backends.helm.download_helm_results
       python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public
       python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=helm
       python -m magnet.backends.helm.download_helm_results  /data/crfm-helm-public --benchmark=lite --version=v1.9.0
-      python -m magnet.backends.helm.download_helm_results dir=./data version=auto benchmark=lite
+      python -m magnet.backends.helm.download_helm_results --dir=./data --version=auto --benchmark=lite
 
     Notes:
-      - Requires: gsutil (Google Cloud SDK)
+      - Requires: fsspec or gsutil (Google Cloud SDK)
       - See [1]_ for official instructions
       - See [2]_ for available precomputed results
 
@@ -77,32 +83,31 @@ class DownloadHelmConfig(scfg.DataConfig):
         .. [2] https://console.cloud.google.com/storage/browser/crfm-helm-public
     """
     download_dir = scfg.Value('', alias=['dir'], position=1, help='Destination directory')
-    version = scfg.Value('auto', position=2, help='Optional version (e.g. v1.9.0)')
-    benchmark = scfg.Value('lite', help='Benchmark name (e.g., lite, helm)')
-    checksum = scfg.Value(False, isflag=True, help='Enable checksum-based comparison')
-    install = scfg.Value(False, isflag=True, help='Auto-install gsutil on Debian/Ubuntu')
-
-    list_benchmarks = scfg.Value(False, isflag=True, help='List available benchmarks and exit')
-    list_versions = scfg.Value(False, isflag=True, help=ub.paragraph(
-        '''
-        List available versions for the benchmark and exit
-        '''))
-    list_runs = scfg.Value(False, isflag=True, help=ub.paragraph(
-        '''
-        List available runs for the benchmark / version and then exit
-        '''))
-
-    verbose = scfg.Value(False, isflag=True, help='Verbose output')
-    bucket = scfg.Value("gs://crfm-helm-public", help="The storage bucket to download from.")
+    benchmark = scfg.Value('lite', position=2, help='Benchmark name (e.g., lite, helm)')
+    version = scfg.Value('auto', position=3, help='Benchmark version (e.g. v1.9.0). If "auto", will default to latest')
 
     runs = scfg.Value(None, help=ub.paragraph(
          '''
-         Optional glob pattern to match specific run IDs within the chosen
-         version.  Example: runs="*gpt4*", runs="llama-3-70b,claude-*"
+         Optional glob / kwutil pattern to match specific run IDs within the
+         chosen version.  Example: runs="*gpt4*", runs="llama-3-70b,claude-*"
          '''))  # empty means "download all runs in the version"
 
+    list_benchmarks = scfg.Value(False, isflag=True, help='List available benchmarks and exit', group='listers')
+    list_versions = scfg.Value(False, isflag=True, help=ub.paragraph(
+        '''
+        List available versions for the benchmark and exit
+        '''), group='listers')
+    list_runs = scfg.Value(False, isflag=True, help=ub.paragraph(
+        '''
+        List available runs for the benchmark / version and then exit
+        '''), group='listers')
+
+    verbose = scfg.Value(False, isflag=True, help='Verbose output', group="logging")
+    bucket = scfg.Value("gs://crfm-helm-public", help="The storage bucket to download from. No need to change this.", group='behavior')
+    checksum = scfg.Value(False, isflag=True, help='Enable checksum-based comparison', group='behavior')
     backend = scfg.Value('fsspec', choices=['gsutil', 'fsspec'], help=ub.paragraph(
-        """Choose transfer/listing backend: "gsutil" (CLI) or "fsspec" (pure Python via gcsfs)."""))
+        """Choose transfer/listing backend: "gsutil" (CLI) or "fsspec" (pure Python via gcsfs)."""), group='behavior')
+    install = scfg.Value(False, isflag=True, help='Auto-install gsutil on Debian/Ubuntu. Only relevant for gsutil backend', group='behavior')
 
 
 class ExitError(RuntimeError):
@@ -494,7 +499,7 @@ def _do_requested_download(backend, benchmark, version, dest, verbose, runs, che
 
 def main(argv=None, **kwargs) -> int:
     args = DownloadHelmConfig.cli(
-        argv=argv, data=kwargs, strict=True, verbose='auto')
+        argv=argv, data=kwargs, strict=True, verbose='auto', special_options=False)
     verbose = bool(args.verbose)
 
     # Listing modes (no dir required)
