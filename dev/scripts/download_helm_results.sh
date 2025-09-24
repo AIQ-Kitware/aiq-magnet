@@ -2,6 +2,12 @@
 __doc__="
 Download HELM benchmark run artifacts from the public GCS bucket.
 
+NOTE:
+   This bash script is superceded by a Python script in the main repo.
+   For details see:
+       python -m magnet.backends.helm.download_helm_results --help
+
+
 Features:
   - Auto-detect latest version if version=auto (default)
   - Prompt to install gsutil if missing (Debian/Ubuntu auto-install supported)

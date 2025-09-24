@@ -21,6 +21,11 @@ Example:
     >>>     download_helm_results.main(argv=False, list_versions=True, benchmark='lite')
     >>> assert len(cap.text.split()) >= 14
 
+    >>> # Test listing runs (using classic benchmark, which tests a special case)
+    >>> with ub.CaptureStdout(suppress=False) as cap:
+    >>>     download_helm_results.main(argv=False, list_runs=True, version='v0.4.0', benchmark='classic')
+    >>> assert len(cap.text.split()) >= 70
+
 Example:
     >>> # xdoctest: +REQUIRES(module:gcsfs)
     >>> from magnet.backends.helm import download_helm_results
@@ -244,6 +249,19 @@ class _GSBaseBackend:
         # Convert 'gs://bucket/x/y' -> 'x/y'
         return version_src_gs.replace(self.bucket + '/', '', 1).lstrip('/')
 
+    @staticmethod
+    def _hack_helm_remote_path(bucket, bench, version=None):
+        if bench == 'classic':
+            # Hack because they just put it in the top level
+            path = f'{bucket}/benchmark_output/runs'
+        else:
+            # normal case
+            path = f'{bucket}/{bench}/benchmark_output/runs'
+        if version is not None:
+            path = f'{path}/{version}'
+        return path
+        ...
+
 
 class GSCLIBackend(_GSBaseBackend):
     """
@@ -399,10 +417,11 @@ class GSCLIBackend(_GSBaseBackend):
             m = re.match(rf'{re.escape(self.bucket)}/([^/]+)/?$', line)
             if m:
                 out.append(m.group(1))
+        out.append('classic')  # hack this in
         return sorted(set(out))
 
     def list_versions(self, bench: str, verbose: bool = False) -> List[str]:
-        runs_path = f'{self.bucket}/{bench}/benchmark_output/runs'
+        runs_path = self._hack_helm_remote_path(self.bucket, bench)
         cp = ub.cmd([self.gsutil, 'ls', f'{runs_path}/'], verbose=verbose)
         lines = [x.strip() for x in (cp.stdout or '').splitlines()]
         vers = []
@@ -421,8 +440,7 @@ class GSCLIBackend(_GSBaseBackend):
         List runs under a specific benchmark and version
         Returns a list of run_id strings (without trailing slash).
         """
-        bucket_base = f'{self.bucket}/{bench}/benchmark_output/runs'
-        version_src_gs = f'{bucket_base}/{version}'
+        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
         cp = ub.cmd([self.gsutil, 'ls', f'{version_src_gs}/'], verbose=verbose)
         lines = [x.strip() for x in (cp.stdout or '').splitlines()]
         out = []
@@ -439,8 +457,7 @@ class GSCLIBackend(_GSBaseBackend):
     def download_version(
         self, bench: str, version: str, dest: ub.Path, checksum: bool = False
     ) -> None:
-        bucket_base = f'{self.bucket}/{bench}/benchmark_output/runs'
-        version_src_gs = f'{bucket_base}/{version}'
+        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
         dest = ub.Path(dest).ensuredir()
         self._gsutil_rsync(version_src_gs, str(dest), checksum=checksum)
 
@@ -452,8 +469,7 @@ class GSCLIBackend(_GSBaseBackend):
         run_ids: List[str],
         checksum: bool = False,
     ) -> None:
-        bucket_base = f'{self.bucket}/{bench}/benchmark_output/runs'
-        version_src_gs = f'{bucket_base}/{version}'
+        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
         dest = ub.Path(dest).ensuredir()
         for r in run_ids:
             sub_src = f'{version_src_gs}/{r}'
@@ -503,12 +519,14 @@ class GSFSSspecBackend(_GSBaseBackend):
         for e in entries:
             if e.get('type') == 'directory':
                 out.append(e['name'].rstrip('/').split('/')[-1])
+        out.append('classic')  # hack this in
         return sorted(set(out))
 
     def list_versions(self, bench: str, verbose: bool = False) -> List[str]:
-        base = _strip_gs(f'{self.bucket}/{bench}/benchmark_output/runs').rstrip('/')
+        runs_path = self._hack_helm_remote_path(self.bucket, bench)
+        print(f'runs_path={runs_path}')
         try:
-            entries = self.fs.ls(base + '/', detail=True)
+            entries = self.fs.ls(runs_path + '/', detail=True)
         except FileNotFoundError:
             return []
         vers = []
@@ -522,8 +540,7 @@ class GSFSSspecBackend(_GSBaseBackend):
         return vers[-1] if vers else ''
 
     def list_runs(self, bench: str, version: str, verbose: bool = False) -> List[str]:
-        bucket_base = f'{self.bucket}/{bench}/benchmark_output/runs'
-        version_src_gs = f'{bucket_base}/{version}'
+        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
         base = _strip_gs(version_src_gs).rstrip('/')
         try:
             entries = self.fs.ls(base + '/', detail=True)
@@ -539,8 +556,7 @@ class GSFSSspecBackend(_GSBaseBackend):
     def download_version(
         self, bench: str, version: str, dest: ub.Path, checksum: bool = False
     ) -> None:
-        bucket_base = f'{self.bucket}/{bench}/benchmark_output/runs'
-        version_src_gs = f'{bucket_base}/{version}'
+        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
         if checksum:
             eprint(
                 'Note: checksum is not supported with backend=gcsfs; proceeding without.'
@@ -557,8 +573,7 @@ class GSFSSspecBackend(_GSBaseBackend):
         run_ids: List[str],
         checksum: bool = False,
     ) -> None:
-        bucket_base = f'{self.bucket}/{bench}/benchmark_output/runs'
-        version_src_gs = f'{bucket_base}/{version}'
+        version_src_gs = self._hack_helm_remote_path(self.bucket, bench, version)
         if checksum:
             eprint(
                 'Note: checksum is not supported with backend=gcsfs; proceeding without.'
@@ -658,7 +673,11 @@ def main(argv=None, **kwargs) -> int:
     import kwutil
 
     benchmark = args.benchmark
-    runs = kwutil.Yaml.coerce(args.runs)
+    try:
+        runs = kwutil.Yaml.coerce(args.runs, backend='pyyaml')
+    except Exception:
+        # Simple glob strings can be invalid yaml, so account for that.
+        runs = args.runs
     checksum = args.checksum
 
     # Choose backend for list operations
