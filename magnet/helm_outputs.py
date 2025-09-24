@@ -98,6 +98,12 @@ class HelmOutputs(ub.NiceRepr):
     """
 
     def __init__(self, root_dir):
+        """
+        Args:
+            root_dir (str | PathLike):
+                The benchmark output directory containing a runs folder with
+                multiple suites.
+        """
         self.root_dir = root_dir
 
     def __nice__(self):

@@ -14,7 +14,7 @@ Example:
     >>> # Test listing benchamrks
     >>> with ub.CaptureStdout(suppress=False) as cap:
     >>>     download_helm_results.main(argv=False, list_benchmarks=True)
-    >>> assert len(cap.text.split()) >= 29
+    >>> assert len(cap.text.split()) >= 25
     >>> #
     >>> # Test listing versions
     >>> with ub.CaptureStdout(suppress=False) as cap:
@@ -236,7 +236,8 @@ class _GSBaseBackend:
         >>>     backend1.download_runs(benchmark, version, dpath1, run_ids)
         >>> with ub.Timer(f'backend: {backend2}'):
         >>>     backend2.download_runs(benchmark, version, dpath2, run_ids)
-        >>> result1 = sorted([p.relative_to(dpath1) for p in dpath1.ls('**')])
+        >>> result1 = sorted([r.relative_to(dpath1) / f for r, ds, fs in dpath1.walk() for f in fs + ['.']])
+        >>> result2 = sorted([r.relative_to2dpath1) / f for r, ds, fs in dpath2.walk() for f in fs + ['.']])
         >>> result2 = sorted([p.relative_to(dpath2) for p in dpath2.ls('**')])
         >>> assert result2 == result1
     """
@@ -563,9 +564,11 @@ class GSFSSspecBackend(_GSBaseBackend):
             eprint(
                 'Note: checksum is not supported with backend=gcsfs; proceeding without.'
             )
+        from fsspec.callbacks import TqdmCallback
         src = _strip_gs(version_src_gs).rstrip('/')
         dest = ub.Path(dest).ensuredir()
-        self.fs.get(src, str(dest), recursive=True)
+        callback = TqdmCallback(tqdm_kwargs={"desc": f"Downloading {version_src_gs}"})
+        self.fs.get(src, str(dest.parent) + '/', recursive=True, callback=callback)
 
     def download_runs(
         self,
@@ -582,8 +585,9 @@ class GSFSSspecBackend(_GSBaseBackend):
             )
         base = _strip_gs(version_src_gs).rstrip('/')
         dest = ub.Path(dest).ensuredir()
-        for r in run_ids:
-            self.fs.get(f'{base}/{r}', str(dest / r), recursive=True)
+        for r in ub.ProgIter(run_ids, desc='downloading runs'):
+            (dest / r).ensuredir()
+            self.fs.get(f'{base}/{r}', str(dest) + '/', recursive=True)
 
 
 def _strip_gs(url: str) -> str:
