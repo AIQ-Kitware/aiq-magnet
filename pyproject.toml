@@ -59,3 +59,12 @@ norecursedirs = ".git build __pycache__ dev docs"
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
+
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false
+docstring-code-line-length = "dynamic"
