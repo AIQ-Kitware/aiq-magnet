@@ -237,8 +237,7 @@ class _GSBaseBackend:
         >>> with ub.Timer(f'backend: {backend2}'):
         >>>     backend2.download_runs(benchmark, version, dpath2, run_ids)
         >>> result1 = sorted([r.relative_to(dpath1) / f for r, ds, fs in dpath1.walk() for f in fs + ['.']])
-        >>> result2 = sorted([r.relative_to2dpath1) / f for r, ds, fs in dpath2.walk() for f in fs + ['.']])
-        >>> result2 = sorted([p.relative_to(dpath2) for p in dpath2.ls('**')])
+        >>> result2 = sorted([r.relative_to(dpath2) / f for r, ds, fs in dpath2.walk() for f in fs + ['.']])
         >>> assert result2 == result1
     """
 
@@ -568,6 +567,7 @@ class GSFSSspecBackend(_GSBaseBackend):
         src = _strip_gs(version_src_gs).rstrip('/')
         dest = ub.Path(dest).ensuredir()
         callback = TqdmCallback(tqdm_kwargs={"desc": f"Downloading {version_src_gs}"})
+        # TODO: can we use fsspec.generic.rsync here?
         self.fs.get(src, str(dest.parent) + '/', recursive=True, callback=callback)
 
     def download_runs(
