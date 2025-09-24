@@ -72,13 +72,22 @@ class DownloadHelmConfig(scfg.DataConfig):
 
       # Explore
       python -m magnet.backends.helm.download_helm_results --list-benchmarks
-      python -m magnet.backends.helm.download_helm_results --list-runs
+      python -m magnet.backends.helm.download_helm_results --benchmark=lite --list-versions
+      python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.9.0 --list-runs
+      python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.9.0 --list-runs --runs "regex:.*subject=abstract.*model=.*llama.*"
+      python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.9.0 --list-runs --runs "
+          - wmt_14:language_pair=cs-en,model=meta_llama-*-vision*
+          - narrative_qa:model=meta_llama-*-vision-instruct-turbo*
+      "
 
       # Download
-      python -m magnet.backends.helm.download_helm_results
       python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public
-      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=helm
-      python -m magnet.backends.helm.download_helm_results  /data/crfm-helm-public --benchmark=lite --version=v1.9.0
+      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=ewok
+      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.9.0
+
+      #
+      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.9.0 --runs regex:math:subject=precalculus,.*istruct-turbo
+
       python -m magnet.backends.helm.download_helm_results --dir=./data --version=auto --benchmark=lite
 
     Notes:
@@ -102,10 +111,12 @@ class DownloadHelmConfig(scfg.DataConfig):
 
     runs = scfg.Value(
         None,
+        type=str,
         help=ub.paragraph(
             """
-            Optional glob / kwutil pattern to match specific run IDs within the
-            chosen version.  Example: runs="*gpt4*", runs="llama-3-70b,claude-*"
+            Optional glob pattern (or kwutil MultiPattern) to match specific
+            run IDs within the chosen version.  E.g.: runs="*gpt4*",
+            runs="regex:llama-3-70b,claude-.*", or ['patternA', 'patternB']
             """
         ),
     )  # empty means "download all runs in the version"
@@ -577,6 +588,14 @@ def _version_key(v: str):
     return tuple(nums or [0])
 
 
+def filter_runs(all_runs, runs):
+    import kwutil
+
+    pattern = kwutil.MultiPattern.coerce(runs)
+    matched = [r for r in all_runs if pattern.match(r)]
+    return matched
+
+
 def _do_requested_download(backend, benchmark, version, dest, verbose, runs, checksum):
     """
     Main download logic, either filtered or not.
@@ -590,14 +609,14 @@ def _do_requested_download(backend, benchmark, version, dest, verbose, runs, che
         if runs:
             import kwutil
 
-            pattern = kwutil.MultiPattern.coerce(runs)
             # Filter to a subset of run IDs by regex (comma-separated supported).
             all_runs = backend.list_runs(benchmark, version, verbose=verbose)
             if not all_runs:
                 eprint(f'No runs found under version path: {src}')
                 return 1
 
-            matched = [r for r in all_runs if pattern.match(r)]
+            pattern = kwutil.MultiPattern.coerce(runs)
+            matched = filter_runs(all_runs, pattern)
             if not matched:
                 eprint(f'No runs matched patterns {pattern} under {src}')
                 eprint('Available runs:')
@@ -636,6 +655,12 @@ def main(argv=None, **kwargs) -> int:
     )
     verbose = bool(args.verbose)
 
+    import kwutil
+
+    benchmark = args.benchmark
+    runs = kwutil.Yaml.coerce(args.runs)
+    checksum = args.checksum
+
     # Choose backend for list operations
     try:
         if args.backend == 'gsutil':
@@ -652,7 +677,29 @@ def main(argv=None, **kwargs) -> int:
             print(name)
         return 0
     if args.list_versions:
-        for v in backend.list_versions(args.benchmark, verbose=verbose):
+        for v in backend.list_versions(benchmark, verbose=verbose):
+            print(v)
+        return 0
+
+    # Resolve version if auto
+    version = args.version
+    if version == 'auto':
+        eprint(
+            f"Resolving latest version for benchmark '{args.benchmark}' (backend={args.backend})..."
+        )
+        version = backend.latest_version(benchmark, verbose=verbose)
+        if not version:
+            eprint('Error: could not determine latest version (no runs found?).')
+            return 1
+        eprint(f'Using latest version: {version}')
+
+    if args.list_runs:
+        all_runs = backend.list_runs(benchmark, version, verbose=verbose)
+        if runs:
+            matched = filter_runs(all_runs, runs)
+        else:
+            matched = all_runs
+        for v in matched:
             print(v)
         return 0
 
@@ -661,33 +708,14 @@ def main(argv=None, **kwargs) -> int:
         eprint('Error: download directory not provided. Run with --help for usage')
         return 2
 
-    # Resolve version if auto
-    version = args.version
-    if version == 'auto':
-        eprint(
-            f"Resolving latest version for benchmark '{args.benchmark}' (backend={args.backend})..."
-        )
-        version = backend.latest_version(args.benchmark, verbose=verbose)
-        if not version:
-            eprint('Error: could not determine latest version (no runs found?).')
-            return 1
-        eprint(f'Using latest version: {version}')
-
     # TODO: probably should have the backend class handle this path stuff to
     # keep the API at the level of benchmark (i.e. suite) name, versions, and
     # run names.
-    benchmark = args.benchmark
     bucket_base = f'{backend.bucket}/{benchmark}/benchmark_output/runs'
     src = f'{bucket_base}/{version}'
-    dest_root = (
-        ub.Path(args.download_dir).expanduser().resolve()
-        / benchmark
-        / 'benchmark_output'
-        / 'runs'
-    )
+    download_dir = ub.Path(args.download_dir)
+    dest_root = download_dir / benchmark / 'benchmark_output' / 'runs'
     dest = dest_root / version
-    runs = args.runs
-    checksum = args.checksum
 
     print(f'HELM benchmark: {args.benchmark}')
     print(f'Version:        {version}')
