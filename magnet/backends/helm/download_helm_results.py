@@ -67,7 +67,7 @@ class DownloadHelmConfig(scfg.DataConfig):
     __epilog__ = """
     Usage:
       ./download_helm_results.py <download_dir> [version]
-      ./download_helm_results.py dir=<download_dir> [version=auto] [benchmark=lite]
+      ./download_helm_results.py dir=<download_dir> [version=latest] [benchmark=lite]
       ./download_helm_results.py --list-benchmarks
       ./download_helm_results.py --list-versions [--benchmark=lite]
 
@@ -93,7 +93,7 @@ class DownloadHelmConfig(scfg.DataConfig):
       #
       python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.9.0 --runs regex:math:subject=precalculus,.*istruct-turbo
 
-      python -m magnet.backends.helm.download_helm_results --dir=./data --version=auto --benchmark=lite
+      python -m magnet.backends.helm.download_helm_results --dir=./data --version=latest --benchmark=lite
 
     Notes:
       - Requires: fsspec or gsutil (Google Cloud SDK)
@@ -109,9 +109,9 @@ class DownloadHelmConfig(scfg.DataConfig):
     )
     benchmark = scfg.Value('lite', position=2, help='Benchmark name (e.g., lite, helm)')
     version = scfg.Value(
-        'auto',
+        'latest',
         position=3,
-        help='Benchmark version (e.g. v1.9.0). If "auto", will default to latest',
+        help='Benchmark version (e.g. v1.9.0). If "latest", will default to the most recent',
     )
 
     runs = scfg.Value(
@@ -496,11 +496,19 @@ class HelmRemoteStore:
         return sorted(names - blocklist)
 
     def list_versions(self, benchmark: str) -> List[str]:
+        from packaging.version import parse as Version, InvalidVersion
         root = self._runs_root(benchmark)
         vers = self.backend.list_dirs(root)
-        return sorted(set(vers), key=_version_key)
+        try:
+            # try to use proper version parsing
+            return sorted(set(vers), key=Version)
+        except InvalidVersion:
+            # fallback
+            return sorted(set(vers), key=_version_key)
 
     def latest_version(self, benchmark: str) -> str:
+        # NOTE: this doesn't always order non standard versions correctly
+        # e.g. (v1.1.0-preview)
         vers = self.list_versions(benchmark)
         return vers[-1] if vers else ''
 
@@ -644,9 +652,9 @@ def main(argv=None, **kwargs) -> int:
             print(v)
         return 0
 
-    # Resolve version if auto
+    # Resolve version if latest
     version = args.version
-    if version == 'auto':
+    if version in {'latest', 'auto'}:
         eprint(
             f"Resolving latest version for benchmark '{args.benchmark}' (backend={args.backend})..."
         )
