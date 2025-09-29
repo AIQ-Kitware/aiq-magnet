@@ -11,8 +11,37 @@ from magnet.utils.util_pandas import DotDictDataFrame
 
 
 class PrepareHeimResultsConfig(scfg.DataConfig):
-    """
+    r"""
     Read all HEIM results and output them in a simple JSON format.
+
+    Usage
+    -----
+    First it is a good idea to download HEIM results outside of the context of
+    this script to ensure full control.
+
+    The DOWNLOAD_DIR environment variable gives a recommended location for
+    downloading results, but feel free to change this.
+
+    .. code:: bash
+
+        DOWNLOAD_DIR=/data/crfm-helm-public
+
+        python -m magnet.backends.helm.download_helm_results "$DOWNLOAD_DIR" --benchmark=heim --version=v1.0.0 --backend=gsutil
+        python -m magnet.backends.helm.download_helm_results "$DOWNLOAD_DIR" --benchmark=heim --version=v1.1.0 --backend=gsutil
+
+    Now Call this script (note the path to the script may need to be modified
+    as it is not part of the magnet package in its current proof-of-concept
+    form. We assume the code repo is checked out in ~/code
+
+    .. code:: bash
+
+        # Change if you want your outputs in a different location
+        HEIM_RESULT_DIR=./heim_results
+
+        python ~/code/aiq-magnet/dev/poc/prepare_heim_results.py \
+                --download_dir "$DOWNLOAD_DIR" \
+                --output_dir "$HEIM_RESULT_DIR"
+
     """
 
     output_dir = scfg.Value('./heim_results', help=ub.paragraph(
@@ -38,8 +67,9 @@ def main(argv=None, **kwargs):
         >>> kwargs = dict()
         >>> main(argv=argv, **config)
     """
-    config = PrepareHeimResultsConfig.cli(argv=argv, data=kwargs, strict=True,
-                                          verbose='auto')
+    config = PrepareHeimResultsConfig.cli(
+        argv=argv, data=kwargs, strict=True, verbose='auto',
+        special_options=False)
 
     # This is where the heim/benchmark_output/runs/v1.*/* results should be
     download_dir = config.download_dir
@@ -81,19 +111,21 @@ def main(argv=None, **kwargs):
 
     for key, group in big_table.groupby(['run_spec.model']):
         print(key, len(group))
+        model_name, = key
 
-        fname = 'results-{key}.json'
+        fname = f'results-{model_name}.json'
         fpath = output_dpath / fname
 
-        # We now have a list of prompts and scores for this specific model.
-        prompts = group['request_states.instance.input.text']
-        scores = group['per_instance_stats.stat.expected_clip_score.max']
+        # We now have a list of prompts and scores for this model in:
+        # * group['request_states.instance.input.text']
+        # * group['per_instance_stats.stat.expected_clip_score.max']
 
         rows = []
-        for prompt, score in zip(prompts, scores):
+        for record in group.to_dict('records'):
+            # NOTE: If we want any more metadata, we may want to write more
             rows.append({
-                'prompt': prompt,
-                'clip_score': score,
+                'prompt': record['request_states.instance.input.text'],
+                'clip_score': record['per_instance_stats.stat.expected_clip_score.max'],
             })
 
         print(f'Write results to: fpath={fpath}')
@@ -193,6 +225,8 @@ def load_relevant_run_info(run):
 if __name__ == '__main__':
     """
     CommandLine:
-        kernprof -lzvv -p magnet ~/code/magnet-sys-exploratory/dev/poc/poc_read_heim_v2.py
+        python ~/code/aiq-magnet/dev/poc/prepare_heim_results.py --help
+        kernprof -lzvv -p magnet ~/code/aiq-magnet/dev/poc/prepare_heim_results.py
+
     """
     main()
