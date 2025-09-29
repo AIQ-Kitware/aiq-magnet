@@ -17,7 +17,7 @@ authors = [
 urls = { "Repository" = "https://github.com/AIQ-Kitware/aiq-magnet/" }
 requires-python = ">=3.11"
 dependencies = [
-    "crfm-helm>=0.5.5",
+    "crfm-helm>=0.5.8",
     "pandas>=2.2.3",
     "dacite>=1.9.2",
     "ubelt>=1.3.8",
@@ -31,6 +31,9 @@ dependencies = [
     "scriptconfig>=0.8.2",
     "orjson>=3.10.15",
     "msgspec>=0.19.0",
+    "rich>=14.1.0",
+    "fsspec>=2024.9.0",
+    "pyyaml>=6.0.2",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +46,12 @@ tests = [
 ]
 
 optional = [
+    "gcsfs>=2024.9.0",
+]
+
+all = [
+    "aiq-magnet[optional]",
+    "aiq-magnet[tests]",
 ]
 
 [tool.pytest.ini_options]
@@ -51,3 +60,12 @@ norecursedirs = ".git build __pycache__ dev docs"
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
+
+
+[tool.ruff.format]
+quote-style = "single"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = false
+docstring-code-line-length = "dynamic"

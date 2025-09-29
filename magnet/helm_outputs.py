@@ -98,6 +98,12 @@ class HelmOutputs(ub.NiceRepr):
     """
 
     def __init__(self, root_dir):
+        """
+        Args:
+            root_dir (str | PathLike):
+                The benchmark output directory containing a runs folder with
+                multiple suites.
+        """
         self.root_dir = root_dir
 
     def __nice__(self):
@@ -145,9 +151,14 @@ class HelmOutputs(ub.NiceRepr):
         return summary
 
     @classmethod
-    def demo(cls, **kwargs):
+    def demo(cls, method='compute', **kwargs):
         import magnet
-        dpath = magnet.demo.ensure_helm_demo_outputs(**kwargs)
+        if method == 'compute':
+            dpath = magnet.demo.helm_demodata.ensure_helm_demo_outputs(**kwargs)
+        elif method == 'download':
+            dpath = magnet.demo.helm_demodata.grab_helm_demo_outputs(**kwargs)
+        else:
+            raise KeyError(method)
         root_dir = dpath / 'benchmark_output'
         self = cls(root_dir)
         return self
