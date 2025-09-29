@@ -1,50 +1,122 @@
+#!/usr/bin/env python3
 r"""
-Example of loading precomputed HEIM metrics
+Example of to prepare precomputed HEIM metrics
 """
 
 import ubelt as ub
-import magnet
 import kwutil
-from line_profiler import profile
+import scriptconfig as scfg
+import magnet
 from magnet.utils.util_pandas import DotDictDataFrame
 
 
-@profile
-def main():
-    heim_output_dpath = ub.Path('/data/crfm-helm-public/heim/benchmark_output')
-    outs = magnet.HelmOutputs(heim_output_dpath)
-    # Use both v1.0.0 and v1.1.0
-    runs = []
-    for suite in outs.suites('*'):
-        runs.extend(suite.runs('*').existing())
+class PrepareHeimResultsConfig(scfg.DataConfig):
+    """
+    Read all HEIM results and output them in a simple JSON format.
+    """
+
+    output_dir = scfg.Value('./heim_results', help=ub.paragraph(
+        '''
+        Directory where output json files will be written.
+        '''))
+
+    download_dir = scfg.Value('/data/crfm-helm-public', help=ub.paragraph(
+        '''
+        This is where the heim/benchmark_output/runs/v1.*/* results should be.
+        They will be downloaded if needed.
+        '''))
+
+
+def main(argv=None, **kwargs):
+    """
+    Example:
+        >>> # xdoctest: +SKIP
+        >>> import sys, ubelt
+        >>> sys.path.append(ubelt.expandpath('~/code/aiq-magnet/dev/poc'))
+        >>> from poc_read_heim_v3 import *  # NOQA
+        >>> argv = 0
+        >>> kwargs = dict()
+        >>> main(argv=argv, **config)
+    """
+    config = PrepareHeimResultsConfig.cli(argv=argv, data=kwargs, strict=True,
+                                          verbose='auto')
+
+    # This is where the heim/benchmark_output/runs/v1.*/* results should be
+    download_dir = config.download_dir
+
+    heim_output_dpath = ensure_heim_is_downloaded(download_dir)
 
     # Takes about 2 minutes to load everything.
     pman = kwutil.ProgressManager()
+    load_info = {
+        'loaded': 0,
+        'skipped': 0,
+    }
     with pman:
         tables = []
-        for run in pman.progiter(runs, desc='Loading HELM runs'):
-            table = load_relevant_run_info(run)
-            if table is not None:
-                tables.append(table)
-            else:
-                print(f'Skip {run}')
+        outs = magnet.HelmOutputs(heim_output_dpath)
+        # Use both v1.0.0 and v1.1.0
+        for suite in pman.progiter(outs.suites('*'), desc='Loading suites'):
+            runs = suite.runs('*').existing()
+            for run in pman.progiter(runs, desc=f'Loading HELM runs in suite {suite.name}'):
+                table = load_relevant_run_info(run)
+                if table is not None:
+                    tables.append(table)
+                    load_info['loaded'] += 1
+                else:
+                    print(f'Skip {run}')
+                    load_info['skipped'] += 1
+                pman.update_info(ub.urepr(load_info, nl=1))
 
     import pandas as pd
     big_table = pd.concat(tables).reset_index(drop=True)
 
+    # Create helper columns
     from helm.common.object_spec import parse_object_spec
     run_specs = {k: parse_object_spec(k) for k in big_table['run_spec.name'].unique()}
-
-    # Create helper columns
     big_table['run_spec.model'] = big_table['run_spec.name'].apply(lambda k: run_specs[k].args['model'])
     big_table['input_text_id'] = big_table['request_states.instance.input.text'].apply(ub.hash_data)
+
+    output_dpath = ub.Path(config.output_dir).ensuredir()
 
     for key, group in big_table.groupby(['run_spec.model']):
         print(key, len(group))
 
+        fname = 'results-{key}.json'
+        fpath = output_dpath / fname
+
         # We now have a list of prompts and scores for this specific model.
         prompts = group['request_states.instance.input.text']
         scores = group['per_instance_stats.stat.expected_clip_score.max']
+
+        rows = []
+        for prompt, score in zip(prompts, scores):
+            rows.append({
+                'prompt': prompt,
+                'clip_score': score,
+            })
+
+        print(f'Write results to: fpath={fpath}')
+        fpath.write_text(kwutil.Json.dumps(rows))
+
+
+def ensure_heim_is_downloaded(download_dir):
+    from magnet.backends.helm import download_helm_results
+    heim_output_dpath = ub.Path(download_dir) / 'heim/benchmark_output'
+
+    if len(heim_output_dpath.ls('*/*')) < 2:
+        # The download script will try to do everything again by default assume
+        # everything is downloaded if the main directories are there.
+        backend = 'gsutil'
+        backend = 'fsspec'
+        download_helm_results.main(
+            argv=False, download_dir=download_dir, version='v1.1.0',
+            benchmark='heim', backend=backend)
+        download_helm_results.main(
+            argv=False, download_dir=download_dir, version='v1.0.0',
+            benchmark='heim', backend=backend)
+
+    return heim_output_dpath
 
 
 def load_relevant_run_info(run):
