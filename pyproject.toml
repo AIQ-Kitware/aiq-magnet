@@ -36,6 +36,9 @@ dependencies = [
     "pyyaml>=6.0.2",
 ]
 
+[project.scripts]
+magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
+
 [project.optional-dependencies]
 
 tests = [
