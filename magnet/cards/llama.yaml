@@ -1,0 +1,53 @@
+# Preliminary Working Evaluation Card Example
+
+title: "In-domain Model Consistency for Llama Family"
+description: "Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family"
+
+claim:
+  python: |
+    threshold = 0.1
+    for base_model, base_score in exact_match_scores:
+      for comp_model, comp_score in exact_match_scores:
+        assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
+
+symbols:
+  run_specs:
+    type: Dict[str, List[Any]]
+    python: |
+      from collections import defaultdict
+      import json
+      import re
+
+      with open('runs/v1.13.0/runs.json', 'r') as f:
+          runs_repository = json.load(f)
+
+      mmlu_llama_str = r"^mmlu.*model=meta_*llama.*"
+      regex_pattern = re.compile(mmlu_llama_str)
+
+      run_specs = defaultdict(list)
+      for run in runs_repository:
+          if regex_pattern.search(run['run_spec']['name']):
+              run_specs[run['run_spec']['adapter_spec']['model']].append(run)
+
+  exact_match_scores:
+    type: List[Tuple[str, float]]
+    depends_on: ['run_specs']
+    python: |
+      from collections import defaultdict
+
+      exact_match_scores = []
+      def valid_stat_spec(stat_spec, stat_name):
+        name = stat_spec['name']['name']
+        split = stat_spec['name']['split']
+        perturbed = 'perturbation' in stat_spec['name']
+        return name == stat_name and split == "test" and not perturbed
+
+      stat_specs = defaultdict(list)
+      for model in run_specs:
+          for run in run_specs[model]:
+              for stat in run['stats']:
+                  if valid_stat_spec(stat, 'exact_match'):
+                      stat_specs[model].append(stat['mean'])
+
+      exact_match_scores = [(model, sum(scenario_scores)/len(scenario_scores)) for model, scenario_scores in stat_specs.items()]
+

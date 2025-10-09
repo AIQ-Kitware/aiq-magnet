@@ -1,6 +1,6 @@
-# Simple Arithmatic Example
+# Simple Arithmetic Example
 
-title: "Arithmatic - Addition Commutative Property"
+title: "Arithmetic - Addition Commutative Property"
 description: "Addition is commutative on pairs of even and odd integers"
 
 claim:
@@ -12,12 +12,12 @@ symbols:
   int_range_even:
     type: List[int]
     python: |
-      def create_even_range(start=-10000, end=10000):
+      def create_even_range(start=-10, end=10):
         return [n for n in range(start, end) if n % 2 == 0]
       int_range_even = create_even_range()
   
   int_range_odd:
     type: List[int]
-    dependencies: ['int_range_even']
+    depends_on: ['int_range_even']
     python: |
       int_range_odd = [n + 1 for n in int_range_even]

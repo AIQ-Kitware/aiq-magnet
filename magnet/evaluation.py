@@ -1,7 +1,11 @@
+import builtins 
 from graphlib import TopologicalSorter
-from typing import Any, Dict, List, get_origin, get_args
+from typing import Any, Dict, List, Tuple, get_origin, get_args
 import yaml 
 
+def _check_arbitrary_code(code_str: str) -> None:
+    pass
+    
 class EvaluationCard:
     """
     Specification of an empirical claim with resolvable symbols and metadata
@@ -30,7 +34,7 @@ class EvaluationCard:
         1. Resolve symbol definitions
         2. Evaluate claim under symbol values
         """
-        # Could log requests from here
+        # Could log requests from here (i.e. timestamps), I think this was done in other code segments
         self.symbols.resolve()
         self.claim.evaluate(self.symbols())
         return self.claim.status
@@ -115,7 +119,7 @@ class Symbol:
         self.value = None
         self.type = spec.get('type', 'List[int]')
         self.definition = spec.get('python', '')
-        self.dependencies = spec.get('dependencies', [])
+        self.dependencies = spec.get('depends_on', [])
     
     def eval(self, context: Dict[str, Any]= {}) -> Any:
         """
@@ -127,20 +131,41 @@ class Symbol:
         if self._check_type(self.type, context[self.name]):
             self.value = context[self.name]
         return self.value
-    
-    def _check_type(self, str_type, value) -> bool:
+
+    def _check_type(self, type_str, value) -> bool:
         """
         Validate value is of type str_type
-
-        # TODO: support more than List[Any]
         """
-        str_to_type = {'List': List}
-        type = eval(str_type, str_to_type)
-        print(get_args(type))
-        if get_origin(type) is list:
-            if isinstance(value, list):
-                return all(isinstance(entry, get_args(type)[0]) for entry in value)
-        return False
+        # TODO: static 'vocabulary' of allowable types / support more than List[Any], Dict[str, Any]
+        str_to_type = {'List': List, 'Dict': Dict, 'Tuple': Tuple, 'Any': Any}
+        type = eval(type_str, str_to_type)
+        return self._check_collections(type, value)
+    
+    def _check_collections(self, target_type, value):
+        """
+        Recursively evaluate if value is target_type
+        """
+        collection_type = get_origin(target_type)
+        members = get_args(target_type)
+
+        match collection_type:
+            case builtins.list:
+                if isinstance(value, list):
+                    return all(self._check_collections(members[0], entry) for entry in value)
+            case builtins.dict:
+                if isinstance(value, dict):
+                    return all(
+                        self._check_collections(members[0], key_entry) and self._check_collections(members[1], value_entry)
+                        for key_entry, value_entry in value.items()
+                    )
+            case builtins.tuple:
+                if isinstance(value, tuple) and len(value) == len(members):
+                    return all(self._check_collections(type, val) for type, val in zip(members, value))
+            case None:
+                # Any or primative
+                return target_type is Any or isinstance(value, target_type)
+            case _:
+                return False
 
 class Symbols:
     """
