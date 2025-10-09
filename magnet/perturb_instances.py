@@ -54,14 +54,17 @@ def apply_perturbations(instances_filepath: str,
 
     # For some reason the original caching out of instances from
     # runner doesn't include instance IDs, so we need to add them if
-    # they don't exist (perturbation requires instance IDs)
+    # they don't exist (perturbation requires instance IDs).
+    # Here's the original code snippet where this happens, note that
+    # it's after instances are generated or loaded
+    # https://github.com/stanford-crfm/helm/blob/da80afc0dd697f10a589fd5742379d9eae0cfb6b/src/helm/benchmark/runner.py#L266-L268
     if any(instance.id is None for instance in input_instances):
         input_instances = with_instance_ids(input_instances)
 
     for pname, pspecs in expanded_perturbation_specs.items():
         for pspec in pspecs:
             if len(pspecs) > 1:
-                p_output_dir = os.path.join(output_dir, pname, ub.hash(pspec, hasher="md5"))
+                p_output_dir = os.path.join(output_dir, pname, ub.hash_data(pspec, hasher="md5"))
             else:
                 p_output_dir = os.path.join(output_dir, pname)
 
