@@ -63,6 +63,10 @@ class DownloadHelmConfig(scfg.DataConfig):
     """
     Download HELM benchmark run artifacts from the public GCS bucket.
     """
+    # hack, scriptconfig should allow modals to overwrite this in the context
+    # of usage, not definition in a future version, for now this does what we
+    # want.
+    __command__ = 'helm'
 
     __epilog__ = """
     Usage:
@@ -700,6 +704,8 @@ def main(argv=None, **kwargs) -> int:
     )
     return ret
 
+__cli__ = DownloadHelmConfig
+__cli__.main = main
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))

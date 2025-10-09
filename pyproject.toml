@@ -54,6 +54,9 @@ all = [
     "aiq-magnet[tests]",
 ]
 
+[project.scripts]
+magnet = "magnet.__main__:main"
+
 [tool.pytest.ini_options]
 addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
 norecursedirs = ".git build __pycache__ dev docs"
