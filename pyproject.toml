@@ -9,7 +9,7 @@ include = ["magnet*"]
 
 [project]
 name = "aiq-magnet"
-version = "0.0.1"
+version = {attr = "magnet.__version__"}
 description = "Kitware's MAGNET framework for AIQ"
 authors = [
     {name = "MAGNET Kitware", email = "aiq-ta2@kitware.com"}

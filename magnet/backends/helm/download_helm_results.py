@@ -66,7 +66,7 @@ class DownloadHelmConfig(scfg.DataConfig):
     # hack, scriptconfig should allow modals to overwrite this in the context
     # of usage, not definition in a future version, for now this does what we
     # want.
-    __command__ = 'helm'
+    # __command__ = 'helm'
 
     __epilog__ = """
     Usage:
@@ -157,7 +157,7 @@ class DownloadHelmConfig(scfg.DataConfig):
         ),
     )
 
-    verbose = scfg.Value(False, isflag=True, help='Verbose output', group='logging')
+    verbose = scfg.Value(1, isflag=True, help='Verbose output', group='logging')
     bucket = scfg.Value(
         'gs://crfm-helm-public',
         help='The storage bucket to download from. No need to change this.',

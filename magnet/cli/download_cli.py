@@ -4,7 +4,7 @@ import scriptconfig as scfg
 
 class DownloadModalCLI(scfg.ModalCLI):
     """
-    Frontend for different backend downloaders
+    Download precomputed results for different benchmarking backends.
     """
     __command__ = 'download'
 
