@@ -157,7 +157,7 @@ class DownloadHelmConfig(scfg.DataConfig):
         ),
     )
 
-    verbose = scfg.Value(1, isflag=True, help='Verbose output', group='logging')
+    verbose = scfg.Value(False, isflag=True, help='Verbose output', group='logging')
     bucket = scfg.Value(
         'gs://crfm-helm-public',
         help='The storage bucket to download from. No need to change this.',
