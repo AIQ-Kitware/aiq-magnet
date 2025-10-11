@@ -7,9 +7,12 @@ namespaces = true
 include = ["magnet*"]
 
 
+[tool.setuptools.dynamic]
+version = {attr = "magnet.__version__"}
+
 [project]
 name = "aiq-magnet"
-version = {attr = "magnet.__version__"}
+dynamic = ["version"]
 description = "Kitware's MAGNET framework for AIQ"
 authors = [
     {name = "MAGNET Kitware", email = "aiq-ta2@kitware.com"}
