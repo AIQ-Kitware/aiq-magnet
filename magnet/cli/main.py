@@ -1,5 +1,5 @@
 """
-The top level Magnet CLI
+The top level MAGNET CLI
 
 Example:
     >>> # Test that help works for each subcli
@@ -17,7 +17,7 @@ from magnet import __version__
 
 class MagnetCLI(scfg.ModalCLI):
     """
-    Top level magnet modal CLI
+    Top level MAGNET CLI
     """
     __version__ = __version__
 

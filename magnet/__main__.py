@@ -1,3 +1,6 @@
+"""
+Forward to the Model CLI defined in :mod:`magnet.cli.main`
+"""
 from magnet.cli.main import __cli__
 
 
