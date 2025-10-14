@@ -64,7 +64,7 @@ def apply_perturbations(instances_filepath: str,
     for pname, pspecs in expanded_perturbation_specs.items():
         for pspec in pspecs:
             if len(pspecs) > 1:
-                p_output_dir = os.path.join(output_dir, pname, ub.hash_data(pspec, hasher="md5"))
+                p_output_dir = os.path.join(output_dir, pname, ub.hash_data(pspec, hasher="sha256"))
             else:
                 p_output_dir = os.path.join(output_dir, pname)
 
