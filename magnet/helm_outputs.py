@@ -1,6 +1,9 @@
 """
 Object oriented classes to represent, load, and explore the outputs of helm
 benchmarks.
+
+TODO:
+    - [ ] move this file into the helm backend directory.
 """
 import ubelt as ub
 import pandas as pd
@@ -104,10 +107,82 @@ class HelmOutputs(ub.NiceRepr):
                 The benchmark output directory containing a runs folder with
                 multiple suites.
         """
+        # TODO: Currently this should be a folder named "benchmark_output",
+        # I'm not sure that I like that as it makes the directory structure
+        # very inflexible. We might want to make this attribute protected so we
+        # can change it.
         self.root_dir = root_dir
 
     def __nice__(self):
         return self.root_dir
+
+    @classmethod
+    def coerce(cls, input):
+        """
+        Convert some reasonable representation into a HelmOutputs object.
+
+        Args:
+            input (str | PathLike | HelmSuite):
+                An existing HelmOutputs object or a path to the benchmark.
+                If the input is a path, it could be the path containing
+                benchmark_output/runs or one of those paths, and we will coerce
+                it to the expected input.
+
+        Returns:
+            HelmSuite
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmOutputs.demo()
+            >>> assert HelmOutputs.coerce(self) is self, 'check inplace return'
+            >>> assert HelmOutputs.coerce(self.root_dir).root_dir == self.root_dir, 'check path coerce'
+            >>> assert HelmOutputs.coerce(self.root_dir / 'runs').root_dir == self.root_dir, 'check path coerce'
+            >>> assert HelmOutputs.coerce(self.root_dir.parent).root_dir == self.root_dir, 'check path coerce'
+        """
+        import os
+        if isinstance(input, cls):
+            # Input is already a object of this type, return it inplace.
+            self = input
+        elif isinstance(input, (str, os.PathLike)):
+            # The input is a type of path, validate it pass it in as we expect.
+            root_dir = cls._coerce_input_path(input)
+            self = cls(root_dir)
+        else:
+            raise TypeError(f'Unable to coerce {type(input)}')
+        return self
+
+    @classmethod
+    def _coerce_input_path(cls, path):
+        """
+        HELM conventions expect that the input path to a set of suits looks
+        like ``<prefix>/benchmark_output/runs``, but specifying prefix with or
+        without either of the later two subdirectories is typically
+        unambiguous, thus we allow some flexibility in the inputs and resolve
+        them to something we expect.
+
+        Returns:
+            Path: the path ending with benchmark_output
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmOutputs.demo()
+            >>> root = self.root_dir.parent
+            >>> result1 = HelmOutputs._coerce_input_path(root)
+            >>> result2 = HelmOutputs._coerce_input_path(root / 'benchmark_output')
+            >>> result3 = HelmOutputs._coerce_input_path(root / 'benchmark_output/runs')
+            >>> assert result1 == result2 == result3
+        """
+        path = ub.Path(path)
+        if path.name == 'benchmark_output':
+            return path
+        elif path.parts[-2:] == ('benchmark_output', 'runs'):
+            return path.parent
+        else:
+            candidate = path / 'benchmark_output'
+            if candidate.exists():
+                return candidate
+            else:
+                raise FileNotFoundError("Unable to find a directory that looks like HELM outputs")
 
     def write_directory_report(self):
         """
@@ -233,7 +308,7 @@ class HelmSuite(ub.NiceRepr):
         """
         import os
         if isinstance(input, cls):
-            # return in put inplace
+            # Input is already a suite object, return it inplace.
             self = input
         elif isinstance(input, (str, os.PathLike)):
             # input is likely a path to a suite, todo: could add validation

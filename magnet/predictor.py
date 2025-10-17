@@ -1,11 +1,9 @@
-from typing import List
-
-from helm.benchmark.metrics.statistic import Stat
 import ubelt as ub
 import pandas as pd
 import kwarray
 
-from magnet import HelmOutputs
+from magnet.helm_outputs import HelmSuite, HelmOutputs
+from helm.benchmark.metrics.statistic import Stat
 
 
 class Predictor:
@@ -35,19 +33,17 @@ class Predictor:
                 train_split, sequestered_test_split) -> dict[str, list[Stat]]:
         raise NotImplementedError
 
-    def prepare_predict_inputs(self, root_dir, suite):
-        train_split, test_split = self.prepare_all_dataframes(root_dir, suite)
+    def prepare_predict_inputs(self, helm_suite_path):
+        # TODO: Is this unused? Can we remove it?
+        train_split, test_split = self.prepare_all_dataframes(helm_suite_path)
         sequestered_test_split = test_split.sequester()
         # predict method doesn't get `eval_stats_df`
         return train_split, sequestered_test_split
 
-    def prepare_all_dataframes(self, root_dir, suite):
+    def prepare_all_dataframes(self, helm_suite_path):
         random = kwarray.ensure_rng(self.random_seed, api='python')
 
-        outputs = HelmOutputs(ub.Path(root_dir))
-        suites_output = outputs.suites(suite)
-        assert len(suites_output) == 1
-        suite_output = suites_output[0]
+        suite_output = HelmSuite.coerce(helm_suite_path)
 
         selected_runs = []
         for run in suite_output.runs():
@@ -205,8 +201,62 @@ class Predictor:
 
             console.print(table)
 
-    def __call__(self, root_dir, suite):
-        train_split, test_split = self.prepare_all_dataframes(root_dir, suite)
+    def _coerce_helm_suite_inputs(self, *args, **kwargs):
+        """
+        The original API definition had the user give inputs as "root_dir" and
+        "suite", which is somewhat unintuitive because they are both parts of
+        what should be the same path, but two intermediate directories are
+        arbitrarilly removed. A better design would be to just path the full
+        path to the helm suite of interest and then break out path components
+        if we do need them.
+
+        To maintain backwards compatibility this function checks for the
+        2-input style argument and allows it to resolve to a HelmSuite, but
+        also allows for a single path to that suite to be given.
+        """
+        legacy_args = None
+        if len(args) == 2:
+            legacy_args = args
+            if len(kwargs) > 0:
+                raise ValueError(ub.paragraph(
+                    '''
+                    input looked like legacy positional arguments, but extra
+                    information was given. This is not handled.
+                    '''))
+        elif set(kwargs) == {'root_dir', 'suite'}:
+            legacy_args = kwargs['root_dir'], kwargs['suite']
+            if len(args) > 0:
+                raise ValueError(ub.paragraph(
+                    '''
+                    input looked like legacy keyword arguments, but extra
+                    information was given. This is not handled.
+                    '''))
+
+        if legacy_args is not None:
+            ub.schedule_deprecation(
+                modname='magnet', name='root_dir/suite', type='input arguments',
+                migration='Pass the full path to the suite instead',
+                deprecate='0.0.1', error='0.1.0', remove='0.2.0',
+            )
+            root_dir, suite = legacy_args
+            # be flexiable about if benchmark_outputs is given or not
+            root_dir = HelmOutputs._coerce_input_path(root_dir)
+            helm_suite_path = root_dir / 'runs' / suite
+        else:
+            if len(kwargs) > 0 or len(args) > 1:
+                raise ValueError('Expected only one positional argument')
+            helm_suite_path = ub.Path(args[0])
+        return helm_suite_path
+
+    def _run(self, *args, **kwargs):
+        """
+        Note: I like when __call__ corresponds to a named function (e.g.
+        forward in pytorch), but I'm not sure what to call it here as we
+        already have a predict function. For now I'm naming it _run, but I
+        would like to find a better name.
+        """
+        helm_suite_path = self._coerce_helm_suite_inputs(*args, **kwargs)
+        train_split, test_split = self.prepare_all_dataframes(helm_suite_path)
         sequestered_test_split = test_split.sequester()
         eval_stats_df = test_split.stats
 
@@ -214,6 +264,9 @@ class Predictor:
         predicted_stats = self.predict(train_split, sequestered_test_split)
 
         self.compare_predicted_to_actual(predicted_stats, eval_stats_df)
+
+    def __call__(self, *args, **kwargs):
+        return self._run(*args, **kwargs)
 
 
 class DataSplit:
