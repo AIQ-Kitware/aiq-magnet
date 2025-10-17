@@ -29,7 +29,7 @@ class PrepareHeimResultsConfig(scfg.DataConfig):
         python -m magnet.backends.helm.download_helm_results "$DOWNLOAD_DIR" --benchmark=heim --version=v1.0.0 --backend=gsutil
         python -m magnet.backends.helm.download_helm_results "$DOWNLOAD_DIR" --benchmark=heim --version=v1.1.0 --backend=gsutil
 
-    Now Call this script (note the path to the script may need to be modified
+    Now call this script (note the path to the script may need to be modified
     as it is not part of the magnet package in its current proof-of-concept
     form. We assume the code repo is checked out in ~/code
 
