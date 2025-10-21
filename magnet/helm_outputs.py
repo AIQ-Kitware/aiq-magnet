@@ -5,6 +5,7 @@ benchmarks.
 TODO:
     - [ ] move this file into the helm backend directory.
 """
+from __future__ import annotations
 import ubelt as ub
 import pandas as pd
 import kwutil
@@ -15,7 +16,7 @@ from helm.benchmark.run_spec import RunSpec
 from helm.benchmark.metrics.statistic import Stat
 from helm.benchmark.metrics.metric import PerInstanceStats
 
-from typing import Generator
+from typing import Generator, Union, Self
 
 from magnet.utils import util_pandas
 from magnet.utils import util_msgspec
@@ -117,19 +118,19 @@ class HelmOutputs(ub.NiceRepr):
         return self.root_dir
 
     @classmethod
-    def coerce(cls, input):
+    def coerce(cls, input) -> Self:
         """
         Convert some reasonable representation into a HelmOutputs object.
 
         Args:
-            input (str | PathLike | HelmSuite):
+            input (str | PathLike | HelmOutputs):
                 An existing HelmOutputs object or a path to the benchmark.
                 If the input is a path, it could be the path containing
                 benchmark_output/runs or one of those paths, and we will coerce
                 it to the expected input.
 
         Returns:
-            HelmSuite
+            HelmOutputs
 
         Example:
             >>> from magnet.helm_outputs import *
@@ -217,7 +218,6 @@ class HelmOutputs(ub.NiceRepr):
                     'num_train_trials': adapter_spec.num_train_trials,
                 })
 
-        import pandas as pd
         df = pd.DataFrame(rows)
         stats = df.describe().loc[['count', 'mean', 'std']]
         summary['num_suites'] = len(self._suite_dirs())
@@ -226,7 +226,7 @@ class HelmOutputs(ub.NiceRepr):
         return summary
 
     @classmethod
-    def demo(cls, method='compute', **kwargs):
+    def demo(cls, method='compute', **kwargs) -> Self:
         import magnet
         if method == 'compute':
             dpath = magnet.demo.helm_demodata.ensure_helm_demo_outputs(**kwargs)
@@ -283,12 +283,12 @@ class HelmSuite(ub.NiceRepr):
         return self.name
 
     @classmethod
-    def demo(cls):
+    def demo(cls) -> Self:
         self = HelmOutputs.demo().suites()[0]
         return self
 
     @classmethod
-    def coerce(cls, input):
+    def coerce(cls, input) -> Self:
         """
         Convert some reasonable representation of a HelmSuite into an object.
 
@@ -364,7 +364,7 @@ class HelmSuiteRuns(ub.NiceRepr):
         ])
 
     @classmethod
-    def coerce(cls, input):
+    def coerce(cls, input) -> Self:
         """
         Convert some reasonable representation of a HelmSuiteRuns into an object.
 
@@ -406,7 +406,10 @@ class HelmSuiteRuns(ub.NiceRepr):
         self = HelmOutputs.demo().suites()[0].runs()
         return self
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> Union[HelmSuiteRuns, HelmRun]:
+        """
+        Return an slice of HelmSuiteRuns or a single HelmRun
+        """
         if isinstance(index, slice):
             return HelmSuiteRuns(self.paths[index])
         else:
@@ -416,22 +419,22 @@ class HelmSuiteRuns(ub.NiceRepr):
         for index in range(len(self)):
             yield self[index]
 
-    def per_instance_stats(self):
+    def per_instance_stats(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.per_instance_stats() for r in self], axis=0)
         return table
 
-    def run_spec(self):
+    def run_spec(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.run_spec() for r in self], axis=0)
         return table
 
-    def scenario_state(self):
+    def scenario_state(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.scenario_state() for r in self], axis=0)
         return table
 
-    def stats(self):
+    def stats(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.stats() for r in self], axis=0)
         return table
@@ -441,9 +444,24 @@ class HelmSuiteRuns(ub.NiceRepr):
 
 class _HelmRunJsonView:
     """
-    View that provides simple json readers
+    A view of a single HelmRun that provides simple json loading methods.
+
+    Note:
+        This can use different json backends, but orjson is fastest
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo().json
+        >>> per_instance_stats = self.per_instance_stats()
+        >>> stats = self.stats()
+        >>> spec = self.run_spec()
+        >>> scenario_state = self.scenario_state()
+        >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
+        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
+        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
     """
-    def __init__(self, parent, backend='orjson'):
+    def __init__(self, parent: HelmRun, backend='orjson'):
         self.parent = parent
         self.backend = backend  # can be ujson or stdlib, but orjson is fastest
 
@@ -505,12 +523,12 @@ class _HelmRunJsonView:
 
 class _HelmRunDataclassView:
     """
-    Helper to provide access to raw HELM data structures.
+    A view of a single HelmRun that will return raw HELM dataclasses from its
+    loader methods.
 
     Example:
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo().dataclass
-        >>> # Raw HELM objects
         >>> per_instance_stats = list(self.per_instance_stats())
         >>> stats = list(self.stats())
         >>> spec = self.run_spec()
@@ -520,7 +538,7 @@ class _HelmRunDataclassView:
         >>> print(f'spec = {ub.urepr(spec, nl=1)}')
         >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
     """
-    def __init__(self, parent):
+    def __init__(self, parent: HelmRun):
         self.parent = parent
 
     def per_instance_stats(self) -> Generator[PerInstanceStats, None, None]:
@@ -618,12 +636,13 @@ class _HelmRunDataclassView:
 
 class _HelmRunMsgspecView:
     """
-    Helper to provide access to raw HELM data structures.
+    A view of a single HelmRun that will return MsgSpec structures from its
+    loader methods. These are similar to the native HELM dataclasses, but they
+    often load much faster.
 
     Example:
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo().msgspec
-        >>> # Raw HELM objects
         >>> per_instance_stats = self.per_instance_stats()
         >>> stats = self.stats()
         >>> spec = self.run_spec()
@@ -633,7 +652,7 @@ class _HelmRunMsgspecView:
         >>> print(f'spec = {ub.urepr(spec, nl=1)}')
         >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
     """
-    def __init__(self, parent):
+    def __init__(self, parent: HelmRun):
         self.parent = parent
 
     def per_instance_stats(self) -> list[PerInstanceStatsStruct]:
@@ -705,7 +724,24 @@ class _HelmRunMsgspecView:
 
 
 class _HelmRunDataFrameView:
-    def __init__(self, parent):
+    """
+    A view of a single HelmRun that will return DataFrame objects
+    from its loader methods.
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo().dataframe
+        >>> per_instance_stats = self.per_instance_stats()
+        >>> stats = self.stats()
+        >>> spec = self.run_spec()
+        >>> scenario_state = self.scenario_state()
+        >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
+        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
+        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
+    """
+
+    def __init__(self, parent: HelmRun):
         self.parent = parent
 
     def per_instance_stats(self) -> util_pandas.DotDictDataFrame:
@@ -903,6 +939,9 @@ class HelmRun(ub.NiceRepr):
         return self.name
 
     def exists(self):
+        """
+        Determine if the expected json files for this run directory exist.
+        """
         return all(p.exists() for p in [
             # TODO: do we need to add scenario.json and per_instance_stats.json
             # What about the files from helm-summarize?
@@ -914,7 +953,7 @@ class HelmRun(ub.NiceRepr):
         ])
 
     @classmethod
-    def demo(cls):
+    def demo(cls) -> Self:
         suite = HelmOutputs.demo().suites()[0]
         self = suite.runs()[-1]
         return self
