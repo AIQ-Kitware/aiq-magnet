@@ -13,8 +13,11 @@ class EvaluationCard:
     Specification of an empirical claim with resolvable symbols and metadata
 
     Example:
+        >>> from importlib.resources import files
         >>> from magnet.evaluation import EvaluationCard
-        >>> card = EvaluationCard("simple.yaml")
+        >>> card_name = 'simple.yaml'
+        >>> card_path = files('magnet') / 'cards' / card_name
+        >>> card = EvaluationCard(card_path)
         >>> card.evaluate()
         VERIFIED
     """
