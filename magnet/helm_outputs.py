@@ -818,7 +818,7 @@ class HelmRun(ub.NiceRepr):
     Represents a single run in a suite.
 
     This provides output to postprocessed dataframe representations of HELM
-    objects. For access to raw HELM objects, use the ``raw`` attribute.
+    objects. For access to raw HELM objects, use the ``dataclass`` attribute.
 
     Note:
         The following is a list of json files that are in a helm run directory.
