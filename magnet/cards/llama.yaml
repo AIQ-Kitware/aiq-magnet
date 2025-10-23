@@ -15,25 +15,38 @@ symbols:
     type: float
     value: 0.1
 
+  helm_runs_path:
+    type: str
+    value: './data/crfm-helm-public/lite/benchmark_output'
+
   run_specs:
     type: object
+    depends_on: ['helm_runs_path']
     python: |
       import ubelt as ub
       from magnet import HelmOutputs
       from magnet.helm_outputs import HelmSuiteRuns
-      helm_data = HelmOutputs(ub.Path('benchmark_output'))
-      # assumes data path points to helm-lite
+
+      # Load all HELM Lite releases 
+      helm_data = HelmOutputs(ub.Path(helm_runs_path))
+
+      # Collect runs from each release
       helm_lite_runs = []
       for suite in helm_data.suites():
+        # unix glob filter runs for llama models evaluated on MMLU
         helm_lite_runs.extend(suite.runs("mmlu*model=meta_*llama*").paths)
+
+      # Create an aggregate view of all HELM Lite runs used for latest leaderboard
       run_specs = HelmSuiteRuns.coerce(helm_lite_runs)
 
   exact_match_scores:
     type: List[Tuple[str, float]]
     depends_on: ['run_specs']
     python: |
+      # Get dataframe of results from runs
       run_stats = run_specs.stats()
-      # filter to benchmark stats per https://github.com/stanford-crfm/helm/issues/2362
+
+      # filter to test split stats per https://github.com/stanford-crfm/helm/issues/2362
       run_stats = run_stats[
           (run_stats['stats.name.name'] == 'exact_match') & 
           (run_stats['stats.name.perturbation.computed_on'].isna()) &
@@ -43,7 +56,7 @@ symbols:
       helm_models = run_specs.run_spec().set_index('run_spec.name')['run_spec.adapter_spec.model'].to_dict()
       run_stats['model'] = run_stats['run_spec.name'].map(helm_models)
       
-      # average exact_match scores
+      # average exact_match scores across subjects
       exact_match_scores_df = run_stats.groupby('model')['stats.mean'].mean()
 
       exact_match_scores = list(exact_match_scores_df.items())
