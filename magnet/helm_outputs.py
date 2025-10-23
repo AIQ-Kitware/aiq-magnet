@@ -17,7 +17,7 @@ from helm.benchmark.run_spec import RunSpec
 from helm.benchmark.metrics.statistic import Stat
 from helm.benchmark.metrics.metric import PerInstanceStats
 
-from typing import Generator, Union, Self
+from typing import Generator, Self
 
 from magnet.utils import util_pandas
 from magnet.utils import util_msgspec
@@ -238,7 +238,7 @@ class HelmOutputs(ub.NiceRepr):
         self = cls(root_dir)
         return self
 
-    def suites(self, pattern='*'):
+    def suites(self, pattern='*') -> list[HelmSuite]:
         # Note sure if a property or method is best here
         # could do an implicit "view" system like CocoImageView
         # to give best of both worlds in terms of generator / lists but lets
@@ -321,7 +321,7 @@ class HelmSuite(ub.NiceRepr):
         # determine that these directories are actually run specs?
         return sorted([p for p in (self.path).glob(pattern) if p.is_dir() if ':' in p.name])
 
-    def runs(self, pattern='*'):
+    def runs(self, pattern='*') -> HelmRuns:
         paths = self._run_dirs(pattern)
         return HelmRuns(paths)
         # return [HelmRun(p) for p in self._run_dirs(pattern)]
@@ -415,7 +415,7 @@ class HelmRuns(ub.NiceRepr):
         self = HelmOutputs.demo().suites()[0].runs()
         return self
 
-    def __getitem__(self, index) -> Union[HelmSuiteRuns, HelmRun]:
+    def __getitem__(self, index) -> HelmSuiteRuns | HelmRun:
         """
         Return an slice of HelmSuiteRuns or a single HelmRun
         """
@@ -965,7 +965,7 @@ class HelmRun(ub.NiceRepr):
     def __nice__(self):
         return self.name
 
-    def exists(self):
+    def exists(self) -> bool:
         """
         Determine if the expected json files for this run directory exist.
         """
