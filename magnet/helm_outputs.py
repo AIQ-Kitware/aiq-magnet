@@ -6,6 +6,7 @@ TODO:
     - [ ] move this file into the helm backend directory.
 """
 from __future__ import annotations
+import os
 import ubelt as ub
 import pandas as pd
 import kwutil
@@ -140,7 +141,6 @@ class HelmOutputs(ub.NiceRepr):
             >>> assert HelmOutputs.coerce(self.root_dir / 'runs').root_dir == self.root_dir, 'check path coerce'
             >>> assert HelmOutputs.coerce(self.root_dir.parent).root_dir == self.root_dir, 'check path coerce'
         """
-        import os
         if isinstance(input, cls):
             # Input is already a object of this type, return it inplace.
             self = input
@@ -273,7 +273,7 @@ class HelmSuite(ub.NiceRepr):
         >>> print(self)
         <HelmSuite(my-suite)>
         >>> print(self.runs())
-        <HelmSuiteRuns(4)>
+        <HelmRuns(4)>
     """
     def __init__(self, path):
         self.path = ub.Path(path)
@@ -306,7 +306,6 @@ class HelmSuite(ub.NiceRepr):
             >>> assert HelmSuite.coerce(self) is self, 'check inplace return'
             >>> assert HelmSuite.coerce(self.path).path == self.path, 'check path coerce'
         """
-        import os
         if isinstance(input, cls):
             # Input is already a suite object, return it inplace.
             self = input
@@ -324,19 +323,28 @@ class HelmSuite(ub.NiceRepr):
 
     def runs(self, pattern='*'):
         paths = self._run_dirs(pattern)
-        return HelmSuiteRuns(paths)
+        return HelmRuns(paths)
         # return [HelmRun(p) for p in self._run_dirs(pattern)]
 
 
-class HelmSuiteRuns(ub.NiceRepr):
+class HelmRuns(ub.NiceRepr):
     """
-    Represents multiple runs from a suite.
+    Represents multiple runs.
+
+    Stores a list of paths to HelmRuns, which may or may not be from the same
+    suite (although they often are).
+
+    Behaves similar to a ``List[HelmRun]``, but with convinience methods, and
+    potential optimizations.
+
+    SeeAlso:
+        :class:`HelmRun`
 
     Example:
         >>> from magnet.helm_outputs import *
-        >>> self = HelmSuiteRuns.demo()
+        >>> self = HelmRuns.demo()
         >>> print(self)
-        <HelmSuiteRuns(4)>
+        <HelmRuns(4)>
         >>> self.per_instance_stats()
         >>> self.run_spec()
         >>> self.scenario_state()
@@ -366,36 +374,37 @@ class HelmSuiteRuns(ub.NiceRepr):
     @classmethod
     def coerce(cls, input) -> Self:
         """
-        Convert some reasonable representation of a HelmSuiteRuns into an object.
+        Convert some reasonable representation of a HelmRuns into an object.
 
         Args:
-            input (str | PathLike | HelmSuite | HelmSuiteRuns | List[str | PathLike]):
-                An existing HelmSuiteRuns object, path to runs within a suite,
+            input (str | PathLike | HelmSuite | HelmRuns | List[str | PathLike]):
+                An existing HelmRuns object, path to runs within a suite,
                 a single run path, or a HelmSuite.
 
         Returns:
-            HelmSuiteRuns
+            HelmRuns
 
         Example:
             >>> from magnet.helm_outputs import *
-            >>> self = HelmSuiteRuns.demo()
-            >>> assert HelmSuiteRuns.coerce(self) is self, 'check inplace return'
-            >>> assert HelmSuiteRuns.coerce(self.paths).paths == self.paths, 'check coerce from List[path]'
-            >>> assert HelmSuiteRuns.coerce(self.paths[0]).paths == self.paths[0:1], 'check coerce from path'
-            >>> assert len(HelmSuiteRuns.coerce(HelmSuite.demo()).paths) > 2, 'check coerce from HelmSuite'
+            >>> self = HelmRuns.demo()
+            >>> assert HelmRuns.coerce(self) is self, 'check inplace return'
+            >>> assert HelmRuns.coerce(self.paths).paths == self.paths, 'check coerce from List[path]'
+            >>> assert HelmRuns.coerce(self.paths[0]).paths == self.paths[0:1], 'check coerce from path'
+            >>> assert len(HelmRuns.coerce(HelmSuite.demo()).paths) > 2, 'check coerce from HelmSuite'
         """
-        import os
         if isinstance(input, cls):
-            # return in put inplace
+            # return input inplace
             self = input
         elif isinstance(input, HelmSuite):
-            # return in put inplace
+            # input is a Suite, return the runs that belong to it.
             self = input.runs()
         elif isinstance(input, (str, os.PathLike)):
             # input is likely a path to a run, todo: could add validation
             # todo: determine if the path is more likely a run or a suite
             self = cls([ub.Path(input)])
         elif isinstance(input, list):
+            # Assume the input is a lit of paths corresponding to individual
+            # runs
             self = cls([ub.Path(p) for p in input])
         else:
             raise TypeError(f'Unable to coerce {type(input)}')
@@ -411,7 +420,7 @@ class HelmSuiteRuns(ub.NiceRepr):
         Return an slice of HelmSuiteRuns or a single HelmRun
         """
         if isinstance(index, slice):
-            return HelmSuiteRuns(self.paths[index])
+            return HelmRuns(self.paths[index])
         else:
             return HelmRun(self.paths[index])
 
@@ -895,6 +904,18 @@ class HelmRun(ub.NiceRepr):
         self.path = ub.Path(path)
         self.name = self.path.name
 
+    @classmethod
+    def coerce(cls, input) -> Self:
+        """
+        Handle input that presumably corresponds to a single HelmRun.
+        """
+        if isinstance(input, cls):
+            return input
+        elif isinstance(input, (str, os.PathLike)):
+            return cls(input)
+        else:
+            raise TypeError(f'Unable to coerce {type(input)}')
+
     @cached_property
     def dataclass(self):
         """
@@ -989,3 +1010,10 @@ class HelmRun(ub.NiceRepr):
         Dataframe representation of :class:`Stat`
         """
         return self.dataframe.stats()
+
+
+BACKWARDS_COMPATIBILITY = True
+if BACKWARDS_COMPATIBILITY:
+    # Assign backwards compatible aliaes
+    # TODO: provide deprecation notifications
+    HelmSuiteRuns = HelmRuns
