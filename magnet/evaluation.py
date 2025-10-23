@@ -1,24 +1,28 @@
-import builtins 
+import builtins
 from graphlib import TopologicalSorter
 from typing import Any, Dict, List, Tuple, get_origin, get_args
-import yaml 
+import yaml
+import argparse
+
 
 def _check_arbitrary_code(code_str: str) -> None:
     pass
-    
+
 class EvaluationCard:
     """
     Specification of an empirical claim with resolvable symbols and metadata
 
     Example:
+        >>> from importlib.resources import files
         >>> from magnet.evaluation import EvaluationCard
-        >>> card = EvaluationCard("simple.yaml")
+        >>> card_name = 'simple.yaml'
+        >>> card_path = files('magnet') / 'cards' / card_name
+        >>> card = EvaluationCard(card_path)
         >>> card.evaluate()
         VERIFIED
     """
-    def __init__(self, name):
-        # load evaluation card from 'magnet/cards' (may want to FIXME to path)
-        with open(f'magnet/cards/{name}', 'r') as f:
+    def __init__(self, path):
+        with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
 
         self.title = cfg.get("title", "")
@@ -53,12 +57,12 @@ class EvaluationCard:
 
 class Claim:
     """
-    Represents a verifiable assertion for a set of resolved symbols 
+    Represents a verifiable assertion for a set of resolved symbols
 
     ***
-    Currently assumes 
-    1. claim is valid and safe python code 
-    2. all symbols can be resolved from card 
+    Currently assumes
+    1. claim is valid and safe python code
+    2. all symbols can be resolved from card
     3. No additional dependencies are needed
     4. Any conclusions drawn are as reliable as claim itself (i.e. verification is strictly: 'does code execute without error')
     ***
@@ -75,12 +79,12 @@ class Claim:
     def __init__(self, raw):
         self.claim = raw.get('python')
         self.status = "UNVERIFIED"
-        
-    def evaluate(self, symbols: Dict[str, Any]={}): 
+
+    def evaluate(self, symbols: Dict[str, Any]={}):
         """
         Execute the claim subject to symbols definitions
 
-        if True: 
+        if True:
             VERIFIED
         elif AssertionError:
             FALSIFIED
@@ -100,13 +104,13 @@ class Claim:
         except Exception as e:
             self.status = "INCONCLUSIVE"
             print(f"ERROR evaluating claim: {e}")
-    
+
     def __repr__(self) -> str:
         return self.claim
 
 class Symbol:
     """
-    Single resolvable unit of a claim  
+    Single resolvable unit of a claim
 
     Example:
         >>> from magnet.evaluation import Symbol
@@ -116,20 +120,23 @@ class Symbol:
     """
     def __init__(self, name, spec):
         self.name = name
-        self.value = None
+        self.value = spec.get('value')
         self.type = spec.get('type', 'List[int]')
         self.definition = spec.get('python', '')
         self.dependencies = spec.get('depends_on', [])
-    
+
     def eval(self, context: Dict[str, Any]= {}) -> Any:
         """
         Resolve symbol definition
 
         FIXME: type verification is currently limited and hacky
         """
-        exec(self.definition, context)
-        if self._check_type(self.type, context[self.name]):
-            self.value = context[self.name]
+        if self.value is None:
+            print(f"Resolving: {self.name}")
+            exec(self.definition, context)
+            if self._check_type(self.type, context[self.name]):
+                self.value = context[self.name]
+
         return self.value
 
     def _check_type(self, type_str, value) -> bool:
@@ -140,7 +147,7 @@ class Symbol:
         str_to_type = {'List': List, 'Dict': Dict, 'Tuple': Tuple, 'Any': Any}
         type = eval(type_str, str_to_type)
         return self._check_collections(type, value)
-    
+
     def _check_collections(self, target_type, value):
         """
         Recursively evaluate if value is target_type
@@ -169,7 +176,7 @@ class Symbol:
 
 class Symbols:
     """
-    Dictionary of Symbols used as context for claim 
+    Dictionary of Symbols used as context for claim
 
     Example:
         >>> from magnet.evaluation import Symbols
@@ -200,6 +207,28 @@ class Symbols:
         dependency_graph = {symbol: instance.dependencies for symbol, instance in self.symbols.items()}
         sorter = TopologicalSorter(dependency_graph)
         return list(sorter.static_order())
-    
+
     def __call__(self):
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(description="Resolve an Evaluation Card")
+
+    parser.add_argument('path',
+                        type=str,
+                        help="Path to evaluation card YAML file")
+
+    return parser
+
+
+def main():
+    parser = build_parser()
+    args = parser.parse_args()
+
+    card = EvaluationCard(args.path)
+    card.evaluate()
+    card.summarize()
+
+if __name__ == "__main__":
+    main()
