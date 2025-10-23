@@ -211,7 +211,12 @@ Now, subsequent `.summarize()` calls for this instance will reflect the result o
 ## Llama Performance Consistency Card (HELM Lite)
 The `magnet/cards/llama.yaml` card tests the claim that for a single benchmark, the entire llama model family performs consistently within a `threshold`. Specifically, the card reads helm-lite runs to verify that llama models achieve an `exact_match` score within `threshold` of each other on the MMLU benchmark. 
 
-An example demonstration is provided below (assuming you've downloaded all versions of the helm-lite runs):
+(If you have not downloaded the entire helm-lite leaderboard, an example subset can be downloaded to `/data/crfm-helm-public` using the following command:)
+```
+python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
+```
+
+An example demonstration is provided below (assuming you've downloaded helm-lite runs to `/data/crfm-helm-public`):
 
 ```
     >>> from magnet.evaluation import EvaluationCard
@@ -221,7 +226,7 @@ An example demonstration is provided below (assuming you've downloaded all versi
     Description: Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family
 
     ================================
-    SYMBOLS:     {'threshold': 0.1, 'run_specs': None, 'exact_match_scores': None}
+    SYMBOLS:     {'threshold': 0.1, 'helm_runs_path': '/data/crfm-helm-public/lite/benchmark_output', 'run_specs': None, 'exact_match_scores': None}
     CLAIM:       
     for base_model, base_score in exact_match_scores:
     for comp_model, comp_score in exact_match_scores:
@@ -235,6 +240,7 @@ An example demonstration is provided below (assuming you've downloaded all versi
     FALSIFIED
 ```
 At least one pair of models in the llama family do not satisify the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
+
 
 ## Writing your own Evaluation Card
 An `EvaluationCard` instance is expecting roughly the following structure in `yaml` format:
