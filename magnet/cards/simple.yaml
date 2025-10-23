@@ -13,7 +13,7 @@ symbols:
     type: List[int]
     python: |
       def create_even_range(start=-10, end=10):
-        return [n for n in range(start, end) if n % 2 == 0]
+        return [n for n in range(start, end+1) if n % 2 == 0]
       int_range_even = create_even_range()
   
   int_range_odd:
