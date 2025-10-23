@@ -896,25 +896,6 @@ class HelmRun(ub.NiceRepr):
         self.name = self.path.name
 
     @cached_property
-    def json(self):
-        """
-        Access to direct JSON view
-        """
-        return _HelmRunJsonView(self)
-
-    @cached_property
-    def _json_stdlib(self):
-        return _HelmRunJsonView(self, backend='stdlib')
-
-    @cached_property
-    def _json_orjson(self):
-        return _HelmRunJsonView(self, backend='orjson')
-
-    @cached_property
-    def _json_ujson(self):
-        return _HelmRunJsonView(self, backend='ujson')
-
-    @cached_property
     def dataclass(self):
         """
         Access HELM dataclass view
@@ -934,6 +915,31 @@ class HelmRun(ub.NiceRepr):
         Access flattened dataframe view
         """
         return _HelmRunDataFrameView(self)
+
+    @cached_property
+    def json(self):
+        """
+        Access to direct JSON view
+        """
+        return _HelmRunJsonView(self)
+
+    @cached_property
+    def _json_stdlib(self):
+        # Provides a json view with a force backend.
+        # Experimental, not part of the public API.
+        return _HelmRunJsonView(self, backend='stdlib')
+
+    @cached_property
+    def _json_orjson(self):
+        # Provides a json view with a force backend.
+        # Experimental, not part of the public API.
+        return _HelmRunJsonView(self, backend='orjson')
+
+    @cached_property
+    def _json_ujson(self):
+        # Provides a json view with a force backend.
+        # Experimental, not part of the public API.
+        return _HelmRunJsonView(self, backend='ujson')
 
     def __nice__(self):
         return self.name
