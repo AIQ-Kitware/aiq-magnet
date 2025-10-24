@@ -1,0 +1,23 @@
+# Simple Arithmetic Example
+
+title: "Arithmetic - Addition Commutative Property"
+description: "Addition is commutative on pairs of even and odd integers"
+
+claim:
+  python: |
+    for even, odd in zip(int_range_even, int_range_odd):
+      assert even + odd == odd + even, f"{even} + {odd} is not commutative"
+
+symbols:
+  int_range_even:
+    type: List[int]
+    python: |
+      def create_even_range(start=-10, end=10):
+        return [n for n in range(start, end+1) if n % 2 == 0]
+      int_range_even = create_even_range()
+  
+  int_range_odd:
+    type: List[int]
+    depends_on: ['int_range_even']
+    python: |
+      int_range_odd = [n + 1 for n in int_range_even]

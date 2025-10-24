@@ -6,6 +6,8 @@ build-backend = "setuptools.build_meta"
 namespaces = true
 include = ["magnet*"]
 
+[tool.setuptools.package-data]
+magnet = ["cards/*.yaml"]
 
 [tool.setuptools.dynamic]
 version = {attr = "magnet.__version__"}
