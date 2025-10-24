@@ -153,7 +153,7 @@ We also recommend looking at the `magnet/example_random_predictor.py` and/or `ma
 
 # Evaluation Cards
 
-Verifiable empirical claims with symbol definitions are specified in Python and stored in structured `yaml` cards called Evaluation Cards. Examples are provided in `magnet/cards` including a simple dataset of integers and a particular benchmark from the latest HELM Lite runs.
+Verifiable empirical claims with symbol definitions are specified in Python and stored in structured `yaml` files called Evaluation Cards. Examples are provided in `magnet/cards`, including a simple dataset of integers and a particular benchmark from the latest HELM Lite runs.
 
 ## Simple Arithmetic Card
 A basic example for getting familar with the structure of an evaluation card is available at `magnet/cards/simple.yaml`. The claim tests the commutative property of consecutive integers on the range `[-10, 10]`. This maps to the symbol-based assertion `x + y = y + x`, when `x` is even integers `[-10, 10]` and `y` is odd integers `[-9, 11]`. An example usage of this card is provided in the `EvaluationCard` docstring:
@@ -169,13 +169,13 @@ A basic example for getting familar with the structure of an evaluation card is 
     """
 ```
 
-Which can be run with the following command (assuming you've followed the developer quick start instructions):
+Alternatively, you can evaluate any evaluation card using the `magnet/evaluation.py` script. The following command evaluates the `simple.yaml` example card:
 
 ```
-xdoctest magnet/evaluation.py
+python magnet/evaluation.py magnet/cards/simple.yaml
 ```
 
-In this example, we populate an `EvaluationCard` instance with the `simple.yaml` evaluation card, resolve the symbol defintions of the claim from their respective definitions, and assert whether this claim was `VERIFIED` (true assertion), `FALSIFIED` (false assertion), or `INCONCLUSIVE` (failed). We can also call `.summarize()` to expose the contents of this card programmatically.
+In this example, we populate an `EvaluationCard` instance with the `simple.yaml` evaluation card, resolve the symbol values of the claim from their respective python definitions, and assert whether this claim was `VERIFIED` (true assertion), `FALSIFIED` (false assertion), or `INCONCLUSIVE` (failed). We can also call `.summarize()` to expose the contents of this card programmatically.
 ```
     >>> card.summarize() 
     Title:       Arithmetic - Addition Commutative Property
@@ -189,7 +189,7 @@ In this example, we populate an `EvaluationCard` instance with the `simple.yaml`
     ================================
     STATUS:      UNVERIFIED
 ```
-The above was called prior to `.evaluate()`, as shown by the unresolved symbol values. A single `.evaluate()` call will execute the symbol definitions, run the claim, and print the result.
+The above was called prior to `.evaluate()`, as shown by the unresolved (`None`) symbol values. A single `.evaluate()` call will execute the symbol definitions, run the claim, and print the result.
 ```
     >>> card.evaluate()
     VERIFIED
@@ -206,15 +206,10 @@ The above was called prior to `.evaluate()`, as shown by the unresolved symbol v
     ================================
     STATUS:      VERIFIED
 ```
-Now, subsequent `.summarize()` calls for this instance will reflect the result of the claim subjec to the symbol resolutions. 
+Now, subsequent `.summarize()` calls for this instance will reflect the result of the claim subject to the symbol resolutions. 
 
 ## Llama Performance Consistency Card (HELM Lite)
 The `magnet/cards/llama.yaml` card tests the claim that for a single benchmark, the entire llama model family performs consistently within a `threshold`. Specifically, the card reads helm-lite runs to verify that llama models achieve an `exact_match` score within `threshold` of each other on the MMLU benchmark. 
-
-(If you have not downloaded the entire helm-lite leaderboard, an example subset can be downloaded to `/data/crfm-helm-public` using the following command:)
-```
-python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
-```
 
 An example demonstration is provided below (assuming you've downloaded helm-lite runs to `/data/crfm-helm-public`):
 
@@ -241,6 +236,16 @@ An example demonstration is provided below (assuming you've downloaded helm-lite
 ```
 At least one pair of models in the llama family do not satisify the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
 
+Optionally, you could evaluate this card using the `magnet/evaluation.py` script as follows:
+
+```
+python magnet/evaluation.py magnet/cards/llama.yaml
+```
+
+(If you have not downloaded the entire helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
+```
+python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
+```
 
 ## Writing your own Evaluation Card
 An `EvaluationCard` instance is expecting roughly the following structure in `yaml` format:
@@ -269,7 +274,7 @@ symbols: # list of symbols
       assignment code blocks (e.g. imports/variables from other_valid_python_variable)
 ```
 
-Once your card definition is complete, you can follow the basic workflow below to 
+Once your card definition is complete, you can follow the basic workflow below to programatically inspect and evaluate the card.
 
 ```
 from magnet.evaluation import EvaluationCard
@@ -285,6 +290,13 @@ card.evaluate()
 # expose resolved symbol definitions and claim status
 card.summarize() 
 ```
+
+Or evaluate from the command line using:
+
+```
+python magnet/evaluation.py path/to/mycard.yaml
+```
+
 
 ## Downloading HELM results
 
