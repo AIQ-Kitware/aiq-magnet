@@ -1,53 +1,64 @@
 # Preliminary Working Evaluation Card Example
 
 title: "In-domain Model Consistency for Llama Family"
-description: "Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family"
+description: |
+  Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family
 
 claim:
   python: |
-    threshold = 0.1
     for base_model, base_score in exact_match_scores:
       for comp_model, comp_score in exact_match_scores:
         assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
 
 symbols:
+  threshold:
+    type: float
+    value: 0.1
+
+  helm_runs_path:
+    type: str
+    value: './data/crfm-helm-public/lite/benchmark_output'
+
   run_specs:
-    type: Dict[str, List[Any]]
+    type: object
+    depends_on: ['helm_runs_path']
     python: |
-      from collections import defaultdict
-      import json
-      import re
+      import ubelt as ub
+      from magnet import HelmOutputs
+      from magnet.helm_outputs import HelmSuiteRuns
 
-      with open('runs/v1.13.0/runs.json', 'r') as f:
-          runs_repository = json.load(f)
+      # Load all HELM Lite releases 
+      helm_data = HelmOutputs(ub.Path(helm_runs_path))
 
-      mmlu_llama_str = r"^mmlu.*model=meta_*llama.*"
-      regex_pattern = re.compile(mmlu_llama_str)
+      # Collect runs from each release
+      helm_lite_runs = []
+      for suite in helm_data.suites():
+        # unix glob filter runs for llama models evaluated on MMLU
+        helm_lite_runs.extend(suite.runs("mmlu*model=meta_*llama*").paths)
 
-      run_specs = defaultdict(list)
-      for run in runs_repository:
-          if regex_pattern.search(run['run_spec']['name']):
-              run_specs[run['run_spec']['adapter_spec']['model']].append(run)
+      # Create an aggregate view of all HELM Lite runs used for latest leaderboard
+      run_specs = HelmSuiteRuns.coerce(helm_lite_runs)
 
   exact_match_scores:
     type: List[Tuple[str, float]]
     depends_on: ['run_specs']
     python: |
-      from collections import defaultdict
+      # Get dataframe of results from runs
+      run_stats = run_specs.stats()
 
-      exact_match_scores = []
-      def valid_stat_spec(stat_spec, stat_name):
-        name = stat_spec['name']['name']
-        split = stat_spec['name']['split']
-        perturbed = 'perturbation' in stat_spec['name']
-        return name == stat_name and split == "test" and not perturbed
+      # filter to test split stats per https://github.com/stanford-crfm/helm/issues/2362
+      run_stats = run_stats[
+          (run_stats['stats.name.name'] == 'exact_match') & 
+          (run_stats['stats.name.perturbation.computed_on'].isna()) &
+          (run_stats['stats.name.split'] == 'test')]
 
-      stat_specs = defaultdict(list)
-      for model in run_specs:
-          for run in run_specs[model]:
-              for stat in run['stats']:
-                  if valid_stat_spec(stat, 'exact_match'):
-                      stat_specs[model].append(stat['mean'])
+      # extract HELM model common names
+      helm_models = run_specs.run_spec().set_index('run_spec.name')['run_spec.adapter_spec.model'].to_dict()
+      run_stats['model'] = run_stats['run_spec.name'].map(helm_models)
+      
+      # average exact_match scores across subjects
+      exact_match_scores_df = run_stats.groupby('model')['stats.mean'].mean()
 
-      exact_match_scores = [(model, sum(scenario_scores)/len(scenario_scores)) for model, scenario_scores in stat_specs.items()]
+      exact_match_scores = list(exact_match_scores_df.items())
+
 
