@@ -320,8 +320,7 @@ python -m magnet.backends.helm.download_helm_results --help
 
 - More options for predict input (dataframes vs. HELM objects vs. dicts)
 - Support for non-prediction style TA1 algorithms (feedback needed)
-- Expose model weights for a given run
-- Evaluation card & router implementations
+- Further evaluation card development and evaluation router implementation
 - ...
 
 # Acknowledgments
