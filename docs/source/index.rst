@@ -10,13 +10,13 @@ Welcome to aiq_magnet's documentation!
 ======================================
 
 .. The __init__ files contains the top-level documentation overview
-.. automodule:: aiq_magnet.__init__
+.. automodule:: magnet.__init__
    :show-inheritance:
 
 .. toctree::
    :maxdepth: 5
 
-   auto/aiq_magnet
+   auto/magnet
    auto/modules
 
 

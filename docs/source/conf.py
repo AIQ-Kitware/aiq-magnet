@@ -139,7 +139,7 @@ def parse_version(fpath):
 
 project = 'aiq-magnet'
 copyright = '2025, Jon Crall'
-author = 'Jon Crall'
+author = 'MAGNET Kitware'
 modname = 'magnet'
 
 repo_dpath = dirname(dirname(dirname(__file__)))
