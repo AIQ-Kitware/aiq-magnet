@@ -59,6 +59,17 @@ all = [
     "aiq-magnet[tests]",
 ]
 
+docs = [
+    "sphinx >= 4.3.2",
+    "sphinx-autobuild >= 2021.3.14",
+    "sphinx_rtd_theme >= 1.0.0",
+    "sphinxcontrib-napoleon >= 0.7",
+    "sphinx-autoapi >= 1.8.4",
+    "Pygments >= 2.9.0",
+    "myst_parser >= 0.16.1",
+    "sphinx-reredirects >= 0.0.1",
+]
+
 [project.scripts]
 magnet = "magnet.__main__:main"
 magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
