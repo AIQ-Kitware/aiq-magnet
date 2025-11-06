@@ -4,5 +4,6 @@ __pycache__
 venv*
 dist
 build
+docs/build/
 
 .ipynb_checkpoints/
