@@ -19,7 +19,7 @@ Notes:
     # Remove any old auto docs folder and regenerate it.
     rm -rf ~/code/aiq-magnet/docs/source/auto
     cd ~/code/aiq-magnet/docs
-    sphinx-apidoc --private --separate --force --output-dir ~/code/aiq-magnet/docs/source/auto ~/code/aiq-magnet/aiq_magnet
+    sphinx-apidoc --private --separate --force --output-dir ~/code/aiq-magnet/docs/source/auto ~/code/aiq-magnet/magnet
     git add source/auto/*.rst
 
     # Note: the module should importable before running this
@@ -45,7 +45,7 @@ Notes:
 
         Enter the following information:
             Set the Repository NAME: aiq-magnet
-            Set the Repository URL: https://github.com/AIQ-Kitware/magnet-sys-exploratory
+            Set the Repository URL: https://github.com/AIQ-Kitware/aiq-magnet/
 
         Make sure you have a .readthedocs.yml file
 
@@ -68,7 +68,7 @@ Notes:
 
         Then go to
 
-            https://github.com/AIQ-Kitware/magnet-sys-exploratory/hooks
+            https://github.com/AIQ-Kitware/aiq-magnet//hooks
 
             Click "Add new webhook".
 
@@ -140,10 +140,10 @@ def parse_version(fpath):
 project = 'aiq-magnet'
 copyright = '2025, Jon Crall'
 author = 'Jon Crall'
-modname = 'aiq_magnet'
+modname = 'magnet'
 
 repo_dpath = dirname(dirname(dirname(__file__)))
-mod_dpath = join(repo_dpath, 'aiq_magnet')
+mod_dpath = join(repo_dpath, 'magnet')
 src_dpath = dirname(mod_dpath)
 modpath = join(mod_dpath, '__init__.py')
 release = parse_version(modpath)
@@ -173,6 +173,7 @@ extensions = [
     'sphinx.ext.imgconverter',  # For building latexpdf
     'sphinx.ext.githubpages',
     # 'sphinxcontrib.redirects',
+    'sphinxcontrib.jquery',  # Fix for search
     'sphinx_reredirects',
 ]
 
