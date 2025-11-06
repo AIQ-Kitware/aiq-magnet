@@ -20,7 +20,7 @@ authors = [
     {name = "MAGNET Kitware", email = "aiq-ta2@kitware.com"}
 ]
 urls = { "Repository" = "https://github.com/AIQ-Kitware/aiq-magnet/" }
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "crfm-helm>=0.5.8",
     "pandas>=2.2.3",
