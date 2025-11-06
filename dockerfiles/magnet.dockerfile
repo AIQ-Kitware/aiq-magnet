@@ -11,6 +11,7 @@ FROM ${UV_BASE}
 # install of the project into the virtual environment.
 
 ENV REPO_DNAME=aiq-magnet
+ARG USE_LOCKFILE=1
 RUN mkdir -p /root/code/$REPO_DNAME
 WORKDIR /root/code/${REPO_DNAME}
 
@@ -33,7 +34,9 @@ git checkout "$GIT_REF"
 git reset --hard "$GIT_REF"
 
 # First install pinned requirements for reproducibility
-uv pip install -r requirements.lock.txt
+if [[ "$USE_LOCKFILE" -eq 1 ]]; then
+  uv pip install -r requirements.lock.txt
+fi
 
 # Install the repo in development mode
 uv pip install -e .[tests] 
