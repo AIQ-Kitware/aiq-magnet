@@ -3,8 +3,23 @@
 ARG UV_BASE=uv:latest
 FROM ${UV_BASE}
 
+
+# ------------------------------------
+# Step 1: Install System Prerequisites
+# ------------------------------------
+
+RUN --mount=type=cache,target=/var/cache/apt \
+    --mount=type=cache,target=/var/lib/apt/lists <<EOF
+#!/bin/bash
+set -e
+apt update -q
+DEBIAN_FRONTEND=noninteractive apt install -q -y --no-install-recommends \
+    unzip \
+# Note: normal image cleanup not needed with buildkit cache
+EOF
+
 # ---------------------------------
-# Step 5: Checkout and install REPO
+# Step 2: Checkout and install REPO
 # ---------------------------------
 # Based on the state of the repo this copies the host .git data over and then
 # checks out the exact version requested by GIT_REF. It then performs a basic
