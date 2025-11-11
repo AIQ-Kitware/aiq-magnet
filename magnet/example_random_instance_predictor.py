@@ -4,19 +4,19 @@ import argparse
 from helm.benchmark.metrics.statistic import Stat
 
 from magnet.instance_predictor import InstancePredictor
-from data_splits import TrainSplit, SequesteredTestSplit
+from magnet.data_splits import TrainSplit, SequesteredTestSplit
 
 
-class ExampleRandomPredictor(InstancePredictor):
+class ExampleRandomInstancePredictor(InstancePredictor):
     """
-    Class to demonstrate a random stat prediction algorithm
+    Class to demonstrate a random per-instance stat prediction algorithm
 
     Example:
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo()
         >>> suite = outputs.suites()[0].name
         >>> root_dir = outputs.root_dir
-        >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
+        >>> predictor_instance = ExampleRandomInstancePredictor(num_eval_samples=5)
         >>> predictor_instance(root_dir, suite)
     """
     def predict(self,

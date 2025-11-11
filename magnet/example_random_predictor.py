@@ -3,7 +3,8 @@ import argparse
 
 from helm.benchmark.metrics.statistic import Stat
 
-from magnet.predictor import Predictor, TrainSplit, SequesteredTestSplit
+from magnet.predictor import Predictor
+from magnet.data_splits import TrainSplit, SequesteredTestSplit
 
 
 class ExampleRandomPredictor(Predictor):
