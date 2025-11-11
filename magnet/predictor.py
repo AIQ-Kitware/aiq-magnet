@@ -1,3 +1,5 @@
+from typing import Any
+
 import ubelt as ub
 import pandas as pd
 import kwarray
@@ -33,7 +35,7 @@ class Predictor:
         return True
 
     def predict(self,
-                train_split, sequestered_test_split) -> dict[str, list[Stat]]:
+                train_split, sequestered_test_split) -> Any:
         raise NotImplementedError
 
     def prepare_predict_inputs(self, helm_suite_path):
@@ -281,3 +283,10 @@ class Predictor:
 
     def __call__(self, *args, **kwargs):
         return self._run(*args, **kwargs)
+
+
+class RunPredictor(Predictor):
+    def predict(self,
+                train_split,
+                sequestered_test_split) -> dict[str, list[Stat]]:
+        raise NotImplementedError

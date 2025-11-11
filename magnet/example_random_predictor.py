@@ -3,11 +3,11 @@ import argparse
 
 from helm.benchmark.metrics.statistic import Stat
 
-from magnet.predictor import Predictor
+from magnet.predictor import RunPredictor
 from magnet.data_splits import TrainSplit, SequesteredTestSplit
 
 
-class ExampleRandomPredictor(Predictor):
+class ExampleRandomPredictor(RunPredictor):
     """
     Class to demonstrate a random stat prediction algorithm
 
