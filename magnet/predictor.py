@@ -1,14 +1,17 @@
 import ubelt as ub
 import pandas as pd
 import kwarray
+from helm.benchmark.metrics.statistic import Stat
 
 from magnet.helm_outputs import HelmSuite, HelmOutputs
-from helm.benchmark.metrics.statistic import Stat
+from magnet.data_splits import TestSplit, TrainSplit
 
 
 class Predictor:
     def __init__(self,
                  num_example_runs=3,
+                 # num_eval_runs=1,
+                 # eval_partition_fn=<returns true if run_spec should be used for eval>
                  num_eval_samples=20,
                  random_seed=1):
         self.num_example_runs = num_example_runs
@@ -37,6 +40,7 @@ class Predictor:
         # TODO: Is this unused? Can we remove it?
         train_split, test_split = self.prepare_all_dataframes(helm_suite_path)
         sequestered_test_split = test_split.sequester()
+
         # predict method doesn't get `eval_stats_df`
         return train_split, sequestered_test_split
 
@@ -74,23 +78,33 @@ class Predictor:
         train_scenario_state_df = _all_scenario_state_df[_all_scenario_state_df['run_spec.name'].isin(train_runs)]
         _full_eval_scenario_state_df = _all_scenario_state_df[_all_scenario_state_df['run_spec.name'] == eval_run]
 
+        _all_per_instance_stats_df = pd.concat([r.per_instance_stats() for r in selected_runs])
+        train_per_instance_stats_df = _all_per_instance_stats_df[_all_per_instance_stats_df['run_spec.name'].isin(train_runs)]
+        _full_eval_per_instance_stats_df = _all_per_instance_stats_df[_all_per_instance_stats_df['run_spec.name'] == eval_run]
+
         if self.num_eval_samples > len(_full_eval_scenario_state_df):
             raise RuntimeError("Not enough rows in eval scenario_state to sample")
 
-        random_eval_indices = random.sample(
-            range(len(_full_eval_scenario_state_df)), min(len(_full_eval_scenario_state_df), self.num_eval_samples))
-        eval_scenario_state_df = _full_eval_scenario_state_df.iloc[random_eval_indices]
+        unique_instance_ids = _full_eval_scenario_state_df['scenario_state.request_states.instance.id'].unique()
+        random_instance_indices = random.sample(
+            range(len(unique_instance_ids)), min(len(unique_instance_ids), self.num_eval_samples))
+        random_instance_ids = unique_instance_ids[random_instance_indices]
+
+        eval_scenario_state_df = _full_eval_scenario_state_df[_full_eval_scenario_state_df['scenario_state.request_states.instance.id'].isin(random_instance_ids)]
+        eval_per_instance_stats_df = _full_eval_per_instance_stats_df[_full_eval_per_instance_stats_df['per_instance_stats.instance_id'].isin(random_instance_ids)]
 
         train_split = TrainSplit(
             run_specs=train_run_specs_df,
             scenario_state=train_scenario_state_df,
             stats=train_stats_df,
+            per_instance_stats=train_per_instance_stats_df
         )
 
         test_split = TestSplit(
             run_specs=eval_run_specs_df,
             scenario_state=eval_scenario_state_df,
             stats=eval_stats_df,
+            per_instance_stats=eval_per_instance_stats_df
         )
         return train_split, test_split
 
@@ -267,41 +281,3 @@ class Predictor:
 
     def __call__(self, *args, **kwargs):
         return self._run(*args, **kwargs)
-
-
-class DataSplit:
-    """
-    Enapsulates data for a particualr data split
-
-    Attributes:
-        run_specs: DataFrame | None
-        scenario_state: DataFrame | None
-        stats: DataFrame | None
-    """
-    def __init__(self, run_specs=None, scenario_state=None, stats=None):
-        self.run_specs = run_specs
-        self.scenario_state = scenario_state
-        self.stats = stats
-
-
-class TrainSplit(DataSplit):
-    ...
-
-
-class TestSplit(DataSplit):
-
-    def sequester(self):
-        """
-        Drop the results for components that should not have access to it.
-        """
-        sequestered_split = SequesteredTestSplit(
-            run_specs=self.run_specs,
-            scenario_state=self.scenario_state
-        )
-        return sequestered_split
-
-
-class SequesteredTestSplit(TestSplit):
-    def __init__(self, run_specs=None, scenario_state=None, stats=None):
-        assert stats is None, 'cannot specify stats here'
-        super().__init__(run_specs=run_specs, scenario_state=scenario_state)
