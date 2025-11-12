@@ -3,26 +3,26 @@ import argparse
 
 from helm.benchmark.metrics.statistic import Stat
 
-from magnet.predictor import RunPredictor
+from magnet.instance_predictor import InstancePredictor
 from magnet.data_splits import TrainSplit, SequesteredTestSplit
 
 
-class ExampleRandomPredictor(RunPredictor):
+class ExampleRandomInstancePredictor(InstancePredictor):
     """
-    Class to demonstrate a random stat prediction algorithm
+    Class to demonstrate a random per-instance stat prediction algorithm
 
     Example:
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo()
         >>> suite = outputs.suites()[0].name
         >>> root_dir = outputs.root_dir
-        >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
+        >>> predictor_instance = ExampleRandomInstancePredictor(num_eval_samples=5)
         >>> predictor_instance(root_dir, suite)
     """
     def predict(self,
                 train_split: TrainSplit,
                 sequestered_test_split: SequesteredTestSplit
-                ) -> dict[str, list[Stat]]:
+                ) -> dict[str, dict[str, list[Stat]]]:
         predicted_stats = {}
 
         # Unpack split classes into dataframes
@@ -33,10 +33,15 @@ class ExampleRandomPredictor(RunPredictor):
         eval_run_specs_df = sequestered_test_split.run_specs  # NOQA
         eval_scenario_state_df = sequestered_test_split.scenario_state
 
-        for key, _ in eval_scenario_state_df.groupby(['run_spec.name']):
-            run_spec_name, = key
-            prediction = (random.choice(range(0, 101)) / 100)
-            predicted_stats.setdefault(run_spec_name, []).append(
+        for key, _ in eval_scenario_state_df.groupby(
+                ['run_spec.name', 'scenario_state.request_states.instance.id']):
+            run_spec_name, instance_id = key
+
+            prediction = random.choice([0.0, 1.0])
+
+            run_spec_stats = predicted_stats.setdefault(run_spec_name, {})
+            per_instance_stats = run_spec_stats.setdefault(instance_id, [])
+            per_instance_stats.append(
                 Stat(**{'name':
                         {'name': 'predicted_exact_match',
                          'split': 'valid'},
