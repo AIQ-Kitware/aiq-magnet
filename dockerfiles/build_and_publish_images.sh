@@ -70,7 +70,9 @@ make_vcs_ref(){
   if [ -n "$(git -c core.excludesFile=/dev/null ls-files --others --exclude-standard)" ]; then
     is_dirty=true
   fi
-  $is_dirty && echo "${sha}-dirty" || echo "${sha}"
+  #$is_dirty && echo "${sha}-dirty" || echo "${sha}"
+  # Dont do dirty suffix, it breaks things.
+  $is_dirty && echo "${sha}" || echo "${sha}"
 }
 
 short12(){
