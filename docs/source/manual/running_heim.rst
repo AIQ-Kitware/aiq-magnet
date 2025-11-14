@@ -232,8 +232,9 @@ When this finishes we can summarize:
     # Ensure these are the same as above
     HOST_DATA_DIRECTORY=/data/reproduce_heim/data
     HOST_CONFIG_DIRECTORY=/data/reproduce_heim/config
-
     IMAGE_QUALNAME=magnet:latest-heim
+
+    # Summarize HELM results
     docker run \
         --rm \
         --gpus=all \
@@ -244,6 +245,21 @@ When this finishes we can summarize:
         -it "$IMAGE_QUALNAME" \
         helm-summarize \
             --log-config /host/config/helm_debug_log_config.yaml \
+            --output-path /host/data/benchmark_output \
+            --suite my_custom_run_spec
+
+    # Run the HELM server
+    # Note the extra -p argument to publish ports
+    docker run \
+        --rm \
+        --gpus=all \
+        -p 8000:8000 \
+        -e HF_TOKEN \
+        --workdir /host/data \
+        -v "$HOST_DATA_DIRECTORY":/host/data \
+        -v "$HOST_CONFIG_DIRECTORY":/host/config \
+        -it "$IMAGE_QUALNAME" \
+        helm-server \
             --output-path /host/data/benchmark_output \
             --suite my_custom_run_spec
 
