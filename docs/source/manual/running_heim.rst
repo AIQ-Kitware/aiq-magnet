@@ -52,7 +52,7 @@ Next we will build the docker images.
 Option 2: Pull Our HEIM Images
 ==============================
 
-docker pull docker.io/erotemic/uv:0.8.4-python3.10-cuda12.4.1-cudnn-devel-ubuntu22.04
+docker pull docker.io/erotemic/magnet:latest-heim
 
 
 Running HEIM
