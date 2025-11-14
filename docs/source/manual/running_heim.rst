@@ -188,6 +188,44 @@ variable: ``HF_TOKEN``, something like:
     load_secrets
     export HF_TOKEN="$MY_HF_TOKEN"
 
+.. code:: bash
+
+    # Ensure these are the same as above
+    HOST_DATA_DIRECTORY=/data/reproduce_heim/data
+    HOST_CONFIG_DIRECTORY=/data/reproduce_heim/config
+
+    IMAGE_QUALNAME=magnet:latest-heim
+    docker run \
+        --rm \
+        --gpus=all \
+        --workdir /host/data \
+        -e HF_TOKEN \
+        -v "$HOST_DATA_DIRECTORY":/host/data \
+        -v "$HOST_CONFIG_DIRECTORY":/host/config \
+        -it "$IMAGE_QUALNAME" \
+        helm-run \
+            --run-entries my_custom_run_spec:model=huggingface/stable-diffusion-v1-4 \
+            --log-config /host/config/helm_debug_log_config.yaml \
+            --output-path /host/data/benchmark_output \
+            --plugins /host/config/my_custom_run_spec.py \
+            --suite my_custom_run_spec \
+            --max-eval-instances 20 \
+            --num-threads 1
+
+Note several items in the above command:
+
+* We specify our current working directory in the docker command to the data directory so relative path outputs are caught. (Ideally, this is just for safety, but `prod_env` might currently depend onit)
+
+* We specify the output path, so results are written in an area where we can see them on the host system.
+
+* We point at a custom logging config.
+
+* We use our custom --plugins argument to specify a custom run spec file, which is similar to mscoco, but only with CLIP scores. This has not been accepted into standard HELM yet (https://github.com/stanford-crfm/helm/pull/3916).
+
+* We use 20 max-eval-instances and 1 thread to make our benchmark stable and run faster.
+
+
+When this finishes we can summarize:
 
 .. code:: bash
 
@@ -200,18 +238,34 @@ variable: ``HF_TOKEN``, something like:
         --rm \
         --gpus=all \
         -e HF_TOKEN \
+        --workdir /host/data \
         -v "$HOST_DATA_DIRECTORY":/host/data \
         -v "$HOST_CONFIG_DIRECTORY":/host/config \
         -it "$IMAGE_QUALNAME" \
-        helm-run \
-            --run-entries my_custom_run_spec:model=huggingface/stable-diffusion-v1-4 \
-            --suite my_custom_run_spec \
-            --max-eval-instances 20 \
-            --num-threads 1 \
+        helm-summarize \
             --log-config /host/config/helm_debug_log_config.yaml \
-            --plugins /host/config/my_custom_run_spec.py
-
+            --output-path /host/data/benchmark_output \
+            --suite my_custom_run_spec
 
 Customizing HEIM
 ================
-Optionally we can include our own custom variants of the repos if we need to develop in the image.
+
+Optionally we can include our own custom variants of the repos if we need to
+develop in the image. This would involve using custom mounts to override the
+code repos in the image.
+
+E.g. If you had a custom ``helm`` repo in $HOME/code in your host system, you
+could force the image to use it via:
+
+.. code:: bash
+
+    IMAGE_QUALNAME=magnet:latest-heim
+    docker run \
+        --rm \
+        --gpus=all \
+        -e HF_TOKEN \
+        -v "$HOME/code/helm":/root/code/helm \
+        -v "$HOST_DATA_DIRECTORY":/host/data \
+        -v "$HOST_CONFIG_DIRECTORY":/host/config \
+        -it "$IMAGE_QUALNAME" \
+        helm-run --help
