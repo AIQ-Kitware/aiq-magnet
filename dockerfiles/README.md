@@ -87,3 +87,23 @@ docker run --rm --gpus=all -it $MAGNET_IMAGE_QUALNAME nvidia-smi   # optional
 ```bash
 docker run --rm -it $MAGNET_IMAGE_QUALNAME pytest
 ```
+
+
+### Experimental Development Builder Scripts
+
+
+We are also working on development scripts to make building these images easier. 
+
+```bash
+./dockerfiles/magnet.build_and_publish.sh --help
+./dockerfiles/magnet-heim.build_and_publish.sh --help
+```
+
+Try out:
+
+```bash
+LATEST_TAG=latest-dev PUSH_IMAGES=1 ./dockerfiles/magnet.build_and_publish.sh  
+
+LATEST_TAG=latest-dev BASE_IMAGE=magnet:latest-dev PYTHON_VERSION=3.10 PUSH_IMAGES=0 ./dockerfiles/magnet-heim.build_and_publish.sh
+
+```
