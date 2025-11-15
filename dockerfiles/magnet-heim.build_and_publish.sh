@@ -39,7 +39,6 @@ Environment variables:
   # Base magnet image
   BASE_IMAGE        - Magnet image to extend (e.g. magnet:latest).
                       If unset, the first positional argument is used.
-  PYTHON_VERSION    - Python major.minor (default: 3.10). Used for tags.
 
   # HELM repo
   HELM_REMOTE       - Git URL or local path for the HELM repo. REQUIRED.
@@ -47,12 +46,8 @@ Environment variables:
   HELM_STAGING_DIR  - Local staging dir for HELM (default: .staging/helm)
 
   # Tagging
-  IMAGE_TAG         - Primary tag for the heim image. If unset, derived as:
-                        <base_tag>-heim
   DOCKER_REPO       - Registry/namespace for pushed tags
                       (default: docker.io/erotemic)
-  DOCKER_REGISTRY   - If unset, derived from DOCKER_REPO (before first "/")
-  DOCKER_NAMESPACE  - If unset, derived from DOCKER_REPO (after first "/")
 
   # Login / push
   PUSH_IMAGES       - If 1, push images to the registry; if 0, build/tag only
@@ -62,8 +57,8 @@ Environment variables:
   DOCKER_TOKEN      - Registry token/password
 
   # Paths
-  REPO_ROOT           - Repo root (default: parent of this script)
-  MAGNET_HEIM_DOCKERFILE - Path to magnet-heim.dockerfile
+  REPO_ROOT          - Repo root (default: parent of this script)
+  DOCKERFILE_PATH    - Path to magnet-heim.dockerfile
                            (default: ${REPO_ROOT}/dockerfiles/magnet-heim.dockerfile)
 '
 
@@ -84,9 +79,9 @@ fi
 : "${IMAGE_NAME:=magnet-heim}"
 : "${PYTHON_VERSION:=3.10}"
 
-: "${BASE_IMAGE:=}"
-: "${HELM_REMOTE:=}"
-: "${HELM_GIT_REF:=}"
+: "${BASE_IMAGE:=magnet:latest}"
+: "${HELM_REMOTE:=https://github.com/AIQ-Kitware/helm.git}"
+: "${HELM_GIT_REF:=explicit_plugins}"
 : "${HELM_STAGING_DIR:=.staging/helm}"
 
 : "${DOCKER_REPO:=docker.io/erotemic}"
@@ -98,31 +93,16 @@ fi
 
 : "${DOCKER_USERNAME:=}"
 : "${DOCKER_TOKEN:=}"
-: "${DOCKER_REGISTRY:=${DOCKER_REGISTRY:-}}"
-: "${DOCKER_USERNAME:=${DOCKER_USERNAME:-${DOCKER_USERNAME}}}"
-: "${DOCKER_TOKEN:=${DOCKER_TOKEN:-${DOCKER_TOKEN}}}"
 
 : "${REPO_ROOT:=}"
-: "${MAGNET_HEIM_DOCKERFILE:=}"
+: "${DOCKERFILE_PATH:=dockerfiles/magnet-heim.dockerfile}"
 
 # ------------------------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------------------------
 
 make_vcs_ref(){
-    local VCS_REF
-    VCS_REF="$(git rev-parse HEAD)"
-    local is_dirty=false
-    git diff --quiet           || is_dirty=true
-    git diff --cached --quiet  || is_dirty=true
-    if [ -n "$(git ls-files --others --exclude-standard)" ]; then
-      is_dirty=true
-    fi
-    if $is_dirty; then
-      printf "%s-dirty\n" "$VCS_REF"
-    else
-      printf "%s\n" "$VCS_REF"
-    fi
+    git rev-parse HEAD
 }
 
 get_repo_url(){
@@ -145,11 +125,24 @@ derive_repo_root_and_dockerfile(){
     cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
     pwd
   )"
-  : "${REPO_ROOT:=$(realpath "${script_dir}/..")}"
-  : "${MAGNET_HEIM_DOCKERFILE:=${REPO_ROOT}/dockerfiles/magnet-heim.dockerfile}"
 
-  [[ -f "$MAGNET_HEIM_DOCKERFILE" ]] || die "magnet-heim.dockerfile not found at $MAGNET_HEIM_DOCKERFILE"
+  : "${REPO_ROOT:=$(realpath "${script_dir}/..")}"
+
+  # Normalize to absolute path
+  DOCKERFILE_PATH="$(realpath "$REPO_ROOT/$DOCKERFILE_PATH")"
+
+  # Verify the path is inside the repo
+  [[ "$DOCKERFILE_PATH" == "$REPO_ROOT"/* ]] || \
+      die "Dockerfile must be inside repo root"
+
+  # Make relative
+  DOCKERFILE_PATH="${DOCKERFILE_PATH#"$REPO_ROOT/"}"
+
+  # Ensure the file exists
+  [[ -f "${REPO_ROOT}/${DOCKERFILE_PATH}" ]] || \
+      die "dockerfile not found at ${REPO_ROOT}/${DOCKERFILE_PATH}"
 }
+
 
 derive_registry_parts(){
   if [[ -z "${DOCKER_REGISTRY}" || -z "${DOCKER_NAMESPACE}" ]]; then
@@ -178,7 +171,7 @@ derive_base_and_tag(){
     base_name="${unqual_base_image%%:*}"
     base_tag="${unqual_base_image##*:}"
   else
-    base_tag="uvlatest"
+    #base_tag="uvlatest"
     die "unknown type of base image"
   fi
 
@@ -237,13 +230,13 @@ prepare_helm_staging(){
 build_heim_image(){
   log "Building ${IMAGE_QUALNAME} from base ${BASE_IMAGE}"
   docker build \
-    --file "${MAGNET_HEIM_DOCKERFILE}" \
+    --file "${REPO_ROOT}/${DOCKERFILE_PATH}" \
     --build-arg BASE_IMAGE="${BASE_IMAGE}" \
     --build-arg HELM_STAGING_DIR="${HELM_STAGING_DIR}" \
     --build-arg HELM_GIT_REF="${HELM_GIT_REF}" \
     --build-arg VCS_REF="${VCS_REF}" \
     --build-arg REPO_URL="${REPO_URL}" \
-    --build-arg DOCKERFILE_PATH="dockerfile/magnet-heim.dockerfile" \
+    --build-arg DOCKERFILE_PATH="${DOCKERFILE_PATH}" \
     --tag "${IMAGE_QUALNAME}" \
     "${REPO_ROOT}"
 }
@@ -251,7 +244,9 @@ build_heim_image(){
 make_alias_tags(){
   ALIASES=()
   ALIASES+=( "${IMAGE_NAME}:latest-heim" )
-  ALIASES+=( "${IMAGE_NAME}:latest-heim-python${PYTHON_VERSION}" )
+  if [ -n "$PYTHON_VERSION" ]; then
+      ALIASES+=( "${IMAGE_NAME}:latest-heim-python${PYTHON_VERSION}" )
+  fi
 }
 
 tag_aliases(){
@@ -270,9 +265,11 @@ push_all_tags(){
     remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${tag_part}" )
   done
 
+  # Apply remote tags
   log "Remote tags to push (if enabled):"
   for tag in "${remote_tags[@]}"; do
-    log "  - ${tag}"
+    log "Tagging ${IMAGE_QUALNAME} as ${tag}"
+    docker tag "${IMAGE_QUALNAME}" "${tag}"
   done
 
   if [[ "${PUSH_IMAGES}" -eq 1 ]]; then
@@ -303,12 +300,13 @@ IMAGE_QUALNAME    = ${IMAGE_QUALNAME}
 DOCKER_REPO       = ${DOCKER_REPO}
 DOCKER_REGISTRY   = ${DOCKER_REGISTRY}
 DOCKER_NAMESPACE  = ${DOCKER_NAMESPACE}
-DOCKER_REGISTRY   = ${DOCKER_REGISTRY}
 PUSH_IMAGES       = ${PUSH_IMAGES}
 LOGIN_DOCKER      = ${LOGIN_DOCKER}
 
-MAGNET_HEIM_DOCKERFILE = ${MAGNET_HEIM_DOCKERFILE}
-REPO_ROOT              = ${REPO_ROOT}
+DOCKERFILE_PATH   = ${DOCKERFILE_PATH}
+REPO_ROOT         = ${REPO_ROOT}
+REPO_URL          = ${REPO_URL}
+VCS_REF           = ${VCS_REF}
 ------------------------------------------------------------
 EOF
 }

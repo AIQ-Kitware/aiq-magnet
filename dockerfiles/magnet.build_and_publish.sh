@@ -28,15 +28,10 @@ Environment variables:
 
   # Base uv image
   BASE_IMAGE        - Canonical name for the uv base image;  (e.g. uv:latest) (positional arg 1 if unset)
-  PYTHON_VERSION    - Python major.minor (default: 3.10). Used only for tags.
 
   # Tagging
-  IMAGE_TAG         - Primary magnet image tag. If unset, derived as:
-                        <uv_base_tag>
   DOCKER_REPO       - Registry/namespace for pushed tags
                       (default: docker.io/erotemic)
-  DOCKER_REGISTRY   - If unset, derived from DOCKER_REPO (before first "/")
-  DOCKER_NAMESPACE  - If unset, derived from DOCKER_REPO (after first "/")
 
   # Login / push
   PUSH_IMAGES       - If 1, push images to the registry; if 0, build/tag only
@@ -47,8 +42,8 @@ Environment variables:
 
   # Paths
   REPO_ROOT         - Repo root (default: parent of this script)
-  MAGNET_DOCKERFILE - Path to magnet.dockerfile
-                      (default: ${REPO_ROOT}/dockerfiles/magnet.dockerfile)
+  DOCKERFILE_PATH - Path to magnet.dockerfile
+                      (default: dockerfiles/magnet.dockerfile)
 '
 
 set -euo pipefail
@@ -66,9 +61,9 @@ fi
 # ------------------------------------------------------------------------------
 
 : "${IMAGE_NAME:=magnet}"
-: "${PYTHON_VERSION:=3.10}"
+: "${PYTHON_VERSION:=}"
 
-: "${BASE_IMAGE:=}"
+: "${BASE_IMAGE:=uv:latest-python3.10}"
 
 : "${DOCKER_REPO:=docker.io/erotemic}"
 : "${DOCKER_REGISTRY:=}"
@@ -79,12 +74,9 @@ fi
 
 : "${DOCKER_USERNAME:=}"
 : "${DOCKER_TOKEN:=}"
-: "${DOCKER_REGISTRY:=${DOCKER_REGISTRY:-}}"
-: "${DOCKER_USERNAME:=${DOCKER_USERNAME:-${DOCKER_USERNAME}}}"
-: "${DOCKER_TOKEN:=${DOCKER_TOKEN:-${DOCKER_TOKEN}}}"
 
 : "${REPO_ROOT:=}"
-: "${MAGNET_DOCKERFILE:=}"
+: "${DOCKERFILE_PATH:=dockerfiles/magnet.dockerfile}"
 
 # ------------------------------------------------------------------------------
 # Helper functions
@@ -114,11 +106,24 @@ derive_repo_root_and_dockerfile(){
     cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
     pwd
   )"
-  : "${REPO_ROOT:=$(realpath "${script_dir}/..")}"
-  : "${MAGNET_DOCKERFILE:=${REPO_ROOT}/dockerfiles/magnet.dockerfile}"
 
-  [[ -f "$MAGNET_DOCKERFILE" ]] || die "magnet.dockerfile not found at $MAGNET_DOCKERFILE"
+  : "${REPO_ROOT:=$(realpath "${script_dir}/..")}"
+
+  # Normalize to absolute path
+  DOCKERFILE_PATH="$(realpath "$REPO_ROOT/$DOCKERFILE_PATH")"
+
+  # Verify the path is inside the repo
+  [[ "$DOCKERFILE_PATH" == "$REPO_ROOT"/* ]] || \
+      die "Dockerfile must be inside repo root"
+
+  # Make relative
+  DOCKERFILE_PATH="${DOCKERFILE_PATH#"$REPO_ROOT/"}"
+
+  # Ensure the file exists
+  [[ -f "${REPO_ROOT}/${DOCKERFILE_PATH}" ]] || \
+      die "dockerfile not found at ${REPO_ROOT}/${DOCKERFILE_PATH}"
 }
+
 
 derive_registry_parts(){
   if [[ -z "${DOCKER_REGISTRY}" || -z "${DOCKER_NAMESPACE}" ]]; then
@@ -195,23 +200,34 @@ ensure_uv_base_present(){
 }
 
 build_magnet_image(){
-  log "Building ${IMAGE_QUALNAME} from uv base ${BASE_IMAGE}"
+  log "Building ${IMAGE_QUALNAME} from base ${BASE_IMAGE}"
   docker build \
-    --file "${MAGNET_DOCKERFILE}" \
+    --file "${REPO_ROOT}/${DOCKERFILE_PATH}" \
     --build-arg BASE_IMAGE="${BASE_IMAGE}" \
     --build-arg GIT_REF="${VCS_REF}" \
     --build-arg USE_LOCKFILE="0" \
     --build-arg REPO_URL="${REPO_URL}" \
     --build-arg VCS_REF="${VCS_REF}" \
-    --build-arg DOCKERFILE_PATH="dockerfile/magnet.dockerfile" \
+    --build-arg DOCKERFILE_PATH="${DOCKERFILE_PATH}" \
     --tag "${IMAGE_QUALNAME}" \
     "${REPO_ROOT}"
+}
+
+infer_python_version_from_base_tag(){
+  # Parse ...python3.10... from BASE_IMAGE
+  if [ -z "$PYTHON_VERSION" ]; then
+      if [[ "$BASE_IMAGE" =~ python([0-9]+\.[0-9]+) ]]; then
+        PYTHON_VERSION="${BASH_REMATCH[1]}"
+      fi
+  fi
 }
 
 make_alias_tags(){
   ALIASES=()
   ALIASES+=( "${IMAGE_NAME}:latest" )
-  ALIASES+=( "${IMAGE_NAME}:latest-python${PYTHON_VERSION}" )
+  if [ -n "$PYTHON_VERSION" ]; then
+      ALIASES+=( "${IMAGE_NAME}:latest-python${PYTHON_VERSION}" )
+  fi
 }
 
 tag_aliases(){
@@ -226,17 +242,21 @@ push_all_tags(){
   remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG}" )
 
   for alias in "${ALIASES[@]}"; do
+    echo "alias = $alias"
     local tag_part="${alias#"${IMAGE_NAME}":}"
     remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${tag_part}" )
   done
 
+  # Apply remote tags
   log "Remote tags to push (if enabled):"
   for tag in "${remote_tags[@]}"; do
-    log "  - ${tag}"
+    log "Tagging ${IMAGE_QUALNAME} as ${tag}"
+    docker tag "${IMAGE_QUALNAME}" "${tag}"
   done
 
   if [[ "${PUSH_IMAGES}" -eq 1 ]]; then
     registry_login
+    set -x
     for tag in "${remote_tags[@]}"; do
       log "docker push ${tag}"
       docker push "${tag}"
@@ -252,7 +272,6 @@ print_summary(){
 magnet.build_and_publish.sh summary
 ------------------------------------------------------------
 IMAGE_NAME      = ${IMAGE_NAME}
-UV_BASE         = ${UV_BASE}
 BASE_IMAGE      = ${BASE_IMAGE}
 PYTHON_VERSION  = ${PYTHON_VERSION}
 IMAGE_TAG       = ${IMAGE_TAG}
@@ -261,12 +280,13 @@ IMAGE_QUALNAME  = ${IMAGE_QUALNAME}
 DOCKER_REPO      = ${DOCKER_REPO}
 DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
 DOCKER_NAMESPACE = ${DOCKER_NAMESPACE}
-DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
 PUSH_IMAGES      = ${PUSH_IMAGES}
 LOGIN_DOCKER     = ${LOGIN_DOCKER}
 
-MAGNET_DOCKERFILE = ${MAGNET_DOCKERFILE}
-REPO_ROOT         = ${REPO_ROOT}
+DOCKERFILE_PATH  = ${DOCKERFILE_PATH}
+REPO_ROOT        = ${REPO_ROOT}
+REPO_URL         = ${REPO_URL}
+VCS_REF          = ${VCS_REF}
 ------------------------------------------------------------
 EOF
 }
@@ -274,6 +294,7 @@ EOF
 main(){
   derive_repo_root_and_dockerfile
   derive_registry_parts
+  infer_python_version_from_base_tag
 
   VCS_REF="$(make_vcs_ref)"
   REPO_URL="$(get_repo_url)"

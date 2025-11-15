@@ -4,16 +4,6 @@ dockerfiles/uv.build_and_publish.sh
 
 Build and optionally publish a "uv base" image from dockerfiles/uv.dockerfile.
 
-Key features:
-  - Accepts BASE_IMAGE (e.g. nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04)
-  - Auto-derives BASE_TAG and IMAGE_TAG
-  - Reads UV_VERSION default from inside uv.dockerfile (unless overridden)
-  - Uses VCS_REF and REPO_URL build-args (via local git state)
-  - Generic registry support:
-        DOCKER_REGISTRY / DOCKER_USERNAME / DOCKER_TOKEN
-  - Summary printed before any docker actions
-  - Dedicated registry_login function
-
 Typical usage:
 
   # Minimal (all defaults)
@@ -42,8 +32,6 @@ Environment variables (override defaults as needed):
                       where base_tag is the portion after ":" in BASE_IMAGE.
   DOCKER_REPO       - Registry/namespace for pushed tags
                       (default: docker.io/erotemic)
-  DOCKER_REGISTRY   - If unset, derived from DOCKER_REPO (before first "/")
-  DOCKER_NAMESPACE  - If unset, derived from DOCKER_REPO (after first "/")
 
   # Login / push
   PUSH_IMAGES       - If 1, push images to the registry; if 0, build/tag only
@@ -54,8 +42,8 @@ Environment variables (override defaults as needed):
 
   # Paths
   REPO_ROOT         - Repo root (default: parent of this script)
-  UV_DOCKERFILE     - Path to uv.dockerfile
-                      (default: ${REPO_ROOT}/dockerfiles/uv.dockerfile)
+  DOCKERFILE_PATH   - Path to uv.dockerfile
+                      (default: dockerfiles/uv.dockerfile)
 
 The script prints a summary of the resolved configuration before building.
 '
@@ -97,32 +85,17 @@ fi
 # Back-compat: map DOCKER_* to DOCKER_* if not explicitly set
 : "${DOCKER_USERNAME:=}"
 : "${DOCKER_TOKEN:=}"
-: "${DOCKER_REGISTRY:=${DOCKER_REGISTRY:-}}"
-: "${DOCKER_USERNAME:=${DOCKER_USERNAME:-${DOCKER_USERNAME}}}"
-: "${DOCKER_TOKEN:=${DOCKER_TOKEN:-${DOCKER_TOKEN}}}"
 
 # Paths
 : "${REPO_ROOT:=}"
-: "${UV_DOCKERFILE:=}"
+: "${DOCKERFILE_PATH:=dockerfiles/uv.dockerfile}"
 
 # ------------------------------------------------------------------------------
 # Helper functions
 # ------------------------------------------------------------------------------
 
 make_vcs_ref(){
-    local VCS_REF
-    VCS_REF="$(git rev-parse HEAD)"
-    local is_dirty=false
-    git diff --quiet           || is_dirty=true
-    git diff --cached --quiet  || is_dirty=true
-    if [ -n "$(git ls-files --others --exclude-standard)" ]; then
-      is_dirty=true
-    fi
-    if $is_dirty; then
-      printf "%s-dirty\n" "$VCS_REF"
-    else
-      printf "%s\n" "$VCS_REF"
-    fi
+    git rev-parse HEAD
 }
 
 get_repo_url(){
@@ -147,10 +120,21 @@ derive_repo_root_and_dockerfile(){
     pwd
   )"
   : "${REPO_ROOT:=$(realpath "${script_dir}/..")}"
-  : "${UV_DOCKERFILE:=${REPO_ROOT}/dockerfiles/uv.dockerfile}"
+  # Normalize to absolute path
+  DOCKERFILE_PATH="$(realpath "$REPO_ROOT/$DOCKERFILE_PATH")"
 
-  [[ -f "$UV_DOCKERFILE" ]] || die "uv.dockerfile not found at $UV_DOCKERFILE"
+  # Verify the path is inside the repo
+  [[ "$DOCKERFILE_PATH" == "$REPO_ROOT"/* ]] || \
+      die "Dockerfile must be inside repo root"
+
+  # Make relative
+  DOCKERFILE_PATH="${DOCKERFILE_PATH#"$REPO_ROOT/"}"
+
+  # Ensure the file exists
+  [[ -f "${REPO_ROOT}/${DOCKERFILE_PATH}" ]] || \
+      die "dockerfile not found at ${REPO_ROOT}/${DOCKERFILE_PATH}"
 }
+
 
 derive_registry_parts(){
   # If DOCKER_REGISTRY / DOCKER_NAMESPACE are unset, derive from DOCKER_REPO
@@ -168,14 +152,14 @@ parse_uv_version_from_dockerfile(){
     return 0
   fi
   local line
-  line="$(grep -E '^ARG[[:space:]]+UV_VERSION=' "$UV_DOCKERFILE" || true)"
+  line="$(grep -E '^ARG[[:space:]]+UV_VERSION=' "$DOCKERFILE_PATH" || true)"
   if [[ -n "$line" ]]; then
     UV_VERSION="${line#*=}"
     UV_VERSION="${UV_VERSION//\"/}"
     UV_VERSION="${UV_VERSION//\'/}"
   fi
   if [[ -z "${UV_VERSION}" ]]; then
-    die "UV_VERSION is unset and could not be parsed from $UV_DOCKERFILE"
+    die "UV_VERSION is unset and could not be parsed from $DOCKERFILE_PATH"
   fi
 }
 
@@ -228,13 +212,13 @@ registry_login(){
 build_uv_image(){
   log "Building ${IMAGE_QUALNAME} from ${BASE_IMAGE}"
   docker build \
-    --file "${UV_DOCKERFILE}" \
+    --file "${REPO_ROOT}/${DOCKERFILE_PATH}" \
     --build-arg BASE_IMAGE="${BASE_IMAGE}" \
     --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
     --build-arg UV_VERSION="${UV_VERSION}" \
     --build-arg VCS_REF="${VCS_REF}" \
     --build-arg REPO_URL="${REPO_URL}" \
-    --build-arg DOCKERFILE_PATH="dockerfile/uv.dockerfile" \
+    --build-arg DOCKERFILE_PATH="${DOCKERFILE_PATH}" \
     --tag "${IMAGE_QUALNAME}" \
     "${REPO_ROOT}"
 }
@@ -245,7 +229,9 @@ make_alias_tags(){
   #  uv:latest
   #  uv:python3.10
   ALIASES+=( "${IMAGE_NAME}:latest" )
-  ALIASES+=( "${IMAGE_NAME}:python${PYTHON_VERSION}" )
+  if [ -n "$PYTHON_VERSION" ]; then
+      ALIASES+=( "${IMAGE_NAME}:latest-python${PYTHON_VERSION}" )
+  fi
 }
 
 tag_aliases(){
@@ -267,9 +253,11 @@ push_all_tags(){
     remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${tag_part}" )
   done
 
+  # Apply remote tags
   log "Remote tags to push (if enabled):"
   for tag in "${remote_tags[@]}"; do
-    log "  - ${tag}"
+    log "Tagging ${IMAGE_QUALNAME} as ${tag}"
+    docker tag "${IMAGE_QUALNAME}" "${tag}"
   done
 
   if [[ "${PUSH_IMAGES}" -eq 1 ]]; then
@@ -298,12 +286,13 @@ IMAGE_QUALNAME  = ${IMAGE_QUALNAME}
 DOCKER_REPO      = ${DOCKER_REPO}
 DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
 DOCKER_NAMESPACE = ${DOCKER_NAMESPACE}
-DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
 PUSH_IMAGES      = ${PUSH_IMAGES}
 LOGIN_DOCKER     = ${LOGIN_DOCKER}
 
-UV_DOCKERFILE   = ${UV_DOCKERFILE}
-REPO_ROOT       = ${REPO_ROOT}
+DOCKERFILE_PATH  = ${DOCKERFILE_PATH}
+REPO_ROOT        = ${REPO_ROOT}
+REPO_URL         = ${REPO_URL}
+VCS_REF          = ${VCS_REF}
 ------------------------------------------------------------
 EOF
 }

@@ -60,6 +60,26 @@ git reset --hard "$HEIM_GIT_REF"
 # Install the repo in development mode
 uv pip install -e .[heim] 
 
+# Fix conflicting duplicate opencv installs
+# Note HELM/HEIM does pin the version, so we do graph hacks to pick up whatever
+# is currently in pyproject.toml 
+HAS_OPENCV_RETCODE="0"
+HAS_OPENCV_HEADLESS_RETCODE="0"
+uv pip freeze | grep "opencv-python==" || HAS_OPENCV_RETCODE="$?"
+uv pip freeze | grep "opencv-python-headless==" || HAS_OPENCV_HEADLESS_RETCODE="$?"
+
+# VAR == 0 means we have it
+if [[ "$HAS_OPENCV_HEADLESS_RETCODE" == "0" ]]; then
+    if [[ "$HAS_OPENCV_RETCODE" == "0" ]]; then
+        uv pip uninstall opencv-python opencv-python-headless
+        uv pip install $(grep -oP '"\K([^"]+)' pyproject.toml | sed 's/[;,]\s*.*$//' | grep -E 'opencv-python-headless')
+    fi
+else
+    if [[ "$HAS_OPENCV_RETCODE" == "0" ]]; then
+        $PIP_COMMAND uninstall opencv-python
+    fi
+    uv pip install $(grep -oP '"\K([^"]+)' pyproject.toml | sed 's/[;,]\s*.*$//' | grep -E 'opencv-python-headless')
+fi
 EOF
 
 
