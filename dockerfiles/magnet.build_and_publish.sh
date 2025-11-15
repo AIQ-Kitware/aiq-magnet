@@ -1,78 +1,133 @@
 #!/usr/bin/env bash
-# dockerfiles/build_and_publish_images.sh
-#
-# Build a developer-tagged magnet image from a uv base and publish to Docker Hub.
-# - Can be run from ANY working directory.
-# - Assumes this script is inside the repo at: repo_root/dockerfiles/build_and_publish_images.sh
-#
-# Tags pushed to Docker Hub:
-#   erotemic/magnet:<GIT12>-uv<uv-tag>
-#   erotemic/magnet:latest-dev
-#   erotemic/magnet:latest-dev-python<MAJOR.MINOR>
+__doc__='
+dockerfiles/magnet.build_and_publish.sh
+
+Builds a developer-tagged magnet image from a uv base image and optionally
+publishes it to a Docker registry (by default docker.io/erotemic).
+
+High-level steps:
+  1. Resolve repo root and dockerfiles directory so the script can run from anywhere.
+  2. Determine the current git ref and derive a content-addressed image tag that
+     incorporates the uv base tag.
+  3. Ensure the uv base image is available locally (attempt a pull, but gracefully
+     fall back to a local-only image).
+  4. Build the magnet image using dockerfiles/magnet.dockerfile.
+  5. Tag local developer aliases (e.g. magnet:latest-dev, magnet:latest-dev-python3.10).
+  6. Optionally log in to the registry and push all tags.
+
+Typical usage:
+
+  # No push, explicit uv base
+  PUSH_IMAGES=0 \
+  BASE_IMAGE=uv:latest \
+      ./dockerfiles/magnet.build_and_publish.sh
+
+Environment variables:
+
+  IMAGE_NAME          - Logical app name (default: magnet)
+
+  # Base uv image
+  BASE_IMAGE        - Canonical name for the uv base image;  (e.g. uv:latest) (positional arg 1 if unset)
+  PYTHON_VERSION    - Python major.minor (default: 3.10). Used only for tags.
+
+  # Tagging
+  IMAGE_TAG         - Primary magnet image tag. If unset, derived as:
+                        <uv_base_tag>
+  DOCKER_REPO       - Registry/namespace for pushed tags
+                      (default: docker.io/erotemic)
+  DOCKER_REGISTRY   - If unset, derived from DOCKER_REPO (before first "/")
+  DOCKER_NAMESPACE  - If unset, derived from DOCKER_REPO (after first "/")
+
+  # Login / push
+  PUSH_IMAGES       - If 1, push images to the registry; if 0, build/tag only
+                      (default: 1)
+  LOGIN_DOCKER      - If 1, attempt login to DOCKER_REGISTRY (default: 1)
+  DOCKER_USERNAME   - Registry username
+  DOCKER_TOKEN      - Registry token/password
+
+  # Paths
+  REPO_ROOT         - Repo root (default: parent of this script)
+  MAGNET_DOCKERFILE - Path to magnet.dockerfile
+                      (default: ${REPO_ROOT}/dockerfiles/magnet.dockerfile)
+'
 
 set -euo pipefail
 
-# -------------------------
-# Locate paths relative to this script (runnable from anywhere)
-# -------------------------
-SCRIPT_DIR="$(
-  cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
-  pwd
-)"
-REPO_ROOT="$(realpath "${SCRIPT_DIR}/..")"
-DOCKERFILES_DIR="${SCRIPT_DIR}"
-MAGNET_DOCKERFILE="${DOCKERFILES_DIR}/magnet.dockerfile"
-
-if [[ ! -f "${MAGNET_DOCKERFILE}" ]]; then
-  echo "[error] magnet.dockerfile not found at ${MAGNET_DOCKERFILE}" >&2
-  exit 1
-fi
-
-# -------------------------
-# Config (override via env)
-# -------------------------
-: "${APP_NAME:=magnet}"
-: "${DOCKERHUB_NAMESPACE:=erotemic}"          # Docker Hub namespace
-: "${MAGNET_REPO_DIR:=${REPO_ROOT}}"           # Default to repo root resolved above
-
-# UV base selection (default mirrors your example)
-: "${UV_IMAGE_TAG:=0.8.4-python3.10-cuda12.4.1-cudnn-devel-ubuntu22.04}"
-: "${UV_IMAGE_NAME:=uv}"
-: "${UV_IMAGE_QUALNAME:=${UV_IMAGE_NAME}:${UV_IMAGE_TAG}}"
-
-# Registry hosting the uv base (pull source)
-#   Option A (default): your GitLab CI registry (private)
-#   Option B: Docker Hub copy under erotemic (set UV_PULL_FROM_DOCKERHUB=1)
-: "${UV_GITLAB_REGISTRY:=gitlab.kitware.com:4567/computer-vision/ci-docker}"
-: "${UV_PULL_FROM_DOCKERHUB:=0}"
-
-# Build args for magnet
-: "${USE_LOCKFILE:=0}"
-
-# Optional logins (supply tokens via env for non-interactive)
-#   DOCKERHUB_USERNAME / DOCKERHUB_TOKEN
-#   GITLAB_KITWARE_USERNAME / GITLAB_KITWARE_TOKEN
-: "${LOGIN_GITLAB:=1}"      # set 0 to skip GitLab login/pull if using Docker Hub uv base
-: "${LOGIN_DOCKERHUB:=1}"   # set 0 to skip Docker Hub login
-
-# -------------------------
-# Helpers
-# -------------------------
-log(){ printf "\033[1;34m[build]\033[0m %s\n" "$*"; }
+log(){ printf "\033[1;34m[magnet-build]\033[0m %s\n" "$*"; }
 die(){ printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; exit 1; }
 
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  printf "%s\n" "$__doc__"
+  exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Global config
+# ------------------------------------------------------------------------------
+
+: "${IMAGE_NAME:=magnet}"
+: "${PYTHON_VERSION:=3.10}"
+
+: "${BASE_IMAGE:=}"
+
+: "${DOCKER_REPO:=docker.io/erotemic}"
+: "${DOCKER_REGISTRY:=}"
+: "${DOCKER_NAMESPACE:=}"
+
+: "${PUSH_IMAGES:=1}"
+: "${LOGIN_DOCKER:=1}"
+
+: "${DOCKER_USERNAME:=}"
+: "${DOCKER_TOKEN:=}"
+: "${DOCKER_REGISTRY:=${DOCKER_REGISTRY:-}}"
+: "${DOCKER_USERNAME:=${DOCKER_USERNAME:-${DOCKER_USERNAME}}}"
+: "${DOCKER_TOKEN:=${DOCKER_TOKEN:-${DOCKER_TOKEN}}}"
+
+: "${REPO_ROOT:=}"
+: "${MAGNET_DOCKERFILE:=}"
+
+# ------------------------------------------------------------------------------
+# Helper functions
+# ------------------------------------------------------------------------------
+
 make_vcs_ref(){
-  # Full commit with "-dirty" suffix if working tree isn't clean
-  local sha is_dirty=false
-  sha="$(git rev-parse HEAD)"
-  git diff --quiet || is_dirty=true
-  git diff --cached --quiet || is_dirty=true
-  if [ -n "$(git -c core.excludesFile=/dev/null ls-files --others --exclude-standard)" ]; then
-    is_dirty=true
+    git rev-parse HEAD
+}
+
+get_repo_url(){
+    local raw_url repo_url
+    raw_url="$(git config --get remote.origin.url || true)"
+    repo_url="$raw_url"
+
+    if [[ "$raw_url" =~ ^git@([^:]+):(.+)\.git$ ]]; then
+      repo_url="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    elif [[ "$raw_url" =~ ^https?://.+\.git$ ]]; then
+      repo_url="${raw_url%.git}"
+    fi
+
+    printf "%s\n" "$repo_url"
+}
+
+derive_repo_root_and_dockerfile(){
+  local script_dir
+  script_dir="$(
+    cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
+    pwd
+  )"
+  : "${REPO_ROOT:=$(realpath "${script_dir}/..")}"
+  : "${MAGNET_DOCKERFILE:=${REPO_ROOT}/dockerfiles/magnet.dockerfile}"
+
+  [[ -f "$MAGNET_DOCKERFILE" ]] || die "magnet.dockerfile not found at $MAGNET_DOCKERFILE"
+}
+
+derive_registry_parts(){
+  if [[ -z "${DOCKER_REGISTRY}" || -z "${DOCKER_NAMESPACE}" ]]; then
+    local _repo="${DOCKER_REPO}"
+    local _reg="${_repo%%/*}"
+    local _ns="${_repo#*/}"
+    : "${DOCKER_REGISTRY:=${_reg}}"
+    : "${DOCKER_NAMESPACE:=${_ns}}"
   fi
-  #$is_dirty && echo "${sha}-dirty" || echo "${sha}"
-  # Dont do dirty suffix, it breaks things.
-  $is_dirty && echo "${sha}" || echo "${sha}"
 }
 
 short12(){
@@ -83,145 +138,160 @@ short12(){
   echo "$(printf "%s" "$core" | cut -c1-12)${suf}"
 }
 
-infer_python_version_from_uv_tag(){
-  # Parse ...python3.10... from UV_IMAGE_TAG
-  local tag="$1"
-  if [[ "$tag" =~ python([0-9]+\.[0-9]+) ]]; then
-    echo "${BASH_REMATCH[1]}"
+derive_base_and_tag(){
+  if [[ -z "${BASE_IMAGE}" && "${1:-}" != "" ]]; then
+    BASE_IMAGE="$1"
+    shift || true
+  fi
+
+  [[ -n "${BASE_IMAGE}" ]] || die "BASE_IMAGE is required"
+
+  local base_tag
+  local base_name
+  local unqual_base_image
+  if [[ "$BASE_IMAGE" == *:* ]]; then
+    # Strip everything before the final '/' (if present)
+    unqual_base_image="${BASE_IMAGE##*/}"
+    # Split NAME and TAG
+    base_name="${unqual_base_image%%:*}"
+    base_tag="${unqual_base_image##*:}"
   else
-    echo ""
+    die "unknown type of base image"
+  fi
+  GIT_REF_SHORT="$(short12 "$VCS_REF")"
+  # Fully qualified image tag is the version of the program/repo suffixed with
+  # base versioning.
+  : "${IMAGE_TAG:=${GIT_REF_SHORT}-${base_name}${base_tag}}"
+
+  IMAGE_QUALNAME="${IMAGE_NAME}:${IMAGE_TAG}"
+
+  # Return remaining args via global "$@"
+  set -- "$@"
+}
+
+registry_login(){
+  if [[ "${PUSH_IMAGES}" -ne 1 || "${LOGIN_DOCKER}" -ne 1 ]]; then
+    log "Skipping registry login (PUSH_IMAGES=${PUSH_IMAGES}, LOGIN_DOCKER=${LOGIN_DOCKER})"
+    return 0
+  fi
+
+  if [[ -z "${DOCKER_USERNAME}" || -z "${DOCKER_TOKEN}" ]]; then
+    log "DOCKER_USERNAME or DOCKER_TOKEN not set; assuming local-only push or existing docker login"
+    return 0
+  fi
+
+  log "Logging in to registry ${DOCKER_REGISTRY} as ${DOCKER_USERNAME}"
+  printf '%s\n' "${DOCKER_TOKEN}" | docker login "${DOCKER_REGISTRY}" --username "${DOCKER_USERNAME}" --password-stdin
+}
+
+ensure_uv_base_present(){
+  log "Ensuring uv base image is present: ${BASE_IMAGE}"
+  if ! docker image inspect "${BASE_IMAGE}" >/dev/null 2>&1; then
+    log "Local image ${BASE_IMAGE} not found; attempting docker pull"
+    if ! docker pull "${BASE_IMAGE}"; then
+      log "WARNING: failed to pull ${BASE_IMAGE}; build may still succeed if image exists under a different name"
+    fi
   fi
 }
 
-# -------------------------
-# Resolve inputs / context
-# -------------------------
-[ -d "$MAGNET_REPO_DIR" ] || die "MAGNET_REPO_DIR not found: $MAGNET_REPO_DIR"
-cd "$MAGNET_REPO_DIR"
+build_magnet_image(){
+  log "Building ${IMAGE_QUALNAME} from uv base ${BASE_IMAGE}"
+  docker build \
+    --file "${MAGNET_DOCKERFILE}" \
+    --build-arg BASE_IMAGE="${BASE_IMAGE}" \
+    --build-arg GIT_REF="${VCS_REF}" \
+    --build-arg USE_LOCKFILE="0" \
+    --build-arg REPO_URL="${REPO_URL}" \
+    --build-arg VCS_REF="${VCS_REF}" \
+    --build-arg DOCKERFILE_PATH="dockerfile/magnet.dockerfile" \
+    --tag "${IMAGE_QUALNAME}" \
+    "${REPO_ROOT}"
+}
 
-GIT_REF_FULL="$(make_vcs_ref)"
-GIT_REF_SHORT="$(short12 "$GIT_REF_FULL")"
+make_alias_tags(){
+  ALIASES=()
+  ALIASES+=( "${IMAGE_NAME}:latest" )
+  ALIASES+=( "${IMAGE_NAME}:latest-python${PYTHON_VERSION}" )
+}
 
-PYTHON_VERSION="${PYTHON_VERSION:-$(infer_python_version_from_uv_tag "$UV_IMAGE_TAG")}"
-[ -n "$PYTHON_VERSION" ] || die "Could not infer PYTHON_VERSION from UV_IMAGE_TAG='$UV_IMAGE_TAG'. Set PYTHON_VERSION explicitly."
+tag_aliases(){
+  for alias in "${ALIASES[@]}"; do
+    log "Tagging ${IMAGE_QUALNAME} as ${alias}"
+    docker tag "${IMAGE_QUALNAME}" "${alias}"
+  done
+}
 
-if [ "${UV_PULL_FROM_DOCKERHUB}" = "1" ]; then
-  UV_BASE="${DOCKERHUB_NAMESPACE}/${UV_IMAGE_QUALNAME}"   # docker.io/erotemic/uv:...
-  LOGIN_GITLAB=0
-else
-  UV_BASE="${UV_GITLAB_REGISTRY}/${UV_IMAGE_QUALNAME}"    # gitlab.kitware.com:4567/.../uv:...
-fi
+push_all_tags(){
+  local remote_tags=()
+  remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG}" )
 
-MAGNET_IMAGE_TAG="${GIT_REF_SHORT}-uv${UV_IMAGE_TAG}"     # e.g. a1b2c3d4e5f6-uv0.8.4-python3.10-...
-LOCAL_IMAGE="${APP_NAME}:${MAGNET_IMAGE_TAG}"
+  for alias in "${ALIASES[@]}"; do
+    local tag_part="${alias#"${IMAGE_NAME}":}"
+    remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${tag_part}" )
+  done
 
-# Docker Hub remote names
-HUB_IMAGE="${DOCKERHUB_NAMESPACE}/${APP_NAME}:${MAGNET_IMAGE_TAG}"
-HUB_ALIAS_LATEST_DEV="${DOCKERHUB_NAMESPACE}/${APP_NAME}:latest-dev"
-HUB_ALIAS_LATEST_DEV_PY="${DOCKERHUB_NAMESPACE}/${APP_NAME}:latest-dev-python${PYTHON_VERSION}"
+  log "Remote tags to push (if enabled):"
+  for tag in "${remote_tags[@]}"; do
+    log "  - ${tag}"
+  done
 
-# Optional local developer aliases (handy for quick runs)
-LOCAL_ALIAS_LATEST_DEV="${APP_NAME}:latest-dev"
-LOCAL_ALIAS_LATEST_DEV_PY="${APP_NAME}:latest-dev-python${PYTHON_VERSION}"
-
-# -------------------------
-# Log in (optional)
-# -------------------------
-if [ "${LOGIN_GITLAB}" = "1" ]; then
-  if [ -n "${GITLAB_KITWARE_TOKEN:-}" ] && [ -n "${GITLAB_KITWARE_USERNAME:-}" ]; then
-    log "Logging in to GitLab registry"
-    printf "%s" "$GITLAB_KITWARE_TOKEN" | docker login "gitlab.kitware.com:4567" -u "$GITLAB_KITWARE_USERNAME" --password-stdin
+  if [[ "${PUSH_IMAGES}" -eq 1 ]]; then
+    registry_login
+    for tag in "${remote_tags[@]}"; do
+      log "docker push ${tag}"
+      docker push "${tag}"
+    done
   else
-    log "Skipping non-interactive GitLab login (env vars not set). If needed, run: docker login gitlab.kitware.com:4567"
+    log "Images were NOT pushed because PUSH_IMAGES=${PUSH_IMAGES}"
   fi
-fi
+}
 
-if [ "${LOGIN_DOCKERHUB}" = "1" ]; then
-  if [ -n "${DOCKERHUB_TOKEN:-}" ] && [ -n "${DOCKERHUB_USERNAME:-}" ]; then
-    log "Logging in to Docker Hub"
-    printf "%s" "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-  else
-    log "Skipping non-interactive Docker Hub login (env vars not set). If needed, run: docker login"
-  fi
-fi
+print_summary(){
+  cat <<EOF
+------------------------------------------------------------
+magnet.build_and_publish.sh summary
+------------------------------------------------------------
+IMAGE_NAME      = ${IMAGE_NAME}
+UV_BASE         = ${UV_BASE}
+BASE_IMAGE      = ${BASE_IMAGE}
+PYTHON_VERSION  = ${PYTHON_VERSION}
+IMAGE_TAG       = ${IMAGE_TAG}
+IMAGE_QUALNAME  = ${IMAGE_QUALNAME}
 
-# -------------------------
-# Pull uv base
-# -------------------------
-log "Pulling uv base: ${UV_BASE}"
-docker pull "${UV_BASE}"
+DOCKER_REPO      = ${DOCKER_REPO}
+DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
+DOCKER_NAMESPACE = ${DOCKER_NAMESPACE}
+DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
+PUSH_IMAGES      = ${PUSH_IMAGES}
+LOGIN_DOCKER     = ${LOGIN_DOCKER}
 
-# -------------------------
-# Build magnet (context = repo root; Dockerfile lives in dockerfiles/)
-# -------------------------
-log "Building ${LOCAL_IMAGE}"
-DOCKER_BUILDKIT=1 docker build --progress=plain \
-  -t "${LOCAL_IMAGE}" \
-  --build-arg USE_LOCKFILE="${USE_LOCKFILE}" \
-  --build-arg UV_BASE="${UV_BASE}" \
-  --build-arg GIT_REF="${GIT_REF_FULL}" \
-  -f "${MAGNET_DOCKERFILE}" \
-  "${REPO_ROOT}"
-
-# -------------------------
-# Tag local convenience aliases
-# -------------------------
-log "Tagging local developer aliases"
-docker tag "${LOCAL_IMAGE}" "${LOCAL_ALIAS_LATEST_DEV}"
-docker tag "${LOCAL_IMAGE}" "${LOCAL_ALIAS_LATEST_DEV_PY}"
-
-# -------------------------
-# Tag Docker Hub names
-# -------------------------
-log "Tagging Docker Hub images"
-docker tag "${LOCAL_IMAGE}" "${HUB_IMAGE}"
-docker tag "${LOCAL_IMAGE}" "${HUB_ALIAS_LATEST_DEV}"
-docker tag "${LOCAL_IMAGE}" "${HUB_ALIAS_LATEST_DEV_PY}"
-
-# -------------------------
-# Push
-# -------------------------
-log "Pushing to Docker Hub → ${DOCKERHUB_NAMESPACE}/${APP_NAME}"
-for TAG in \
-  "${HUB_IMAGE}" \
-  "${HUB_ALIAS_LATEST_DEV}" \
-  "${HUB_ALIAS_LATEST_DEV_PY}"
-do
-  log "docker push ${TAG}"
-  docker push "${TAG}"
-done
-
-# -------------------------
-# Summary + helpful runs
-# -------------------------
-cat <<EOF
-
-Done.
-
-Built:
-  ${LOCAL_IMAGE}
-
-Pushed:
-  ${HUB_IMAGE}
-  ${HUB_ALIAS_LATEST_DEV}
-  ${HUB_ALIAS_LATEST_DEV_PY}
-
-Local dev aliases:
-  ${LOCAL_ALIAS_LATEST_DEV}
-  ${LOCAL_ALIAS_LATEST_DEV_PY}
-
-Quick smoke tests:
-  docker run --rm -it ${LOCAL_IMAGE} bash -lc 'python -V && uv --version'
-  docker run --rm --gpus=all -it ${LOCAL_IMAGE} nvidia-smi   # optional
-  docker run --rm -it ${LOCAL_IMAGE} pytest                  # optional
-
-Notes:
-- Script is location-agnostic: resolves repo root at \`$(basename "${REPO_ROOT}")\` and Dockerfile at \`${MAGNET_DOCKERFILE}\`.
-- Set UV_PULL_FROM_DOCKERHUB=1 to pull uv from docker.io/${DOCKERHUB_NAMESPACE}/${UV_IMAGE_QUALNAME}
-  instead of ${UV_GITLAB_REGISTRY}/${UV_IMAGE_QUALNAME}.
-- To avoid clobbering production 'latest', this script publishes:
-    - ${DOCKERHUB_NAMESPACE}/${APP_NAME}:latest-dev
-    - ${DOCKERHUB_NAMESPACE}/${APP_NAME}:latest-dev-python${PYTHON_VERSION}
-  alongside the content-addressed tag:
-    - ${DOCKERHUB_NAMESPACE}/${APP_NAME}:${MAGNET_IMAGE_TAG}
+MAGNET_DOCKERFILE = ${MAGNET_DOCKERFILE}
+REPO_ROOT         = ${REPO_ROOT}
+------------------------------------------------------------
 EOF
+}
+
+main(){
+  derive_repo_root_and_dockerfile
+  derive_registry_parts
+
+  VCS_REF="$(make_vcs_ref)"
+  REPO_URL="$(get_repo_url)"
+
+  derive_base_and_tag "$@"
+  make_alias_tags
+
+  print_summary
+
+  ensure_uv_base_present
+  build_magnet_image
+  tag_aliases
+  push_all_tags
+}
+
+if [[ ${BASH_SOURCE[0]} != "$0" ]]; then
+  log "Sourcing magnet.build_and_publish.sh as a library"
+else
+  main "$@"
+fi
+
