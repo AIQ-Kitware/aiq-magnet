@@ -61,3 +61,17 @@ git reset --hard "$HEIM_GIT_REF"
 uv pip install -e .[heim] 
 
 EOF
+
+
+ARG VCS_REF=""
+ARG REPO_URL=""
+ARG DOCKERFILE_PATH=""
+
+LABEL org.opencontainers.image.title="MAGNET + HEIM" \
+      org.opencontainers.image.description="MAGNET with HEIM dependencies" \
+      org.opencontainers.image.url="$REPO_URL/-/blob/$VCS_REF/$DOCKERFILE_PATH" \
+      org.opencontainers.image.source="$REPO_URL" \
+      org.opencontainers.image.revision="$VCS_REF" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.authors="Jon Crall <jon.crall@kitware.com>, Kitware Inc." \
+      org.opencontainers.image.vendor="Kitware Inc." 

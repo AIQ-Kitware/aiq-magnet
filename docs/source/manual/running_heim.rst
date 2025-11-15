@@ -36,7 +36,7 @@ Next we will build the docker images.
 
     # Build the magnet image
     PUSH_IMAGES=0 \
-    UV_BASE=uv:latest \
+    BASE_IMAGE=uv:0.8.8-python3.10-cuda12.4.1-cudnn-devel-ubuntu22.04 \
         ./dockerfiles/magnet.build_and_publish.sh
 
     # Build the magnet+HEIM image

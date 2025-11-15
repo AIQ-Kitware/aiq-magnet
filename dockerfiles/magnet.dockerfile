@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 # See tail for quickbuild instructions.
-ARG UV_BASE=uv:latest
-FROM ${UV_BASE}
+ARG BASE_IMAGE=uv:latest
+FROM ${BASE_IMAGE}
 
 
 # ------------------------------------
@@ -60,6 +60,20 @@ EOF
 
 # Default workdir to the repo
 WORKDIR /root/code/${REPO_DNAME}
+
+ARG VCS_REF=""
+ARG REPO_URL=""
+ARG DOCKERFILE_PATH=""
+
+LABEL org.opencontainers.image.title="MAGNET" \
+      org.opencontainers.image.description="Image for Kitware MAGNET AIQ." \
+      org.opencontainers.image.url="$REPO_URL/-/blob/$VCS_REF/$DOCKERFILE_PATH" \
+      org.opencontainers.image.source="$REPO_URL" \
+      org.opencontainers.image.revision="$VCS_REF" \
+      org.opencontainers.image.version="uv${UV_VERSION}-python${PYTHON_VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.authors="Jon Crall <jon.crall@kitware.com>, Kitware Inc." \
+      org.opencontainers.image.vendor="Kitware Inc." 
 
 # See README.md for full usage instructions.
 

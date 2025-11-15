@@ -7,17 +7,57 @@ Build and optionally publish a "uv base" image from dockerfiles/uv.dockerfile.
 Key features:
   - Accepts BASE_IMAGE (e.g. nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04)
   - Auto-derives BASE_TAG and IMAGE_TAG
-  - Reads UV_VERSION default from inside uv.dockerfile
+  - Reads UV_VERSION default from inside uv.dockerfile (unless overridden)
   - Uses VCS_REF and REPO_URL build-args (via local git state)
   - Generic registry support:
-        SERVER_URL / SERVER_USERNAME / SERVER_TOKEN
+        DOCKER_REGISTRY / DOCKER_USERNAME / DOCKER_TOKEN
   - Summary printed before any docker actions
   - Dedicated registry_login function
 
-Usage:
+Typical usage:
+
+  # Minimal (all defaults)
   ./dockerfiles/uv.build_and_publish.sh
-  BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 ./dockerfiles/uv.build_and_publish.sh
-  IMAGE_TAG=my-tag SERVER_URL=… SERVER_USERNAME=… SERVER_TOKEN=… ./dockerfiles/uv.build_and_publish.sh
+
+  # Explicit base image, no push
+  PUSH_IMAGES=0 \
+  PYTHON_VERSION=3.10 \
+  UV_VERSION=0.8.8 \
+  BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04 \
+      ./dockerfiles/uv.build_and_publish.sh
+
+Environment variables (override defaults as needed):
+
+  IMAGE_NAME        - Logical image name (default: uv)
+
+  # Base image
+  BASE_IMAGE        - Full base image reference
+                      (default: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04)
+  PYTHON_VERSION    - Python major.minor (default: 3.10)
+  UV_VERSION        - uv version to install. If unset, parsed from uv.dockerfile.
+
+  # Tagging
+  IMAGE_TAG         - Primary image tag. If unset, derived as:
+                        <base_tag>-python<PYTHON_VERSION>-uv<UV_VERSION>
+                      where base_tag is the portion after ":" in BASE_IMAGE.
+  DOCKER_REPO       - Registry/namespace for pushed tags
+                      (default: docker.io/erotemic)
+  DOCKER_REGISTRY   - If unset, derived from DOCKER_REPO (before first "/")
+  DOCKER_NAMESPACE  - If unset, derived from DOCKER_REPO (after first "/")
+
+  # Login / push
+  PUSH_IMAGES       - If 1, push images to the registry; if 0, build/tag only
+                      (default: 1)
+  LOGIN_DOCKER      - If 1, attempt login to DOCKER_REGISTRY (default: 1)
+  DOCKER_USERNAME   - Registry username
+  DOCKER_TOKEN      - Registry token/password
+
+  # Paths
+  REPO_ROOT         - Repo root (default: parent of this script)
+  UV_DOCKERFILE     - Path to uv.dockerfile
+                      (default: ${REPO_ROOT}/dockerfiles/uv.dockerfile)
+
+The script prints a summary of the resolved configuration before building.
 '
 
 set -euo pipefail
@@ -45,13 +85,21 @@ fi
 # Will derive UV_VERSION dynamically from dockerfile unless overridden
 : "${UV_VERSION:=}"
 
-# Registry info
-: "${SERVER_URL:=}"
-: "${SERVER_USERNAME:=}"
-: "${SERVER_TOKEN:=}"
+# Registry / repo info
+: "${DOCKER_REPO:=docker.io/erotemic}"     # registry + namespace, e.g. docker.io/erotemic
+: "${DOCKER_REGISTRY:=}"                   # optional override
+: "${DOCKER_NAMESPACE:=}"                  # optional override
 
-: "${LOGIN_SERVER:=1}"
+# Login / push
 : "${PUSH_IMAGES:=1}"
+: "${LOGIN_DOCKER:=1}"
+
+# Back-compat: map DOCKER_* to DOCKER_* if not explicitly set
+: "${DOCKER_USERNAME:=}"
+: "${DOCKER_TOKEN:=}"
+: "${DOCKER_REGISTRY:=${DOCKER_REGISTRY:-}}"
+: "${DOCKER_USERNAME:=${DOCKER_USERNAME:-${DOCKER_USERNAME}}}"
+: "${DOCKER_TOKEN:=${DOCKER_TOKEN:-${DOCKER_TOKEN}}}"
 
 # Paths
 : "${REPO_ROOT:=}"
@@ -62,261 +110,224 @@ fi
 # ------------------------------------------------------------------------------
 
 make_vcs_ref(){
-    local VCS_REF="$(git rev-parse HEAD)"
+    local VCS_REF
+    VCS_REF="$(git rev-parse HEAD)"
     local is_dirty=false
-    git diff --quiet         || is_dirty=true
-    git diff --cached --quiet || is_dirty=true
+    git diff --quiet           || is_dirty=true
+    git diff --cached --quiet  || is_dirty=true
     if [ -n "$(git ls-files --others --exclude-standard)" ]; then
       is_dirty=true
     fi
-    local VCS_REF_FULL="$VCS_REF"
-    $is_dirty && VCS_REF_FULL="${VCS_REF}-dirty"
-    echo "$VCS_REF_FULL"
+    if $is_dirty; then
+      printf "%s-dirty\n" "$VCS_REF"
+    else
+      printf "%s\n" "$VCS_REF"
+    fi
 }
 
 get_repo_url(){
-    local _RAW_URL
-    _RAW_URL="$(git config --get remote.origin.url)"
-    local _REPO_URL="$_RAW_URL"
+    local raw_url repo_url
+    raw_url="$(git config --get remote.origin.url || true)"
+    repo_url="$raw_url"
 
-    if [[ "$_RAW_URL" =~ ^git@([^:]+):(.+)\.git$ ]]; then
-      _REPO_URL="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
-    elif [[ "$_RAW_URL" =~ ^https?://.*\.git$ ]]; then
-      _REPO_URL="${_RAW_URL%.git}"
+    if [[ "$raw_url" =~ ^git@([^:]+):(.+)\.git$ ]]; then
+      # git@github.com:org/repo.git → https://github.com/org/repo
+      repo_url="https://${BASH_REMATCH[1]}/${BASH_REMATCH[2]}"
+    elif [[ "$raw_url" =~ ^https?://.+\.git$ ]]; then
+      repo_url="${raw_url%.git}"
     fi
-    echo "$_REPO_URL"
+
+    printf "%s\n" "$repo_url"
 }
 
-get_dockerfile_arg_default(){
-    local _ARGNAME="$1"
-    local _DOCKERFILE_PATH="$2"
-    grep -E "^ARG ${_ARGNAME}=" "$_DOCKERFILE_PATH" \
-      | head -n1 \
-      | cut -d= -f2-
-}
-
-registry_login(){
-  local registry_host="$1"
-
-  if [[ -z "$registry_host" ]]; then
-    log "registry_login: no registry host provided; skipping login"
-    return 0
-  fi
-
-  if [[ "$PUSH_IMAGES" -ne 1 || "$LOGIN_SERVER" -ne 1 ]]; then
-    log "registry_login: not logging in (PUSH_IMAGES=$PUSH_IMAGES, LOGIN_SERVER=$LOGIN_SERVER)"
-    return 0
-  fi
-
-  if [[ -n "$SERVER_USERNAME" && -n "$SERVER_TOKEN" ]]; then
-    log "Logging in to $registry_host as $SERVER_USERNAME"
-    printf "%s" "$SERVER_TOKEN" | docker login "$registry_host" -u "$SERVER_USERNAME" --password-stdin
-  else
-    log "Skipping login: SERVER_USERNAME or SERVER_TOKEN missing.
-If needed: docker login $registry_host"
-  fi
-}
-
-print_summary(){
-  local token_status="<unset>"
-  [[ -n "${SERVER_TOKEN:-}" ]] && token_status="set"
-
-  cat <<EOF
-Build plan (uv base):
-
-  Paths:
-    REPO_ROOT:        ${REPO_ROOT}
-    UV_DOCKERFILE:    ${UV_DOCKERFILE}
-
-  Git info:
-    VCS_REF:          ${VCS_REF}
-    REPO_URL:         ${REPO_URL}
-
-  Base image:
-    BASE_IMAGE:       ${BASE_IMAGE}
-    BASE_TAG:         ${BASE_TAG}
-
-  Versions:
-    UV_VERSION:       ${UV_VERSION}
-    PYTHON_VERSION:   ${PYTHON_VERSION}
-
-  Image tagging:
-    IMAGE_NAME:       ${IMAGE_NAME}
-    IMAGE_TAG:        ${IMAGE_TAG}
-    IMAGE_QUALNAME:   ${IMAGE_QUALNAME}
-
-  Registry:
-    SERVER_URL:       ${SERVER_URL:-<unset>}
-    REGISTRY_HOST:    ${REGISTRY_HOST:-<none>}
-    REMOTE_IMAGE:     ${REMOTE_IMAGE:-<none>}
-    SERVER_USERNAME:  ${SERVER_USERNAME:-<unset>}
-    SERVER_TOKEN:     ${token_status}
-    LOGIN_SERVER:     ${LOGIN_SERVER}
-    PUSH_IMAGES:      ${PUSH_IMAGES}
-
-EOF
-}
-
-# ------------------------------------------------------------------------------
-# main
-# ------------------------------------------------------------------------------
-
-main() {
-  # -----------------------
-  # Resolve paths
-  # -----------------------
+derive_repo_root_and_dockerfile(){
   local script_dir
   script_dir="$(
     cd -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2>&1
     pwd
   )"
-
-  [[ -z "$REPO_ROOT" ]]      && REPO_ROOT="$(realpath "$script_dir/..")"
-  [[ -z "$UV_DOCKERFILE" ]]  && UV_DOCKERFILE="${REPO_ROOT}/dockerfiles/uv.dockerfile"
+  : "${REPO_ROOT:=$(realpath "${script_dir}/..")}"
+  : "${UV_DOCKERFILE:=${REPO_ROOT}/dockerfiles/uv.dockerfile}"
 
   [[ -f "$UV_DOCKERFILE" ]] || die "uv.dockerfile not found at $UV_DOCKERFILE"
+}
 
-  # -----------------------
-  # Capture VCS metadata
-  # -----------------------
-  VCS_REF="$(make_vcs_ref)"
-  REPO_URL="$(get_repo_url)"
-  DOCKERFILE_PATH="$UV_DOCKERFILE"
+derive_registry_parts(){
+  # If DOCKER_REGISTRY / DOCKER_NAMESPACE are unset, derive from DOCKER_REPO
+  if [[ -z "${DOCKER_REGISTRY}" || -z "${DOCKER_NAMESPACE}" ]]; then
+    local _repo="${DOCKER_REPO}"
+    local _reg="${_repo%%/*}"
+    local _ns="${_repo#*/}"
+    : "${DOCKER_REGISTRY:=${_reg}}"
+    : "${DOCKER_NAMESPACE:=${_ns}}"
+  fi
+}
 
-  # -----------------------
-  # If UV_VERSION not supplied, extract from dockerfile default ARG
-  # -----------------------
-  if [[ -z "$UV_VERSION" ]]; then
-    UV_VERSION="$(get_dockerfile_arg_default UV_VERSION "$UV_DOCKERFILE")"
-    [[ -n "$UV_VERSION" ]] || die "Failed to infer UV_VERSION from $UV_DOCKERFILE"
+parse_uv_version_from_dockerfile(){
+  if [[ -n "${UV_VERSION}" ]]; then
+    return 0
+  fi
+  local line
+  line="$(grep -E '^ARG[[:space:]]+UV_VERSION=' "$UV_DOCKERFILE" || true)"
+  if [[ -n "$line" ]]; then
+    UV_VERSION="${line#*=}"
+    UV_VERSION="${UV_VERSION//\"/}"
+    UV_VERSION="${UV_VERSION//\'/}"
+  fi
+  if [[ -z "${UV_VERSION}" ]]; then
+    die "UV_VERSION is unset and could not be parsed from $UV_DOCKERFILE"
+  fi
+}
+
+derive_base_and_tag(){
+  # Allow BASE_IMAGE to be provided as first positional arg if not set
+  if [[ -z "${BASE_IMAGE}" && "${1:-}" != "" ]]; then
+    BASE_IMAGE="$1"
+    shift || true
   fi
 
-  # -----------------------
-  # BASE_TAG + IMAGE_TAG derivation
-  # -----------------------
-  # Strip everything up to the last '/' …
-  BASE_TAG="${BASE_IMAGE##*/}"
-  # … then remove all ':' characters
-  BASE_TAG="${BASE_TAG//:/}"
+  [[ -n "${BASE_IMAGE}" ]] || die "BASE_IMAGE is required (env or positional arg 1)"
 
+  local base_tag
+  local base_name
+  local unqual_base_image
+  if [[ "$BASE_IMAGE" == *:* ]]; then
+    # Strip everything before the final '/' (if present)
+    unqual_base_image="${BASE_IMAGE##*/}"
+    # Split NAME and TAG
+    base_name="${unqual_base_image%%:*}"
+    base_tag="${unqual_base_image##*:}"
+  else
+    die "unknown type of base image"
+  fi
 
-  IMAGE_TAG="${UV_VERSION}-python${PYTHON_VERSION}-${BASE_TAG}"
+  parse_uv_version_from_dockerfile
+
+  # Fully qualified image tag is the version of the program/repo suffixed with
+  # base versioning.
+  : "${IMAGE_TAG:=${UV_VERSION}-python${PYTHON_VERSION}-${base_name}${base_tag}}"
 
   IMAGE_QUALNAME="${IMAGE_NAME}:${IMAGE_TAG}"
+}
 
-  if [[ -n "$SERVER_URL" ]]; then
-    REMOTE_IMAGE="${SERVER_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
-    REGISTRY_HOST="${SERVER_URL%%/*}"
-    [[ -z "$REGISTRY_HOST" ]] && REGISTRY_HOST="$SERVER_URL"
-  else
-    REMOTE_IMAGE=""
-    REGISTRY_HOST=""
+registry_login(){
+  if [[ "${PUSH_IMAGES}" -ne 1 || "${LOGIN_DOCKER}" -ne 1 ]]; then
+    log "Skipping registry login (PUSH_IMAGES=${PUSH_IMAGES}, LOGIN_DOCKER=${LOGIN_DOCKER})"
+    return 0
   fi
 
-  # -----------------------
-  # Show plan
-  # -----------------------
-  print_summary
-
-  # -----------------------
-  # Login (if applicable)
-  # -----------------------
-  if [[ -n "$REGISTRY_HOST" ]]; then
-    registry_login "$REGISTRY_HOST"
+  if [[ -z "${DOCKER_USERNAME}" || -z "${DOCKER_TOKEN}" ]]; then
+    log "DOCKER_USERNAME or DOCKER_TOKEN not set; assuming local-only push or existing docker login"
+    return 0
   fi
 
-  # -----------------------
-  # Build
-  # -----------------------
-  log "Building image: ${IMAGE_QUALNAME}"
+  log "Logging in to registry ${DOCKER_REGISTRY} as ${DOCKER_USERNAME}"
+  printf '%s\n' "${DOCKER_TOKEN}" | docker login "${DOCKER_REGISTRY}" --username "${DOCKER_USERNAME}" --password-stdin
+}
 
-  DOCKER_BUILDKIT=1 docker build --progress=plain \
-    -t "${IMAGE_QUALNAME}" \
-    -f "${UV_DOCKERFILE}" \
+build_uv_image(){
+  log "Building ${IMAGE_QUALNAME} from ${BASE_IMAGE}"
+  docker build \
+    --file "${UV_DOCKERFILE}" \
     --build-arg BASE_IMAGE="${BASE_IMAGE}" \
-    --build-arg UV_VERSION="${UV_VERSION}" \
     --build-arg PYTHON_VERSION="${PYTHON_VERSION}" \
+    --build-arg UV_VERSION="${UV_VERSION}" \
     --build-arg VCS_REF="${VCS_REF}" \
     --build-arg REPO_URL="${REPO_URL}" \
-    --build-arg DOCKERFILE_PATH="${DOCKERFILE_PATH}" \
+    --build-arg DOCKERFILE_PATH="dockerfile/uv.dockerfile" \
+    --tag "${IMAGE_QUALNAME}" \
     "${REPO_ROOT}"
+}
 
-  # Tag local aliases
-  ALIASES=(
-      "$IMAGE_NAME:latest-python${PYTHON_VERSION}"
-      "$IMAGE_NAME:latest"
-  )
-  for ALIAS in "${ALIASES[@]}"; do
-      docker tag "$IMAGE_QUALNAME" "$ALIAS"
-  done
+make_alias_tags(){
+  ALIASES=()
+  # Example aliases; adjust to taste.
+  #  uv:latest
+  #  uv:python3.10
+  ALIASES+=( "${IMAGE_NAME}:latest" )
+  ALIASES+=( "${IMAGE_NAME}:python${PYTHON_VERSION}" )
+}
 
-
-  REMOTE_TAGS=()
-  REMOTE_TAGS+=("${REMOTE_IMAGE}")
-
+tag_aliases(){
   for alias in "${ALIASES[@]}"; do
-    # alias looks like "${APP_NAME}:tag"; we’ll prepend DOCKER_REPO.
-    local_tag="${alias#"${IMAGE_NAME}":}"
-    REMOTE_TAGS+=("${DOCKER_REPO}/${APP_NAME}:${local_tag}")
+    log "Tagging ${IMAGE_QUALNAME} as ${alias}"
+    docker tag "${IMAGE_QUALNAME}" "${alias}"
+  done
+}
+
+push_all_tags(){
+  local remote_tags=()
+
+  # Primary tag
+  remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${IMAGE_TAG}" )
+
+  # Aliases (strip local repo name and reuse tag part)
+  for alias in "${ALIASES[@]}"; do
+    local tag_part="${alias#"${IMAGE_NAME}":}"
+    remote_tags+=( "${DOCKER_REPO}/${IMAGE_NAME}:${tag_part}" )
   done
 
   log "Remote tags to push (if enabled):"
-  for tag in "${REMOTE_TAGS[@]}"; do
+  for tag in "${remote_tags[@]}"; do
     log "  - ${tag}"
   done
 
   if [[ "${PUSH_IMAGES}" -eq 1 ]]; then
-    log "PUSH_IMAGES=1 → pushing to ${DOCKER_REPO}/${APP_NAME}"
-    for tag in "${REMOTE_TAGS[@]}"; do
+    registry_login
+    for tag in "${remote_tags[@]}"; do
       log "docker push ${tag}"
       docker push "${tag}"
     done
   else
-    log "Images were NOT pushed because PUSH_IMAGES=0."
+    log "Images were NOT pushed because PUSH_IMAGES=${PUSH_IMAGES}"
   fi
+}
 
-  # -----------------------
-  # Tag & push
-  # -----------------------
-  if [[ -n "$REMOTE_IMAGE" ]]; then
-    log "Tagging remote image: $REMOTE_IMAGE"
-    docker tag "$IMAGE_QUALNAME" "$REMOTE_IMAGE"
-
-    if [[ "$PUSH_IMAGES" -eq 1 ]]; then
-      log "Pushing to registry: $REMOTE_IMAGE"
-      docker push "$REMOTE_IMAGE"
-    else
-      log "PUSH_IMAGES=0 → skipping registry push"
-    fi
-  else
-    log "SERVER_URL unset → skipping remote tag/push"
-  fi
-
-  # -----------------------
-  # done
-  # -----------------------
+print_summary(){
   cat <<EOF
+------------------------------------------------------------
+uv.build_and_publish.sh summary
+------------------------------------------------------------
+IMAGE_NAME      = ${IMAGE_NAME}
+BASE_IMAGE      = ${BASE_IMAGE}
+PYTHON_VERSION  = ${PYTHON_VERSION}
+UV_VERSION      = ${UV_VERSION}
+IMAGE_TAG       = ${IMAGE_TAG}
+IMAGE_QUALNAME  = ${IMAGE_QUALNAME}
 
-Done.
-Built local image:
-  ${IMAGE_QUALNAME}
+DOCKER_REPO      = ${DOCKER_REPO}
+DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
+DOCKER_NAMESPACE = ${DOCKER_NAMESPACE}
+DOCKER_REGISTRY  = ${DOCKER_REGISTRY}
+PUSH_IMAGES      = ${PUSH_IMAGES}
+LOGIN_DOCKER     = ${LOGIN_DOCKER}
 
-Local aliases:
-$(for a in "${ALIASES[@]}"; do printf "    %s\n" "${a}"; done)
-
-Remote image:
-  ${REMOTE_IMAGE:-<none>}
-
+UV_DOCKERFILE   = ${UV_DOCKERFILE}
+REPO_ROOT       = ${REPO_ROOT}
+------------------------------------------------------------
 EOF
 }
 
+main(){
+  derive_repo_root_and_dockerfile
+  derive_registry_parts
+
+  VCS_REF="$(make_vcs_ref)"
+  REPO_URL="$(get_repo_url)"
+
+  derive_base_and_tag "$@"
+  make_alias_tags
+
+  print_summary
+
+  build_uv_image
+  tag_aliases
+  push_all_tags
+}
+
 if [[ ${BASH_SOURCE[0]} != "$0" ]]; then
-    echo "Sourcing as a library"
+  log "Sourcing uv.build_and_publish.sh as a library"
 else
-    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-      printf "%s\n" "$__doc__"
-      exit 0
-    fi
-    main "$@"
+  main "$@"
 fi
 
