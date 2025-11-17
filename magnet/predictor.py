@@ -1,5 +1,7 @@
 from typing import Any
 
+import rich
+from rich.markup import escape
 import ubelt as ub
 import pandas as pd
 import kwarray
@@ -110,113 +112,6 @@ class Predictor:
         )
         return train_split, test_split
 
-    def compare_predicted_to_actual(self, predicted_stats, eval_stats_df):
-        import kwutil
-        from rich.console import Console
-        from rich.table import Table
-        from magnet.utils import util_pandas
-
-        console = Console()
-
-        for key, run_eval_stats_df in eval_stats_df.groupby(['run_spec.name']):
-            run_spec_name, = key
-
-            predicted_stats_for_run = predicted_stats.get(run_spec_name, [])
-
-            stats_flat = [kwutil.DotDict.from_nested(stats.__dict__)
-                          for stats in predicted_stats_for_run]
-            flat_table = util_pandas.DotDictDataFrame(stats_flat)
-            # Add a prefix to enable joins for join keys
-            flat_table = flat_table.insert_prefix('predicted_stats')
-            # Enrich with contextual metadata (primary key for run_spec joins)
-            flat_table['run_spec.name'] = run_spec_name
-            flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
-
-            predicted_stats_df = flat_table
-            # Remove 'predicted' from predicted Stats name to try and
-            # match with original metric
-            predicted_stats_df['predicted_stats.name.name'] =\
-                predicted_stats_df['predicted_stats.name.name'].apply(
-                    lambda n: n.replace('predicted_', ''))
-
-            # If not populated already, these are required for merging
-            predicted_stats_missing_columns =\
-                (set(eval_stats_df.columns)
-                 - (set(map(lambda x: x.replace('predicted_', ''), predicted_stats_df.columns))))
-            predicted_stats_missing_columns = map(lambda x: f"predicted_{x}", predicted_stats_missing_columns)
-
-            for col in predicted_stats_missing_columns:
-                if col not in predicted_stats_df.columns:
-                    predicted_stats_df[col] = float('nan')
-                    col_dtype = str(eval_stats_df[col.replace('predicted_', '')].dtype)
-                    predicted_stats_df[col] = predicted_stats_df[col].astype(col_dtype)
-
-            possible_join_fields = {'stats.name.name',
-                                    'stats.name.perturbation.computed_on',
-                                    'stats.name.perturbation.fairness',
-                                    'stats.name.perturbation.name',
-                                    'stats.name.perturbation.prob',
-                                    'stats.name.perturbation.robustness',
-                                    'stats.name.split'}
-            join_fields = possible_join_fields & set(eval_stats_df.columns)
-
-            for col in join_fields:
-                pred_col = f"predicted_{col}"
-                col_dtype = str(eval_stats_df[col].dtype)
-                predicted_stats_df[pred_col] = predicted_stats_df[pred_col].astype(col_dtype)
-
-            merged = pd.merge(run_eval_stats_df, predicted_stats_df,
-                     left_on=sorted(list(join_fields)),
-                     right_on=sorted(list(map(lambda x: f"predicted_{x}", join_fields))))
-
-            table = Table()
-            for header in ('run_spec',
-                           'source',
-                           'name',
-                           'mean',
-                           'min',
-                           'max',
-                           'count',
-                           'stddev',
-                           'sum',
-                           'sum_squared',
-                           'variance'):
-                table.add_column(header)
-
-            def _field_formatter(x):
-                if isinstance(x, float):
-                    return f"{x:.3f}"
-                else:
-                    return str(x)
-
-            for _, row in merged.iterrows():
-                table.add_row(*map(_field_formatter,
-                                   (row['run_spec.name_x'],
-                                    'predicted',
-                                    row['predicted_stats.name.name'],
-                                    row['predicted_stats.mean'],
-                                    row['predicted_stats.min'],
-                                    row['predicted_stats.max'],
-                                    row['predicted_stats.count'],
-                                    row['predicted_stats.stddev'],
-                                    row['predicted_stats.sum'],
-                                    row['predicted_stats.sum_squared'],
-                                    row['predicted_stats.variance'])))
-                table.add_row(*map(_field_formatter,
-                                   (row['run_spec.name_x'],
-                                    'actual',
-                                    row['stats.name.name'],
-                                    row['stats.mean'],
-                                    row['stats.min'],
-                                    row['stats.max'],
-                                    row['stats.count'],
-                                    row['stats.stddev'],
-                                    row['stats.sum'],
-                                    row['stats.sum_squared'],
-                                    row['stats.variance'])))
-
-            console.print(table)
-
     def _coerce_helm_suite_inputs(self, *args, **kwargs):
         """
         The original API definition had the user give inputs as "root_dir" and
@@ -264,6 +159,121 @@ class Predictor:
             helm_suite_path = ub.Path(args[0])
         return helm_suite_path
 
+    def _run(self):
+        raise NotImplementedError
+
+    def __call__(self, *args, **kwargs):
+        return self._run(*args, **kwargs)
+
+
+class RunPrediction:
+    def __init__(self,
+                 run_spec_name,
+                 split,
+                 stat_name,
+                 mean,
+                 computed_on=None,
+                 perturbation_parameters=None,
+                 count=1,
+                 sum=None,
+                 sum_squared=None,
+                 min=None,
+                 max=None,
+                 variance=0.0,
+                 stddev=0.0):
+        self.run_spec_name = run_spec_name
+        self.split = split
+        self.stat_name = stat_name
+        self.mean = mean
+
+        self.computed_on = computed_on
+
+        if perturbation_parameters is None:
+            perturbation_parameters = {}
+        self.perturbation_parameters = {
+               **{"name": None, "fairness": None, "robustness": None},
+               **perturbation_parameters}
+
+        self.count = count
+
+        self.sum = sum
+        if self.sum is None:
+            self.sum = mean
+
+        self.sum_squared = sum_squared
+        if self.sum_squared is None:
+            self.sum_squared = self.sum ** 2
+
+        self.min = min
+        if self.min is None:
+            self.min = mean
+
+        self.max = max
+        if self.max is None:
+            self.max = mean
+
+        self.variance = variance
+        self.stddev = stddev
+
+    @classmethod
+    def to_df(cls, instance_predictions):
+        df = pd.DataFrame([
+            {
+                'run_spec.name': p.run_spec_name,
+                'stats.name.split': p.split,
+                'stats.count': p.count,
+                'stats.max': p.max,
+                'stats.mean': p.mean,
+                'stats.min': p.min,
+                'stats.name.name': p.stat_name,
+                'stats.stddev': p.stddev,
+                'stats.sum': p.sum,
+                'stats.sum_squared': p.sum_squared,
+                'stats.variance': p.variance,
+                'stats.name.perturbation.computed_on': p.computed_on,
+                **{'stats.name.perturbation.{}'.format(k): v for k, v in p.perturbation_parameters.items()}
+            }
+            for p in instance_predictions])
+
+        return df
+
+
+class RunPredictor(Predictor):
+    def compare_predicted_to_actual(self, predicted_stats_df, eval_stats_df):
+        permutation_cols = [c for c in predicted_stats_df.columns
+                            if c.startswith('stats.name.perturbation')]
+        join_cols = ['run_spec.name',
+                     'stats.name.split',
+                     'stats.name.name',
+                     *permutation_cols]
+
+        merged = pd.merge(predicted_stats_df, eval_stats_df,
+                          on=join_cols)
+
+        human_mapping = {'run_spec.name': 'run_spec',
+                         'stats.name.split': 'split',
+                         'stats.name.name': 'stat_name',
+                         'stats.mean_x': 'predicted_mean',
+                         'stats.mean_y': 'actual_mean'}
+
+        vantage = ['run_spec.name',
+                   'stats.name.split',
+                   'stats.name.name',
+                   'stats.mean_x',
+                   'stats.mean_y']
+
+        selected = merged[vantage]
+        human_table = selected.rename(human_mapping, axis=1)
+        # More human readable float
+        human_table.round(3)
+
+        rich.print(escape(human_table.to_string()))
+
+    def predict(self,
+                train_split,
+                sequestered_test_split) -> list[RunPrediction]:
+        raise NotImplementedError
+
     def _run(self, *args, **kwargs):
         """
         Note: I like when __call__ corresponds to a named function (e.g.
@@ -277,16 +287,7 @@ class Predictor:
         eval_stats_df = test_split.stats
 
         # TODO: Move the encapsulated splits
-        predicted_stats = self.predict(train_split, sequestered_test_split)
+        run_predictions = self.predict(train_split, sequestered_test_split)
+        predicted_stats_df = RunPrediction.to_df(run_predictions)
 
-        self.compare_predicted_to_actual(predicted_stats, eval_stats_df)
-
-    def __call__(self, *args, **kwargs):
-        return self._run(*args, **kwargs)
-
-
-class RunPredictor(Predictor):
-    def predict(self,
-                train_split,
-                sequestered_test_split) -> dict[str, list[Stat]]:
-        raise NotImplementedError
+        self.compare_predicted_to_actual(predicted_stats_df, eval_stats_df)

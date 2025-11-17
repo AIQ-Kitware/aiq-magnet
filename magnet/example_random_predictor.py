@@ -3,7 +3,7 @@ import argparse
 
 from helm.benchmark.metrics.statistic import Stat
 
-from magnet.predictor import RunPredictor
+from magnet.predictor import RunPredictor, RunPrediction
 from magnet.data_splits import TrainSplit, SequesteredTestSplit
 
 
@@ -22,9 +22,7 @@ class ExampleRandomPredictor(RunPredictor):
     def predict(self,
                 train_split: TrainSplit,
                 sequestered_test_split: SequesteredTestSplit
-                ) -> dict[str, list[Stat]]:
-        predicted_stats = {}
-
+                ) -> list[RunPrediction]:
         # Unpack split classes into dataframes
         train_run_specs_df = train_split.run_specs  # NOQA
         train_scenario_states_df = train_split.scenario_state  # NOQA
@@ -33,23 +31,20 @@ class ExampleRandomPredictor(RunPredictor):
         eval_run_specs_df = sequestered_test_split.run_specs  # NOQA
         eval_scenario_state_df = sequestered_test_split.scenario_state
 
+        predictions = []
+
         for key, _ in eval_scenario_state_df.groupby(['run_spec.name']):
             run_spec_name, = key
             prediction = (random.choice(range(0, 101)) / 100)
-            predicted_stats.setdefault(run_spec_name, []).append(
-                Stat(**{'name':
-                        {'name': 'predicted_exact_match',
-                         'split': 'valid'},
-                        'count': 1,
-                        'sum': prediction,
-                        'sum_squared': prediction ** 2,
-                        'min': prediction,
-                        'max': prediction,
-                        'mean': prediction,
-                        'variance': 0.0,
-                        'stddev': 0.0}))
 
-        return predicted_stats
+            predictions.append(
+                RunPrediction(
+                    run_spec_name=run_spec_name,
+                    split="valid",
+                    stat_name="exact_match",
+                    mean=prediction))
+
+        return predictions
 
 
 if __name__ == "__main__":

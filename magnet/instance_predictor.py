@@ -144,8 +144,6 @@ class InstancePredictor(Predictor):
 
         return train_split, test_split
 
-
-
     def _run(self, *args, **kwargs):
         helm_suite_path = self._coerce_helm_suite_inputs(*args, **kwargs)
         train_split, test_split = self.prepare_all_dataframes(helm_suite_path)
