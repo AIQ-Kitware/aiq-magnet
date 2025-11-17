@@ -3,7 +3,7 @@ import argparse
 
 from helm.benchmark.metrics.statistic import Stat
 
-from magnet.instance_predictor import InstancePredictor
+from magnet.instance_predictor import InstancePredictor, InstancePrediction
 from magnet.data_splits import TrainSplit, SequesteredTestSplit
 
 
@@ -22,9 +22,7 @@ class ExampleRandomInstancePredictor(InstancePredictor):
     def predict(self,
                 train_split: TrainSplit,
                 sequestered_test_split: SequesteredTestSplit
-                ) -> dict[str, dict[str, list[Stat]]]:
-        predicted_stats = {}
-
+                ) -> list[InstancePrediction]:
         # Unpack split classes into dataframes
         train_run_specs_df = train_split.run_specs  # NOQA
         train_scenario_states_df = train_split.scenario_state  # NOQA
@@ -33,28 +31,21 @@ class ExampleRandomInstancePredictor(InstancePredictor):
         eval_run_specs_df = sequestered_test_split.run_specs  # NOQA
         eval_scenario_state_df = sequestered_test_split.scenario_state
 
-        for key, _ in eval_scenario_state_df.groupby(
-                ['run_spec.name', 'scenario_state.request_states.instance.id']):
-            run_spec_name, instance_id = key
+        predictions = []
+        for _, row in eval_scenario_state_df.iterrows():
+            run_spec_name = row['run_spec.name']
+            instance_predict_id = row['magnet.instance_predict_id']
 
             prediction = random.choice([0.0, 1.0])
 
-            run_spec_stats = predicted_stats.setdefault(run_spec_name, {})
-            per_instance_stats = run_spec_stats.setdefault(instance_id, [])
-            per_instance_stats.append(
-                Stat(**{'name':
-                        {'name': 'predicted_exact_match',
-                         'split': 'valid'},
-                        'count': 1,
-                        'sum': prediction,
-                        'sum_squared': prediction ** 2,
-                        'min': prediction,
-                        'max': prediction,
-                        'mean': prediction,
-                        'variance': 0.0,
-                        'stddev': 0.0}))
+            predictions.append(
+                InstancePrediction(
+                    run_spec_name=run_spec_name,
+                    instance_predict_id=instance_predict_id,
+                    stat_name="exact_match",
+                    mean=prediction))
 
-        return predicted_stats
+        return predictions
 
 
 if __name__ == "__main__":
@@ -72,5 +63,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    predictor_instance = ExampleRandomPredictor()
+    predictor_instance = ExampleRandomInstancePredictor()
     predictor_instance(args.root_dir, args.suite)
