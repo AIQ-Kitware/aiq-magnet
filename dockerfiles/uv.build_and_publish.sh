@@ -50,6 +50,8 @@ The script prints a summary of the resolved configuration before building.
 
 set -euo pipefail
 
+set -x
+
 log(){ printf "\033[1;34m[uv-build]\033[0m %s\n" "$*"; }
 die(){ printf "\033[1;31m[error]\033[0m %s\n" "$*" >&2; exit 1; }
 
@@ -74,7 +76,8 @@ fi
 : "${UV_VERSION:=}"
 
 # Registry / repo info
-: "${DOCKER_REPO:=docker.io/erotemic}"     # registry + namespace, e.g. docker.io/erotemic
+#: "${DOCKER_REPO:=docker.io/erotemic}"     # registry + namespace, e.g. docker.io/erotemic
+: "${DOCKER_REPO:=ghcr.io/aiq-kitware}"    # registry + namespace, e.g. docker.io/erotemic
 : "${DOCKER_REGISTRY:=}"                   # optional override
 : "${DOCKER_NAMESPACE:=}"                  # optional override
 

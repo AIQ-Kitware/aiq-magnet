@@ -65,7 +65,8 @@ fi
 
 : "${BASE_IMAGE:=uv:latest-python3.10}"
 
-: "${DOCKER_REPO:=docker.io/erotemic}"
+#: "${DOCKER_REPO:=docker.io/erotemic}"
+: "${DOCKER_REPO:=ghcr.io/aiq-kitware}"
 : "${DOCKER_REGISTRY:=}"
 : "${DOCKER_NAMESPACE:=}"
 
