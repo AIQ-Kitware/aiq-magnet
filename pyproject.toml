@@ -77,7 +77,7 @@ magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
 
 [tool.pytest.ini_options]
 addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
-norecursedirs = ".git build __pycache__ dev docs"
+norecursedirs = ".git build __pycache__ dev docs dockerfiles"
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
