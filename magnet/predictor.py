@@ -5,7 +5,6 @@ from rich.markup import escape
 import ubelt as ub
 import pandas as pd
 import kwarray
-from helm.benchmark.metrics.statistic import Stat
 
 from magnet.helm_outputs import HelmSuite, HelmOutputs
 from magnet.data_splits import TestSplit, TrainSplit
@@ -240,12 +239,12 @@ class RunPrediction:
 
 class RunPredictor(Predictor):
     def compare_predicted_to_actual(self, predicted_stats_df, eval_stats_df):
-        permutation_cols = [c for c in predicted_stats_df.columns
+        perturbation_cols = [c for c in predicted_stats_df.columns
                             if c.startswith('stats.name.perturbation')]
         join_cols = ['run_spec.name',
                      'stats.name.split',
                      'stats.name.name',
-                     *permutation_cols]
+                     *perturbation_cols]
 
         merged = pd.merge(predicted_stats_df, eval_stats_df,
                           on=join_cols)
@@ -254,13 +253,16 @@ class RunPredictor(Predictor):
                          'stats.name.split': 'split',
                          'stats.name.name': 'stat_name',
                          'stats.mean_x': 'predicted_mean',
-                         'stats.mean_y': 'actual_mean'}
+                         'stats.mean_y': 'actual_mean',
+                         **{c: c.replace('stats.name.perturbation.', 'perturbation_')
+                            for c in perturbation_cols}}
 
         vantage = ['run_spec.name',
                    'stats.name.split',
                    'stats.name.name',
                    'stats.mean_x',
-                   'stats.mean_y']
+                   'stats.mean_y',
+                   *perturbation_cols]
 
         selected = merged[vantage]
         human_table = selected.rename(human_mapping, axis=1)

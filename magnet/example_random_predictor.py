@@ -1,8 +1,6 @@
 import random
 import argparse
 
-from helm.benchmark.metrics.statistic import Stat
-
 from magnet.predictor import RunPredictor, RunPrediction
 from magnet.data_splits import TrainSplit, SequesteredTestSplit
 
