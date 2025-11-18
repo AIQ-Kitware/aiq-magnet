@@ -12,10 +12,9 @@ class ExampleRandomPredictor(RunPredictor):
     Example:
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo()
-        >>> suite = outputs.suites()[0].name
-        >>> root_dir = outputs.root_dir
+        >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
-        >>> predictor_instance(root_dir, suite)
+        >>> predictor_instance(suite_path)
     """
     def predict(self,
                 train_split: TrainSplit,

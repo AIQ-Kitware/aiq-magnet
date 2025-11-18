@@ -13,8 +13,6 @@ from magnet.data_splits import TestSplit, TrainSplit
 class Predictor:
     def __init__(self,
                  num_example_runs=3,
-                 # num_eval_runs=1,
-                 # eval_partition_fn=<returns true if run_spec should be used for eval>
                  num_eval_samples=20,
                  random_seed=1):
         self.num_example_runs = num_example_runs

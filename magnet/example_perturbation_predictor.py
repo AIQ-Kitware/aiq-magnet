@@ -14,10 +14,9 @@ class ExamplePerturbationPredictor(RunPredictor):
     Example:
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo(run_entries=["boolq:data_augmentation=misspelling_sweep,model=openai/gpt2"], max_eval_instances=20)
-        >>> suite = outputs.suites()[0].name
-        >>> root_dir = outputs.root_dir
+        >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExamplePerturbationPredictor(num_eval_samples=5)
-        >>> predictor_instance(root_dir, suite)
+        >>> predictor_instance(suite_path)
     """
 
     def predict(self,
