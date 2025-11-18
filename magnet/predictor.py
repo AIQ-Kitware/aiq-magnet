@@ -86,13 +86,22 @@ class Predictor:
         if self.num_eval_samples > len(_full_eval_scenario_state_df):
             raise RuntimeError("Not enough rows in eval scenario_state to sample")
 
+        # Sample up to `self.num_eval_samples` random instances from
+        # scenario_states
         unique_instance_ids = _full_eval_scenario_state_df['scenario_state.request_states.instance.id'].unique()
         random_instance_indices = rng.sample(
             range(len(unique_instance_ids)), min(len(unique_instance_ids), self.num_eval_samples))
         random_instance_ids = unique_instance_ids[random_instance_indices]
 
-        eval_scenario_state_df = _full_eval_scenario_state_df[_full_eval_scenario_state_df['scenario_state.request_states.instance.id'].isin(random_instance_ids)]
-        eval_per_instance_stats_df = _full_eval_per_instance_stats_df[_full_eval_per_instance_stats_df['per_instance_stats.instance_id'].isin(random_instance_ids)]
+        # Filter scenario_states down to selected random instances
+        _flags = _full_eval_scenario_state_df['scenario_state.request_states.instance.id'].isin(random_instance_ids)
+        eval_scenario_state_df = _full_eval_scenario_state_df[_flags]
+
+        # Filter per_instance_stats down to selected random instances
+        # May not need to filter this dataframe as it's not provided
+        # to predictors
+        _flags = _full_eval_per_instance_stats_df['per_instance_stats.instance_id'].isin(random_instance_ids)
+        eval_per_instance_stats_df = _full_eval_per_instance_stats_df[_flags]
 
         train_split = TrainSplit(
             run_specs=train_run_specs_df,
@@ -194,20 +203,13 @@ class RunPrediction:
         self.count = count
 
         self.sum = sum
-        if self.sum is None:
-            self.sum = mean
-
         self.sum_squared = sum_squared
-        if self.sum_squared is None:
+
+        if self.sum_squared is None and self.sum is not None:
             self.sum_squared = self.sum ** 2
 
         self.min = min
-        if self.min is None:
-            self.min = mean
-
         self.max = max
-        if self.max is None:
-            self.max = mean
 
         self.variance = variance
         self.stddev = stddev

@@ -23,23 +23,17 @@ class InstancePrediction:
         self.instance_predict_id = instance_predict_id
         self.stat_name = stat_name
         self.mean = mean
+
         self.count = count
 
         self.sum = sum
-        if self.sum is None:
-            self.sum = mean
-
         self.sum_squared = sum_squared
-        if self.sum_squared is None:
+
+        if self.sum_squared is None and self.sum is not None:
             self.sum_squared = self.sum ** 2
 
         self.min = min
-        if self.min is None:
-            self.min = mean
-
         self.max = max
-        if self.max is None:
-            self.max = mean
 
         self.variance = variance
         self.stddev = stddev
