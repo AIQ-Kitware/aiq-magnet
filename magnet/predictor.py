@@ -48,7 +48,7 @@ class Predictor:
         return train_split, sequestered_test_split
 
     def prepare_all_dataframes(self, helm_suite_path):
-        random = kwarray.ensure_rng(self.random_seed, api='python')
+        rng = kwarray.ensure_rng(self.random_seed, api='python')
 
         suite_output = HelmSuite.coerce(helm_suite_path)
 
@@ -64,7 +64,7 @@ class Predictor:
 
         selected_run_specs_names = list(selected_run_specs_df['run_spec.name'])
 
-        *train_runs, eval_run = random.sample(
+        *train_runs, eval_run = rng.sample(
             selected_run_specs_names, self.num_example_runs + 1)
 
         train_run_specs_df = selected_run_specs_df[
@@ -89,7 +89,7 @@ class Predictor:
             raise RuntimeError("Not enough rows in eval scenario_state to sample")
 
         unique_instance_ids = _full_eval_scenario_state_df['scenario_state.request_states.instance.id'].unique()
-        random_instance_indices = random.sample(
+        random_instance_indices = rng.sample(
             range(len(unique_instance_ids)), min(len(unique_instance_ids), self.num_eval_samples))
         random_instance_ids = unique_instance_ids[random_instance_indices]
 
