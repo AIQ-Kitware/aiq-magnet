@@ -45,10 +45,9 @@ class ExampleRandomInstancePredictor(InstancePredictor):
 
         return predictions
 
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
-        description="Run example random predictor")
+        description="Run example random per-instance predictor")
 
     parser.add_argument('-r', '--root-dir',
                         type=str,
@@ -63,3 +62,7 @@ if __name__ == "__main__":
 
     predictor_instance = ExampleRandomInstancePredictor()
     predictor_instance(args.root_dir, args.suite)
+
+
+if __name__ == "__main__":
+    main()

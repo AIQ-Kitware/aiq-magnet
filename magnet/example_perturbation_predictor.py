@@ -75,8 +75,7 @@ class ExamplePerturbationPredictor(RunPredictor):
 
         return predictions
 
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Run example perturbation predictor")
 
@@ -93,3 +92,7 @@ if __name__ == "__main__":
 
     predictor_instance = ExamplePerturbationPredictor()
     predictor_instance(args.root_dir, args.suite)
+
+
+if __name__ == "__main__":
+    main()

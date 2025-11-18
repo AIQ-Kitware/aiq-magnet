@@ -44,8 +44,7 @@ class ExampleRandomPredictor(RunPredictor):
 
         return predictions
 
-
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Run example random predictor")
 
@@ -62,3 +61,7 @@ if __name__ == "__main__":
 
     predictor_instance = ExampleRandomPredictor()
     predictor_instance(args.root_dir, args.suite)
+
+
+if __name__ == "__main__":
+    main()
