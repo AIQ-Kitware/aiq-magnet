@@ -84,7 +84,9 @@ fi
 : "${HELM_GIT_REF:=explicit_plugins}"
 : "${HELM_STAGING_DIR:=.staging/helm}"
 
-: "${DOCKER_REPO:=docker.io/erotemic}"
+#: "${DOCKER_REPO:=docker.io/erotemic}"
+: "${DOCKER_REPO:=ghcr.io/aiq-kitware}"
+
 : "${DOCKER_REGISTRY:=}"
 : "${DOCKER_NAMESPACE:=}"
 
