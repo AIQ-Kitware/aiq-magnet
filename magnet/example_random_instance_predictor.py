@@ -49,19 +49,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run example random per-instance predictor")
 
-    parser.add_argument('-r', '--root-dir',
+    parser.add_argument('helm_suite_path',
                         type=str,
-                        required=True,
-                        help="Root directory for HELM outputs (usually 'something/something/benchmark_output')")
-    parser.add_argument('-s', '--suite',
-                        type=str,
-                        required=True,
-                        help="Suite name")
+                        help="Path to HELM run outputs for a suite (usually 'something/something/benchmark_output/runs/suite_name')")
 
     args = parser.parse_args()
 
     predictor_instance = ExampleRandomInstancePredictor()
-    predictor_instance(args.root_dir, args.suite)
+    predictor_instance(args.helm_suite_path)
 
 
 if __name__ == "__main__":
