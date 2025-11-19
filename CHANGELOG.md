@@ -17,7 +17,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Fixed
 
 * Fixed doctests and README wrt predictor refactors
-
+* Updated `predict_inputs_exploration.ipynb` notebook wrt API updates
 
 ## Version 0.0.1 -- Released 2025-10-28
 
