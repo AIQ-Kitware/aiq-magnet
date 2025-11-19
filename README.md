@@ -30,10 +30,9 @@ Both the `magnet/example_random_predictor.py` and `magnet/example_perturbation_p
     Example:
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo()
-        >>> suite = outputs.suites()[0].name
-        >>> root_dir = outputs.root_dir
+        >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
-        >>> predictor_instance(root_dir, suite)
+        >>> predictor_instance(suite_path)
     """
 ```
 
@@ -46,12 +45,8 @@ xdoctest magnet/example_random_predictor.py
 In this example, we ask the framework to generate some demo data for us (which will run HELM on the backend).  After the demo data has been generated, we instantiate the `ExampleRandomPredictor` allowing it 5 response samples from the evaluation data.  Then we run the random predictor against the generated demo data, which should produce a `"predicted_exact_match"` metric in the form of a HELM `Stat` object, i.e.:
 
 ```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ run_spec                                                               ┃ source    ┃ name        ┃ mean  ┃ min   ┃ max   ┃ count ┃ stddev ┃ sum   ┃ sum_squared ┃ variance ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2 │ predicted │ exact_match │ 0.720 │ 0.720 │ 0.720 │ 1     │ 0.000  │ 0.720 │ 0.518       │ 0.000    │
-│ mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2 │ actual    │ exact_match │ 0.000 │ 0.000 │ 0.000 │ 1     │ 0.000  │ 0.000 │ 0.000       │ 0.000    │
-└────────────────────────────────────────────────────────────────────────┴───────────┴─────────────┴───────┴───────┴───────┴───────┴────────┴───────┴─────────────┴──────────┘
+                                                                 run_spec  split    stat_name  predicted_mean  actual_mean perturbation_computed_on perturbation_name perturbation_fairness perturbation_robustness
+0  mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2  valid  exact_match            0.42          0.0                     None              None                  None                    None
 ```
 
 (Note that the exact values in your output may be different due to the random nature of this predictor)
@@ -67,10 +62,9 @@ The perturbation predictor example builds a simple linear model with the strengt
     Example:
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo(run_entries=["boolq:data_augmentation=misspelling_sweep,model=openai/gpt2"], max_eval_instances=20)
-        >>> suite = outputs.suites()[0].name
-        >>> root_dir = outputs.root_dir
+        >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExamplePerturbationPredictor(num_eval_samples=5)
-        >>> predictor_instance(root_dir, suite)
+        >>> predictor_instance(suite_path)
     """
 ```
 
@@ -85,12 +79,10 @@ Note that in this example, we request demo data of the `boolq` scenario with `da
 Expected output for this example is:
 
 ```
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━┓
-┃ run_spec                                               ┃ source    ┃ name        ┃ mean  ┃ min   ┃ max   ┃ count ┃ stddev ┃ sum   ┃ sum_squared ┃ variance ┃
-┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━╇━━━━━━━━━━┩
-│ boolq,data_augmentation=misspelling0:model=openai_gpt2 │ predicted │ exact_match │ 0.663 │ 0.663 │ 0.663 │ 1     │ 0.000  │ 0.663 │ 0.440       │ 0.000    │
-│ boolq,data_augmentation=misspelling0:model=openai_gpt2 │ actual    │ exact_match │ 0.650 │ 0.650 │ 0.650 │ 1     │ 0.000  │ 0.650 │ 0.423       │ 0.000    │
-└────────────────────────────────────────────────────────┴───────────┴─────────────┴───────┴───────┴───────┴───────┴────────┴───────┴─────────────┴──────────┘
+                                                 run_spec  split    stat_name  predicted_mean  actual_mean perturbation_computed_on perturbation_name perturbation_fairness perturbation_robustness  
+perturbation_prob
+0  boolq,data_augmentation=misspelling0:model=openai_gpt2  valid  exact_match        0.663095         0.65                perturbed      misspellings                 False                    True                 
+0
 ```
 
 ## Running on local HELM outputs
@@ -101,7 +93,7 @@ outputs.
 
 To run the random predictor against local outputs:
 ```
-python magnet/example_random_predictor.py --root-dir /path/to/benchmark_output --suite name_of_suite
+python magnet/example_random_predictor.py /path/to/benchmark_output/runs/name_of_suite
 ```
 
 Run `python magnet/example_random_predictor.py --help` to see the full
@@ -114,38 +106,35 @@ Note that many already computed HELM outputs (including for the `helm-lite` benc
 The basic anatomy of a `Predictor` is as follows (assuming a clean Python file):
 
 ```
-from helm.benchmark.metrics.statistic import Stat
-
-from magnet.predictor import Predictor
+from magnet.predictor import RunPredictor, RunPrediction
 
 class MyPredictor(Predictor):
     def predict(self,
-                train_run_specs_df,
-                train_scenario_states_df,
-                train_stats_df,
-                eval_run_specs_df,
-                eval_scenario_states_df) -> dict[str, list[Stat]]:
+                train_split: TrainSplit,
+                sequestered_test_split: SequesteredTestSplit
+                ) -> list[RunPrediction]:
+        train_run_specs_df = train_split.run_specs
+        train_scenario_states_df = train_split.scenario_state
+        train_stats_df = train_split.stats
+
+        eval_run_specs_df = sequestered_test_split.run_specs
+        eval_scenario_state_df = sequestered_test_split.scenario_state
+
         # Interesting prediction algorithm code goes here
 ```
 
-And this method should return a list of predicted stats (as HELM `Stat`
-instances).  For example, assume we're predicting the `"exact_match"`
-stat:
+And this method should return a list of predictions (as
+`RunPrediction` instances).  For example, assume we're only predicting
+the `"exact_match"` stat:
 
 ```
-return {run_spec_name: [Stat(**{'name': {'name': 'predicted_exact_match',
-                                         'split': 'valid'},
-                                'count': 1,
-                                'sum': prediction,
-                                'sum_squared': prediction ** 2,
-                                'min': prediction,
-                                'max': prediction,
-                                'mean': prediction,
-                                'variance': 0.0,
-                                'stddev': 0.0})]}
+    return [RunPrediction(run_spec_name=run_spec_name,
+                          split="valid",
+                          stat_name="exact_match",
+                          mean=prediction)]
 ```
 
-**NOTE:** In order for the `Predictor` superclass to match the predicted stats with the actual stats from eval data, the `name.name` should be the same (apart from a `'predicted_'` prefix), and any other parameters under the `name` field should match as well.
+Where `split` should reflect dataset split at the HELM level (each record in the `*_scenario_states_df` dataframes indiciates which split it belongs to).  And `mean` should be the predicted metric value mean.  The fields included above are the only required fields for a `RunPrediction`.
 
 The arguments passed into the `predict` method are Pandas dataframes corresponding to the HELM data (flattened from it's nested form) for the relevant runs.  We've included an IPython notebook file here ([predict_inputs_exploration.ipynb](./predict_inputs_exploration.ipynb)) showing the exact form of the inputs to `predict`.
 

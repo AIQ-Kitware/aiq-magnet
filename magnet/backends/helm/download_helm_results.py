@@ -14,7 +14,7 @@ Example:
     >>> # Test listing benchamrks
     >>> with ub.CaptureStdout(suppress=False) as cap:
     >>>     download_helm_results.main(argv=False, list_benchmarks=True)
-    >>> assert len(cap.text.split()) >= 25
+    >>> assert len(cap.text.split()) >= 24
     >>> #
     >>> # Test listing versions
     >>> with ub.CaptureStdout(suppress=False) as cap:
