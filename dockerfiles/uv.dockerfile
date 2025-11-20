@@ -162,13 +162,17 @@ ARG DOCKERFILE_PATH=""
 
 LABEL org.opencontainers.image.title="uv Python" \
       org.opencontainers.image.description="uv ${UV_VERSION} and Python ${PYTHON_VERSION} in an auto-activating virtual environment with base image: ${BASE_IMAGE}." \
-      org.opencontainers.image.url="$REPO_URL/-/blob/$VCS_REF/$DOCKERFILE_PATH" \
       org.opencontainers.image.source="$REPO_URL" \
-      org.opencontainers.image.revision="$VCS_REF" \
       org.opencontainers.image.version="uv${UV_VERSION}-python${PYTHON_VERSION}" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.authors="Jon Crall <jon.crall@kitware.com>, Kitware Inc." \
       org.opencontainers.image.vendor="Kitware Inc." 
+
+  # Note: don't include the git hash for an image that does not depend on repo
+  # contents. It causes subsequent images to get rebuilt even if there is no
+  # change.
+  # org.opencontainers.image.url="$REPO_URL/-/blob/$VCS_REF/$DOCKERFILE_PATH" \
+  # org.opencontainers.image.revision="$VCS_REF" \
 
 #ARG CREATED=""
 # Note sure if we really want a created tag as it messes with hashes

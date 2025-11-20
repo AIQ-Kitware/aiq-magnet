@@ -17,7 +17,12 @@ from helm.benchmark.run_spec import RunSpec
 from helm.benchmark.metrics.statistic import Stat
 from helm.benchmark.metrics.metric import PerInstanceStats
 
-from typing import Generator, Self
+from typing import Generator
+
+try:
+    from typing import Self
+except ImportError:
+    from typing_extensions import Self
 
 from magnet.utils import util_pandas
 from magnet.utils import util_msgspec
