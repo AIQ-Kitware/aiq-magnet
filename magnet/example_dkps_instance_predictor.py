@@ -103,6 +103,17 @@ class DKPSInstancePredictor(InstancePredictor):
         eval_scenario_state_df = sequestered_test_split.scenario_state
 
         # --
+        # Throw out instances that aren't in the eval set
+        
+        instance_ids = eval_scenario_state_df['scenario_state.request_states.instance.id'].unique()
+        
+        sel = train_instance_stats_df['per_instance_stats.instance_id'].isin(instance_ids)
+        train_instance_stats_df = train_instance_stats_df[sel]
+        
+        sel = train_scenario_states_df['scenario_state.request_states.instance.id'].isin(instance_ids)
+        train_scenario_states_df = train_scenario_states_df[sel]
+        
+        # --
         # Convert to our format
         
         id2magnet = eval_scenario_state_df[['scenario_state.request_states.instance.id', 'magnet.instance_predict_id']]
@@ -155,10 +166,7 @@ class DKPSInstancePredictor(InstancePredictor):
         
         # --
         # Data checks
-        
-        instance_ids = df_train.instance_id.unique()
-        assert (instance_ids == df_valid.instance_id.unique()).all(), 'All instance_ids in the valid set must be in the train set'
-        
+                
         train_models    = df_train.model.unique()
         target_model    = df_valid.model.unique()[0]
         target_run_spec = df_valid[df_valid.model == target_model].run_spec.unique()[0]
@@ -226,7 +234,7 @@ if __name__ == "__main__":
         "--num-example-runs", default=50, type=int, help="Number of training runs used by DKPS.",
     )
     parser.add_argument(
-        "--num-eval-samples", default=10, type=int, help="Number of queries used by DKPS.",
+        "--num-eval-samples", default=8, type=int, help="Number of queries used by DKPS.",
     )
     parser.add_argument("--seed", default=1, type=int, help="Random seed to use.")
     

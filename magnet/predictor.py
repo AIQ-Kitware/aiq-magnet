@@ -103,15 +103,6 @@ class Predictor:
         _flags = _full_eval_per_instance_stats_df['per_instance_stats.instance_id'].isin(random_instance_ids)
         eval_per_instance_stats_df = _full_eval_per_instance_stats_df[_flags]
 
-        # <<
-        # [BKJ] sample training data
-        _flags = train_scenario_state_df['scenario_state.request_states.instance.id'].isin(random_instance_ids)
-        train_scenario_state_df = train_scenario_state_df[_flags]
-
-        _flags = train_per_instance_stats_df['per_instance_stats.instance_id'].isin(random_instance_ids)
-        train_per_instance_stats_df = train_per_instance_stats_df[_flags]
-        # >>
-
         train_split = TrainSplit(
             run_specs=train_run_specs_df,
             scenario_state=train_scenario_state_df,
