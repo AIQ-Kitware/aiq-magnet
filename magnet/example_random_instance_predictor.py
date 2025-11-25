@@ -28,8 +28,6 @@ class ExampleRandomInstancePredictor(InstancePredictor):
         eval_run_specs_df = sequestered_test_split.run_specs  # NOQA
         eval_scenario_state_df = sequestered_test_split.scenario_state
 
-        breakpoint()
-
         predictions = []
         for _, row in eval_scenario_state_df.iterrows():
             run_spec_name = row['run_spec.name']
