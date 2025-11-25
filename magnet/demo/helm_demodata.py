@@ -59,3 +59,30 @@ def ensure_helm_demo_outputs(**kwargs):
         stamp.renew()
 
     return dpath
+
+
+def grab_helm_demo_outputs():
+    """
+    Downloads offical pre-computed results instead of computing them
+    """
+    import ubelt as ub
+    from magnet.backends.helm import download_helm_results
+    base_dpath = ub.Path.appdir('magnet/tests/helm_output/downloaded').ensuredir()
+    stamp = ub.CacheStamp('helm_demo_downloads', depends=['version1'],
+                          dpath=base_dpath)
+    if stamp.expired():
+        download_helm_results.main(
+            argv=False,
+            download_dir=base_dpath,
+            benchmark='lite',
+            version='v1.13.0',
+            runs=[
+                'narrative_qa:model=amazon_nova-micro-v1:0',
+                'narrative_qa:model=amazon_nova-lite-v1:0',
+                'natural_qa:mode=closedbook,model=amazon_nova-lite-v1:0',
+                'natural_qa:mode=closedbook,model=deepseek-ai_deepseek-v3',
+            ],
+        )
+        stamp.renew()
+    dpath = base_dpath / 'lite'
+    return dpath

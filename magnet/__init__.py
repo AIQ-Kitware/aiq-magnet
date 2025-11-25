@@ -1,7 +1,19 @@
+"""
+MAGNET: Mathematical Assurance of Generative AI Network Evaluation Toolkit
+--------------------------------------------------------------------------
+
+MAGNET connects theoretical claims about AI model generalization to empirical
+validation through standardized evaluation cards.
+"""
+
 __autogen__ = (
     """
     mkinit ~/code/magnet-sys-exploratory/magnet/__init__.py --lazy-loader -w
     """)
+
+
+__version__ = '0.0.1'
+
 
 # Manually declare what should be exposed when regenerating with mkinit
 __submodules__ = {

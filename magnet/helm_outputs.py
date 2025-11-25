@@ -1,7 +1,12 @@
 """
 Object oriented classes to represent, load, and explore the outputs of helm
 benchmarks.
+
+TODO:
+    - [ ] move this file into the helm backend directory.
 """
+from __future__ import annotations
+import os
 import ubelt as ub
 import pandas as pd
 import kwutil
@@ -12,7 +17,7 @@ from helm.benchmark.run_spec import RunSpec
 from helm.benchmark.metrics.statistic import Stat
 from helm.benchmark.metrics.metric import PerInstanceStats
 
-from typing import Generator
+from typing import Generator, Self
 
 from magnet.utils import util_pandas
 from magnet.utils import util_msgspec
@@ -98,10 +103,87 @@ class HelmOutputs(ub.NiceRepr):
     """
 
     def __init__(self, root_dir):
+        """
+        Args:
+            root_dir (str | PathLike):
+                The benchmark output directory containing a runs folder with
+                multiple suites.
+        """
+        # TODO: Currently this should be a folder named "benchmark_output",
+        # I'm not sure that I like that as it makes the directory structure
+        # very inflexible. We might want to make this attribute protected so we
+        # can change it.
         self.root_dir = root_dir
 
     def __nice__(self):
         return self.root_dir
+
+    @classmethod
+    def coerce(cls, input) -> Self:
+        """
+        Convert some reasonable representation into a HelmOutputs object.
+
+        Args:
+            input (str | PathLike | HelmOutputs):
+                An existing HelmOutputs object or a path to the benchmark.
+                If the input is a path, it could be the path containing
+                benchmark_output/runs or one of those paths, and we will coerce
+                it to the expected input.
+
+        Returns:
+            HelmOutputs
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmOutputs.demo()
+            >>> assert HelmOutputs.coerce(self) is self, 'check inplace return'
+            >>> assert HelmOutputs.coerce(self.root_dir).root_dir == self.root_dir, 'check path coerce'
+            >>> assert HelmOutputs.coerce(self.root_dir / 'runs').root_dir == self.root_dir, 'check path coerce'
+            >>> assert HelmOutputs.coerce(self.root_dir.parent).root_dir == self.root_dir, 'check path coerce'
+        """
+        if isinstance(input, cls):
+            # Input is already a object of this type, return it inplace.
+            self = input
+        elif isinstance(input, (str, os.PathLike)):
+            # The input is a type of path, validate it pass it in as we expect.
+            root_dir = cls._coerce_input_path(input)
+            self = cls(root_dir)
+        else:
+            raise TypeError(f'Unable to coerce {type(input)}')
+        return self
+
+    @classmethod
+    def _coerce_input_path(cls, path):
+        """
+        HELM conventions expect that the input path to a set of suits looks
+        like ``<prefix>/benchmark_output/runs``, but specifying prefix with or
+        without either of the later two subdirectories is typically
+        unambiguous, thus we allow some flexibility in the inputs and resolve
+        them to something we expect.
+
+        Returns:
+            Path: the path ending with benchmark_output
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> self = HelmOutputs.demo()
+            >>> root = self.root_dir.parent
+            >>> result1 = HelmOutputs._coerce_input_path(root)
+            >>> result2 = HelmOutputs._coerce_input_path(root / 'benchmark_output')
+            >>> result3 = HelmOutputs._coerce_input_path(root / 'benchmark_output/runs')
+            >>> assert result1 == result2 == result3
+        """
+        path = ub.Path(path)
+        if path.name == 'benchmark_output':
+            return path
+        elif path.parts[-2:] == ('benchmark_output', 'runs'):
+            return path.parent
+        else:
+            candidate = path / 'benchmark_output'
+            if candidate.exists():
+                return candidate
+            else:
+                raise FileNotFoundError("Unable to find a directory that looks like HELM outputs")
 
     def write_directory_report(self):
         """
@@ -136,7 +218,6 @@ class HelmOutputs(ub.NiceRepr):
                     'num_train_trials': adapter_spec.num_train_trials,
                 })
 
-        import pandas as pd
         df = pd.DataFrame(rows)
         stats = df.describe().loc[['count', 'mean', 'std']]
         summary['num_suites'] = len(self._suite_dirs())
@@ -145,14 +226,19 @@ class HelmOutputs(ub.NiceRepr):
         return summary
 
     @classmethod
-    def demo(cls, **kwargs):
+    def demo(cls, method='compute', **kwargs) -> Self:
         import magnet
-        dpath = magnet.demo.ensure_helm_demo_outputs(**kwargs)
+        if method == 'compute':
+            dpath = magnet.demo.helm_demodata.ensure_helm_demo_outputs(**kwargs)
+        elif method == 'download':
+            dpath = magnet.demo.helm_demodata.grab_helm_demo_outputs(**kwargs)
+        else:
+            raise KeyError(method)
         root_dir = dpath / 'benchmark_output'
         self = cls(root_dir)
         return self
 
-    def suites(self, pattern='*'):
+    def suites(self, pattern='*') -> list[HelmSuite]:
         # Note sure if a property or method is best here
         # could do an implicit "view" system like CocoImageView
         # to give best of both worlds in terms of generator / lists but lets
@@ -187,7 +273,7 @@ class HelmSuite(ub.NiceRepr):
         >>> print(self)
         <HelmSuite(my-suite)>
         >>> print(self.runs())
-        <HelmSuiteRuns(4)>
+        <HelmRuns(4)>
     """
     def __init__(self, path):
         self.path = ub.Path(path)
@@ -197,12 +283,12 @@ class HelmSuite(ub.NiceRepr):
         return self.name
 
     @classmethod
-    def demo(cls):
+    def demo(cls) -> Self:
         self = HelmOutputs.demo().suites()[0]
         return self
 
     @classmethod
-    def coerce(cls, input):
+    def coerce(cls, input) -> Self:
         """
         Convert some reasonable representation of a HelmSuite into an object.
 
@@ -220,9 +306,8 @@ class HelmSuite(ub.NiceRepr):
             >>> assert HelmSuite.coerce(self) is self, 'check inplace return'
             >>> assert HelmSuite.coerce(self.path).path == self.path, 'check path coerce'
         """
-        import os
         if isinstance(input, cls):
-            # return in put inplace
+            # Input is already a suite object, return it inplace.
             self = input
         elif isinstance(input, (str, os.PathLike)):
             # input is likely a path to a suite, todo: could add validation
@@ -236,21 +321,30 @@ class HelmSuite(ub.NiceRepr):
         # determine that these directories are actually run specs?
         return sorted([p for p in (self.path).glob(pattern) if p.is_dir() if ':' in p.name])
 
-    def runs(self, pattern='*'):
+    def runs(self, pattern='*') -> HelmRuns:
         paths = self._run_dirs(pattern)
-        return HelmSuiteRuns(paths)
+        return HelmRuns(paths)
         # return [HelmRun(p) for p in self._run_dirs(pattern)]
 
 
-class HelmSuiteRuns(ub.NiceRepr):
+class HelmRuns(ub.NiceRepr):
     """
-    Represents multiple runs from a suite.
+    Represents multiple runs.
+
+    Stores a list of paths to HelmRuns, which may or may not be from the same
+    suite (although they often are).
+
+    Behaves similar to a ``List[HelmRun]``, but with convinience methods, and
+    potential optimizations.
+
+    SeeAlso:
+        :class:`HelmRun`
 
     Example:
         >>> from magnet.helm_outputs import *
-        >>> self = HelmSuiteRuns.demo()
+        >>> self = HelmRuns.demo()
         >>> print(self)
-        <HelmSuiteRuns(4)>
+        <HelmRuns(4)>
         >>> self.per_instance_stats()
         >>> self.run_spec()
         >>> self.scenario_state()
@@ -278,38 +372,39 @@ class HelmSuiteRuns(ub.NiceRepr):
         ])
 
     @classmethod
-    def coerce(cls, input):
+    def coerce(cls, input) -> Self:
         """
-        Convert some reasonable representation of a HelmSuiteRuns into an object.
+        Convert some reasonable representation of a HelmRuns into an object.
 
         Args:
-            input (str | PathLike | HelmSuite | HelmSuiteRuns | List[str | PathLike]):
-                An existing HelmSuiteRuns object, path to runs within a suite,
+            input (str | PathLike | HelmSuite | HelmRuns | List[str | PathLike]):
+                An existing HelmRuns object, path to runs within a suite,
                 a single run path, or a HelmSuite.
 
         Returns:
-            HelmSuiteRuns
+            HelmRuns
 
         Example:
             >>> from magnet.helm_outputs import *
-            >>> self = HelmSuiteRuns.demo()
-            >>> assert HelmSuiteRuns.coerce(self) is self, 'check inplace return'
-            >>> assert HelmSuiteRuns.coerce(self.paths).paths == self.paths, 'check coerce from List[path]'
-            >>> assert HelmSuiteRuns.coerce(self.paths[0]).paths == self.paths[0:1], 'check coerce from path'
-            >>> assert len(HelmSuiteRuns.coerce(HelmSuite.demo()).paths) > 2, 'check coerce from HelmSuite'
+            >>> self = HelmRuns.demo()
+            >>> assert HelmRuns.coerce(self) is self, 'check inplace return'
+            >>> assert HelmRuns.coerce(self.paths).paths == self.paths, 'check coerce from List[path]'
+            >>> assert HelmRuns.coerce(self.paths[0]).paths == self.paths[0:1], 'check coerce from path'
+            >>> assert len(HelmRuns.coerce(HelmSuite.demo()).paths) > 2, 'check coerce from HelmSuite'
         """
-        import os
         if isinstance(input, cls):
-            # return in put inplace
+            # return input inplace
             self = input
         elif isinstance(input, HelmSuite):
-            # return in put inplace
+            # input is a Suite, return the runs that belong to it.
             self = input.runs()
         elif isinstance(input, (str, os.PathLike)):
             # input is likely a path to a run, todo: could add validation
             # todo: determine if the path is more likely a run or a suite
             self = cls([ub.Path(input)])
         elif isinstance(input, list):
+            # Assume the input is a lit of paths corresponding to individual
+            # runs
             self = cls([ub.Path(p) for p in input])
         else:
             raise TypeError(f'Unable to coerce {type(input)}')
@@ -320,9 +415,12 @@ class HelmSuiteRuns(ub.NiceRepr):
         self = HelmOutputs.demo().suites()[0].runs()
         return self
 
-    def __getitem__(self, index):
+    def __getitem__(self, index) -> HelmSuiteRuns | HelmRun:
+        """
+        Return an slice of HelmSuiteRuns or a single HelmRun
+        """
         if isinstance(index, slice):
-            return HelmSuiteRuns(self.paths[index])
+            return HelmRuns(self.paths[index])
         else:
             return HelmRun(self.paths[index])
 
@@ -330,22 +428,22 @@ class HelmSuiteRuns(ub.NiceRepr):
         for index in range(len(self)):
             yield self[index]
 
-    def per_instance_stats(self):
+    def per_instance_stats(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.per_instance_stats() for r in self], axis=0)
         return table
 
-    def run_spec(self):
+    def run_spec(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.run_spec() for r in self], axis=0)
         return table
 
-    def scenario_state(self):
+    def scenario_state(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.scenario_state() for r in self], axis=0)
         return table
 
-    def stats(self):
+    def stats(self) -> util_pandas.DotDictDataFrame:
         # Could likely be quite a bit more efficient here
         table = pd.concat([r.dataframe.stats() for r in self], axis=0)
         return table
@@ -355,9 +453,24 @@ class HelmSuiteRuns(ub.NiceRepr):
 
 class _HelmRunJsonView:
     """
-    View that provides simple json readers
+    A view of a single HelmRun that provides simple json loading methods.
+
+    Note:
+        This can use different json backends, but orjson is fastest
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo().json
+        >>> per_instance_stats = self.per_instance_stats()
+        >>> stats = self.stats()
+        >>> spec = self.run_spec()
+        >>> scenario_state = self.scenario_state()
+        >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
+        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
+        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
     """
-    def __init__(self, parent, backend='orjson'):
+    def __init__(self, parent: HelmRun, backend='orjson'):
         self.parent = parent
         self.backend = backend  # can be ujson or stdlib, but orjson is fastest
 
@@ -419,12 +532,12 @@ class _HelmRunJsonView:
 
 class _HelmRunDataclassView:
     """
-    Helper to provide access to raw HELM data structures.
+    A view of a single HelmRun that will return raw HELM dataclasses from its
+    loader methods.
 
     Example:
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo().dataclass
-        >>> # Raw HELM objects
         >>> per_instance_stats = list(self.per_instance_stats())
         >>> stats = list(self.stats())
         >>> spec = self.run_spec()
@@ -434,7 +547,7 @@ class _HelmRunDataclassView:
         >>> print(f'spec = {ub.urepr(spec, nl=1)}')
         >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
     """
-    def __init__(self, parent):
+    def __init__(self, parent: HelmRun):
         self.parent = parent
 
     def per_instance_stats(self) -> Generator[PerInstanceStats, None, None]:
@@ -532,12 +645,13 @@ class _HelmRunDataclassView:
 
 class _HelmRunMsgspecView:
     """
-    Helper to provide access to raw HELM data structures.
+    A view of a single HelmRun that will return MsgSpec structures from its
+    loader methods. These are similar to the native HELM dataclasses, but they
+    often load much faster.
 
     Example:
         >>> from magnet.helm_outputs import *
         >>> self = HelmRun.demo().msgspec
-        >>> # Raw HELM objects
         >>> per_instance_stats = self.per_instance_stats()
         >>> stats = self.stats()
         >>> spec = self.run_spec()
@@ -547,7 +661,7 @@ class _HelmRunMsgspecView:
         >>> print(f'spec = {ub.urepr(spec, nl=1)}')
         >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
     """
-    def __init__(self, parent):
+    def __init__(self, parent: HelmRun):
         self.parent = parent
 
     def per_instance_stats(self) -> list[PerInstanceStatsStruct]:
@@ -619,7 +733,24 @@ class _HelmRunMsgspecView:
 
 
 class _HelmRunDataFrameView:
-    def __init__(self, parent):
+    """
+    A view of a single HelmRun that will return DataFrame objects
+    from its loader methods.
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmRun.demo().dataframe
+        >>> per_instance_stats = self.per_instance_stats()
+        >>> stats = self.stats()
+        >>> spec = self.run_spec()
+        >>> scenario_state = self.scenario_state()
+        >>> print(f'per_instance_stats = {ub.urepr(per_instance_stats, nl=1)}')
+        >>> print(f'stats = {ub.urepr(stats, nl=1)}')
+        >>> print(f'spec = {ub.urepr(spec, nl=1)}')
+        >>> print(f'scenario_state = {ub.urepr(scenario_state, nl=1)}')
+    """
+
+    def __init__(self, parent: HelmRun):
         self.parent = parent
 
     def per_instance_stats(self) -> util_pandas.DotDictDataFrame:
@@ -732,7 +863,7 @@ class HelmRun(ub.NiceRepr):
     Represents a single run in a suite.
 
     This provides output to postprocessed dataframe representations of HELM
-    objects. For access to raw HELM objects, use the ``raw`` attribute.
+    objects. For access to raw HELM objects, use the ``dataclass`` attribute.
 
     Note:
         The following is a list of json files that are in a helm run directory.
@@ -773,24 +904,17 @@ class HelmRun(ub.NiceRepr):
         self.path = ub.Path(path)
         self.name = self.path.name
 
-    @cached_property
-    def json(self):
+    @classmethod
+    def coerce(cls, input) -> Self:
         """
-        Access to direct JSON view
+        Handle input that presumably corresponds to a single HelmRun.
         """
-        return _HelmRunJsonView(self)
-
-    @cached_property
-    def _json_stdlib(self):
-        return _HelmRunJsonView(self, backend='stdlib')
-
-    @cached_property
-    def _json_orjson(self):
-        return _HelmRunJsonView(self, backend='orjson')
-
-    @cached_property
-    def _json_ujson(self):
-        return _HelmRunJsonView(self, backend='ujson')
+        if isinstance(input, cls):
+            return input
+        elif isinstance(input, (str, os.PathLike)):
+            return cls(input)
+        else:
+            raise TypeError(f'Unable to coerce {type(input)}')
 
     @cached_property
     def dataclass(self):
@@ -813,10 +937,38 @@ class HelmRun(ub.NiceRepr):
         """
         return _HelmRunDataFrameView(self)
 
+    @cached_property
+    def json(self):
+        """
+        Access to direct JSON view
+        """
+        return _HelmRunJsonView(self)
+
+    @cached_property
+    def _json_stdlib(self):
+        # Provides a json view with a force backend.
+        # Experimental, not part of the public API.
+        return _HelmRunJsonView(self, backend='stdlib')
+
+    @cached_property
+    def _json_orjson(self):
+        # Provides a json view with a force backend.
+        # Experimental, not part of the public API.
+        return _HelmRunJsonView(self, backend='orjson')
+
+    @cached_property
+    def _json_ujson(self):
+        # Provides a json view with a force backend.
+        # Experimental, not part of the public API.
+        return _HelmRunJsonView(self, backend='ujson')
+
     def __nice__(self):
         return self.name
 
-    def exists(self):
+    def exists(self) -> bool:
+        """
+        Determine if the expected json files for this run directory exist.
+        """
         return all(p.exists() for p in [
             # TODO: do we need to add scenario.json and per_instance_stats.json
             # What about the files from helm-summarize?
@@ -828,7 +980,7 @@ class HelmRun(ub.NiceRepr):
         ])
 
     @classmethod
-    def demo(cls):
+    def demo(cls) -> Self:
         suite = HelmOutputs.demo().suites()[0]
         self = suite.runs()[-1]
         return self
@@ -858,3 +1010,10 @@ class HelmRun(ub.NiceRepr):
         Dataframe representation of :class:`Stat`
         """
         return self.dataframe.stats()
+
+
+BACKWARDS_COMPATIBILITY = True
+if BACKWARDS_COMPATIBILITY:
+    # Assign backwards compatible aliaes
+    # TODO: provide deprecation notifications
+    HelmSuiteRuns = HelmRuns
