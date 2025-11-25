@@ -48,7 +48,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run example random per-instance predictor")
 
-    parser.add_argument('--helm_suite_path',
+    parser.add_argument('helm_suite_path',
                         type=str,
                         help="Path to HELM run outputs for a suite (usually 'something/something/benchmark_output/runs/suite_name')")
 
