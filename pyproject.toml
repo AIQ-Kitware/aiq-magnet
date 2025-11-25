@@ -38,7 +38,7 @@ dependencies = [
     "msgspec>=0.19.0",
     "rich>=14.1.0",
     "fsspec>=2024.9.0",
-    "pyyaml>=6.0.2",
+    "pyyaml>=6.0.2", "dkps @ git+https://github.com/jataware/dkps",
 ]
 
 [project.optional-dependencies]
@@ -81,6 +81,22 @@ norecursedirs = ".git build __pycache__ dev docs"
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 
+[tool.pixi.workspace]
+channels = ["conda-forge"]
+platforms = ["osx-arm64"]
+
+[tool.pixi.pypi-dependencies]
+aiq-magnet = { path = ".", editable = true }
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+optional = { features = ["optional"], solve-group = "default" }
+tests = { features = ["tests"], solve-group = "default" }
+
+[tool.pixi.tasks]
+
+[tool.pixi.dependencies]
+httpx = ">=0.28.1,<0.29"
 
 [tool.ruff.format]
 quote-style = "single"
