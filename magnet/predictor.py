@@ -48,9 +48,6 @@ class Predictor:
     def prepare_all_dataframes(self, helm_run_paths):
         rng = kwarray.ensure_rng(self.random_seed, api='python')
 
-        # suite_output = HelmOutputs.coerce(helm_run_paths)
-        # coerced_runs = suite_output.runs()
-
         coerced_runs = HelmRuns.coerce(helm_run_paths)
 
         selected_runs = []
