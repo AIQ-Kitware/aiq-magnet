@@ -274,7 +274,8 @@ class HelmSuite(ub.NiceRepr):
 
     Example:
         >>> from magnet.helm_outputs import *
-        >>> self = HelmSuite.demo()
+        >>> root_dir = HelmOutputs.demo().root_dir
+        >>> self = HelmSuite(root_dir / 'runs/my-suite')
         >>> print(self)
         <HelmSuite(my-suite)>
         >>> print(self.runs())

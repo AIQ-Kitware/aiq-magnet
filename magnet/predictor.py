@@ -152,7 +152,7 @@ class Predictor:
         if legacy_args is not None:
             ub.schedule_deprecation(
                 modname='magnet', name='root_dir/suite', type='input arguments',
-                migration='Pass the full path to the suite instead',
+                migration='Pass the full path to the suite instead, which should take the form ``root_dir / "runs" / suite``',
                 deprecate='0.0.1', error='0.1.0', remove='0.2.0',
             )
             root_dir, suite = legacy_args
@@ -165,10 +165,15 @@ class Predictor:
             helm_suite_path = ub.Path(args[0])
         return helm_suite_path
 
-    def _run(self):
+    def _run(self, *args, **kwargs):
         raise NotImplementedError
 
     def __call__(self, *args, **kwargs):
+        """
+        Args:
+            helm_suite_path (str | PathLike):
+                path to the underlying suite directory
+        """
         return self._run(*args, **kwargs)
 
 
@@ -240,7 +245,7 @@ class RunPrediction:
 class RunPredictor(Predictor):
     def compare_predicted_to_actual(self, predicted_stats_df, eval_stats_df):
         perturbation_cols = [c for c in predicted_stats_df.columns
-                            if c.startswith('stats.name.perturbation')]
+                             if c.startswith('stats.name.perturbation')]
         join_cols = ['run_spec.name',
                      'stats.name.split',
                      'stats.name.name',
