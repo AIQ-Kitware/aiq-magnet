@@ -6,7 +6,7 @@ import ubelt as ub
 import pandas as pd
 import kwarray
 
-from magnet.helm_outputs import HelmSuite, HelmOutputs
+from magnet.helm_outputs import HelmOutputs, HelmRuns
 from magnet.data_splits import TestSplit, TrainSplit
 
 
@@ -37,21 +37,24 @@ class Predictor:
                 train_split, sequestered_test_split) -> Any:
         raise NotImplementedError
 
-    def prepare_predict_inputs(self, helm_suite_path):
+    def prepare_predict_inputs(self, helm_run_paths):
         # TODO: Is this unused? Can we remove it?
-        train_split, test_split = self.prepare_all_dataframes(helm_suite_path)
+        train_split, test_split = self.prepare_all_dataframes(helm_run_paths)
         sequestered_test_split = test_split.sequester()
 
         # predict method doesn't get `eval_stats_df`
         return train_split, sequestered_test_split
 
-    def prepare_all_dataframes(self, helm_suite_path):
+    def prepare_all_dataframes(self, helm_run_paths):
         rng = kwarray.ensure_rng(self.random_seed, api='python')
 
-        suite_output = HelmSuite.coerce(helm_suite_path)
+        # suite_output = HelmOutputs.coerce(helm_run_paths)
+        # coerced_runs = suite_output.runs()
+
+        coerced_runs = HelmRuns.coerce(helm_run_paths)
 
         selected_runs = []
-        for run in suite_output.runs():
+        for run in coerced_runs:
             if self.run_spec_filter(run.json.run_spec()):
                 selected_runs.append(run)
 
@@ -158,12 +161,14 @@ class Predictor:
             root_dir, suite = legacy_args
             # be flexiable about if benchmark_outputs is given or not
             root_dir = HelmOutputs._coerce_input_path(root_dir)
-            helm_suite_path = root_dir / 'runs' / suite
+            helm_runs_paths = root_dir / 'runs' / suite / '*'
         else:
             if len(kwargs) > 0 or len(args) > 1:
                 raise ValueError('Expected only one positional argument')
-            helm_suite_path = ub.Path(args[0])
-        return helm_suite_path
+            helm_runs_paths = ub.Path(args[0])
+
+        # Default includes all helm runs
+        return helm_runs_paths
 
     def _run(self, *args, **kwargs):
         raise NotImplementedError
@@ -171,8 +176,9 @@ class Predictor:
     def __call__(self, *args, **kwargs):
         """
         Args:
-            helm_suite_path (str | PathLike):
-                path to the underlying suite directory
+            helm_runs_paths (str):
+                A path path to the underlying suite directory or pattern
+                matching multiple run paths.
         """
         return self._run(*args, **kwargs)
 
@@ -288,8 +294,8 @@ class RunPredictor(Predictor):
         already have a predict function. For now I'm naming it _run, but I
         would like to find a better name.
         """
-        helm_suite_path = self._coerce_helm_suite_inputs(*args, **kwargs)
-        train_split, test_split = self.prepare_all_dataframes(helm_suite_path)
+        helm_run_paths = self._coerce_helm_suite_inputs(*args, **kwargs)
+        train_split, test_split = self.prepare_all_dataframes(helm_run_paths)
         sequestered_test_split = test_split.sequester()
         eval_stats_df = test_split.stats
 
