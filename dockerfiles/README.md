@@ -107,3 +107,64 @@ LATEST_TAG=latest-dev PUSH_IMAGES=1 ./dockerfiles/magnet.build_and_publish.sh
 LATEST_TAG=latest-dev BASE_IMAGE=magnet:latest-dev PYTHON_VERSION=3.10 PUSH_IMAGES=0 ./dockerfiles/magnet-heim.build_and_publish.sh
 
 ```
+
+
+Developer deployment instructions:
+
+
+```bash
+
+export PUSH_IMAGES=1 
+
+export UV_BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+export PYTHON_VERSION=3.10
+export UV_VERSION=0.8.8
+# Build the UV image
+UV_VERSION=$UV_VERSION \
+PYTHON_VERSION=$PYTHON_VERSION \
+BASE_IMAGE=$UV_BASE_IMAGE \
+    ./dockerfiles/uv.build_and_publish.sh
+
+UV_IMAGE_QUALNAME=uv:${UV_VERSION}-python${PYTHON_VERSION}-${UV_BASE_IMAGE} \
+
+# Build the magnet image
+BASE_IMAGE=$UV_IMAGE_QUALNAME \
+    ./dockerfiles/magnet.build_and_publish.sh
+
+MAGNET_GITREF=c815d1e47a7f
+MAGNET_IMAGE_QUALNAME=magnet:$MAGNET_GITREF-uv${UV_VERSION}-python${PYTHON_VERSION}-${UV_BASE_IMAGE} \
+
+# Build the magnet+HEIM image
+HELM_REMOTE=https://github.com/AIQ-Kitware/helm.git \
+HELM_GIT_REF=explicit_plugins \
+BASE_IMAGE=magnet:c815d1e47a7f-uv0.8.8-python3.10-cuda12.4.1-cudnn-devel-ubuntu22.04 \
+    ./dockerfiles/magnet-heim.build_and_publish.sh
+
+
+```
+
+
+```
+
+Multiple UV Versions
+
+export UV_BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+export PYTHON_VERSION=3.11
+export UV_VERSION=0.8.8
+# Build the UV image
+UV_VERSION=$UV_VERSION \
+PYTHON_VERSION=$PYTHON_VERSION \
+BASE_IMAGE=$UV_BASE_IMAGE \
+    ./dockerfiles/uv.build_and_publish.sh
+
+
+export UV_BASE_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+export PYTHON_VERSION=3.13
+export UV_VERSION=0.8.8
+# Build the UV image
+UV_VERSION=$UV_VERSION \
+PYTHON_VERSION=$PYTHON_VERSION \
+BASE_IMAGE=$UV_BASE_IMAGE \
+    ./dockerfiles/uv.build_and_publish.sh
+
+```

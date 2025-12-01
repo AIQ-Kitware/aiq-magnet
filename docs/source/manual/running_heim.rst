@@ -52,7 +52,7 @@ Next we will build the docker images.
 Option 2: Pull Our HEIM Images
 ==============================
 
-docker pull docker.io/erotemic/magnet:latest-heim
+docker pull ghcr.io/aiq-kitware/magnet:latest-heim
 
 
 Running HEIM
