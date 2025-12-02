@@ -15,6 +15,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 * Switched to single argument path input for example predictors
 * Cleaned up predicted vs. actual code for predictors
 * HelmRuns.coerce can now accept a more expressive set of inputs
+* BREAKING: You must how specify `helm_runs` when calling the predictor.
 
 ### Fixed
 

@@ -399,8 +399,9 @@ class HelmRuns(ub.NiceRepr):
 
         Args:
             input (str | PathLike | HelmSuite | HelmRuns | List[str | PathLike]):
-                An existing HelmRuns object, path to runs within a suite,
-                a single run path, or a HelmSuite.
+                An existing HelmRuns object, path or glob pattern to runs
+                within a suite, a single run path, or a patterened path
+                coercable.
 
         Returns:
             HelmRuns
@@ -419,16 +420,9 @@ class HelmRuns(ub.NiceRepr):
         elif isinstance(input, HelmSuite):
             # input is a Suite, return the runs that belong to it.
             self = input.runs()
-        elif isinstance(input, (str, os.PathLike)):
-            # input is likely a path to a run, todo: could add validation
-            # todo: determine if the path is more likely a run or a suite
+        elif isinstance(input, (list, str, os.PathLike)):
             run_paths = cls._coerce_from_patterned_paths(input)
             self = cls(run_paths)
-            # self = cls([ub.Path(input)])
-        elif isinstance(input, list):
-            # Assume the input is a lit of paths corresponding to individual
-            # runs
-            self = cls([ub.Path(p) for p in input])
         else:
             raise TypeError(f'Unable to coerce {type(input)}')
         return self
@@ -436,69 +430,55 @@ class HelmRuns(ub.NiceRepr):
     @classmethod
     def _coerce_from_patterned_paths(cls, input):
         """
-        Coerce helper that determines a set of run directories
-        based on if the input specifies:
-
-            * A path to a set of HELM outputs with multiple suites
-            * A pattern matching a specific set of helm suites
-            * A pattern matching a specific set of HELM runs
+        Coerce helper that determines a set of run directories based on if the
+        input specifies a pattern matching a specific set of HELM runs.
 
         Args:
             input (str | PathLike | List[str | PathLike]):
-                One or more paths or path patterns that resolve
-                to a set of helm outputs, suites, or individual runs.
+                One or more paths or path patterns that resolve to a set of
+                helm runs.
 
         Example:
             >>> from magnet.helm_outputs import *
             >>> root_dir = HelmOutputs.demo().root_dir
             >>> #
-            >>> # Test coerce from full helm output patterns
-            >>> outputs_coercable = [
+            >>> # Test coerce from run-path-patterns
+            >>> cases = [
+            >>>     {'num_expect': 1, 'input': root_dir / 'runs' / 'my-suite/mmlu:subject=anatomy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0'},
+            >>>     {'num_expect': 2, 'input': root_dir / 'runs' / 'my-suite/*subject=philosophy*'},
+            >>>     {'num_expect': 2, 'input': root_dir / 'runs' / 'my-suite/*subject=anatomy*'},
+            >>>     {'num_expect': 4, 'input': root_dir / 'runs' / 'my-suite/*:*'},
+            >>>     {'num_expect': 8, 'input': root_dir / 'runs' / '*/*:*'},
+            >>> ]
+            >>> for case in cases:
+            >>>     input = case['input']
+            >>>     run_paths = HelmRuns._coerce_from_patterned_paths(input)
+            >>>     print(f'case = {ub.urepr(case, nl=1)}')
+            >>>     print(f'run_paths = {ub.urepr(run_paths, nl=1)}')
+            >>>     assert len(run_paths) == case['num_expect'], f'Error in case={case}, Got {len(run_paths)}'
+            >>> #
+            >>> # Test that other directory types DONT coerce
+            >>> import pytest
+            >>> invalid_inputs = [
             >>>     root_dir.parent,
             >>>     root_dir,
-            >>>     root_dir / 'runs'
-            >>> ]
-            >>> for input in outputs_coercable:
-            >>>     run_paths = HelmRuns._coerce_from_patterned_paths(input)
-            >>>     print(len(run_paths))
-            >>> #
-            >>> # Test coerce from suite-patterns
-            >>> suite_coercable = [
+            >>>     root_dir / 'runs',
             >>>     root_dir / 'runs' / '*',
             >>>     root_dir / 'runs' / 'my-suite',
             >>> ]
-            >>> for input in suite_coercable:
-            >>>     run_paths = HelmRuns._coerce_from_patterned_paths(input)
-            >>>     print(len(run_paths))
-            >>> #
-            >>> # Test coerce from run-path-patterns
-            >>> run_coercable = [
-            >>>     root_dir / 'runs' / 'my-suite/*:*',
-            >>>     root_dir / 'runs' / 'my-suite/*subject=anatomy*',
-            >>>     root_dir / 'runs' / 'my-suite/*subject=philosophy*',
-            >>>     root_dir / 'runs' / 'my-suite/mmlu:subject=anatomy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0',
-            >>> ]
-            >>> for input in run_coercable:
-            >>>     run_paths = HelmRuns._coerce_from_patterned_paths(input)
-            >>>     print(len(run_paths))
+            >>> for input in invalid_inputs:
+            >>>     with pytest.raises(ValueError):
+            >>>         HelmRuns._coerce_from_patterned_paths(input)
         """
-        # Expand any patterns into a full list of paths, and then check if each
-        # one is a HelmOutput, a Suite directory, or an fully qualitifed run
-        # directory.
+        # Expand any patterns into a full list of paths, then check that they
+        # are all valid run paths.
         from kwutil.util_path import coerce_patterned_paths
         run_paths = []
         for path in coerce_patterned_paths(input):
-            if HelmOutputs._is_likely_a_helm_outputs_path(path):
-                # Input specifies a set of outputs.
-                outputs = HelmOutputs._coerce_input_path(input)
-                for suite in HelmOutputs.coerce(outputs).suites():
-                    run_paths.extend(suite.runs().paths)
-            elif HelmSuite._is_likely_a_suite_path(path):
-                run_paths.extend(HelmSuite(path).runs().paths)
-            elif HelmRun._is_likely_a_run_path(path):
+            if HelmRun._is_likely_a_run_path(path):
                 run_paths.append(path)
             else:
-                raise Exception(f'Could not determine the type of {path}')
+                raise ValueError(f'Did not recognize {path!r} as a run path')
         return run_paths
 
     @classmethod

@@ -12,11 +12,12 @@ class ExamplePerturbationPredictor(RunPredictor):
     Class to demonstrate a stat prediction algorithm based on strength of perturbation
 
     Example:
+        >>> from magnet.example_perturbation_predictor import *  # NOQA
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo(run_entries=["boolq:data_augmentation=misspelling_sweep,model=openai/gpt2"], max_eval_instances=20)
-        >>> suite_path = outputs.suites()[0].path
+        >>> helm_runs = outputs.suites()[0].runs()
         >>> predictor_instance = ExamplePerturbationPredictor(num_eval_samples=5)
-        >>> predictor_instance(suite_path)
+        >>> predictor_instance(helm_runs=helm_runs)
     """
 
     def predict(self,
@@ -74,18 +75,19 @@ class ExamplePerturbationPredictor(RunPredictor):
 
         return predictions
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run example perturbation predictor")
 
-    parser.add_argument('helm_suite_path',
+    parser.add_argument('helm_runs',
                         type=str,
-                        help="Path to HELM run outputs for a suite (usually 'something/something/benchmark_output/runs/suite_name')")
+                        help="Pattern matching the set of HELM runs to evaluate on")
 
     args = parser.parse_args()
 
     predictor_instance = ExamplePerturbationPredictor()
-    predictor_instance(args.helm_suite_path)
+    predictor_instance(helm_runs=args.helm_runs)
 
 
 if __name__ == "__main__":

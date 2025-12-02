@@ -10,11 +10,12 @@ class ExampleRandomPredictor(RunPredictor):
     Class to demonstrate a random stat prediction algorithm
 
     Example:
+        >>> from magnet.example_random_predictor import *  # NOQA
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo()
-        >>> suite_path = outputs.suites()[0].path
+        >>> helm_runs = outputs.suites()[0].runs()
         >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
-        >>> predictor_instance(suite_path)
+        >>> predictor_instance(helm_runs=helm_runs)
     """
     def predict(self,
                 train_split: TrainSplit,
@@ -43,18 +44,19 @@ class ExampleRandomPredictor(RunPredictor):
 
         return predictions
 
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run example random predictor")
 
-    parser.add_argument('helm_suite_path',
+    parser.add_argument('helm_runs',
                         type=str,
-                        help="Path to HELM run outputs for a suite (usually 'something/something/benchmark_output/runs/suite_name')")
+                        help="Pattern matching the set of HELM runs to evaluate on")
 
     args = parser.parse_args()
 
     predictor_instance = ExampleRandomPredictor()
-    predictor_instance(args.helm_suite_path)
+    predictor_instance(helm_runs=args.helm_runs)
 
 
 if __name__ == "__main__":

@@ -37,18 +37,18 @@ class Predictor:
                 train_split, sequestered_test_split) -> Any:
         raise NotImplementedError
 
-    def prepare_predict_inputs(self, helm_run_paths):
+    def prepare_predict_inputs(self, helm_runs):
         # TODO: Is this unused? Can we remove it?
-        train_split, test_split = self.prepare_all_dataframes(helm_run_paths)
+        train_split, test_split = self.prepare_all_dataframes(helm_runs)
         sequestered_test_split = test_split.sequester()
 
         # predict method doesn't get `eval_stats_df`
         return train_split, sequestered_test_split
 
-    def prepare_all_dataframes(self, helm_run_paths):
+    def prepare_all_dataframes(self, helm_runs):
         rng = kwarray.ensure_rng(self.random_seed, api='python')
 
-        coerced_runs = HelmRuns.coerce(helm_run_paths)
+        coerced_runs = HelmRuns.coerce(helm_runs)
 
         selected_runs = []
         for run in coerced_runs:
@@ -118,66 +118,37 @@ class Predictor:
         )
         return train_split, test_split
 
-    def _coerce_helm_suite_inputs(self, *args, **kwargs):
+    def _coerce_helm_runs(self, *args, helm_runs=None, **kwargs):
         """
-        The original API definition had the user give inputs as "root_dir" and
-        "suite", which is somewhat unintuitive because they are both parts of
-        what should be the same path, but two intermediate directories are
-        arbitrarilly removed. A better design would be to just path the full
-        path to the helm suite of interest and then break out path components
-        if we do need them.
-
-        To maintain backwards compatibility this function checks for the
-        2-input style argument and allows it to resolve to a HelmSuite, but
-        also allows for a single path to that suite to be given.
+        Gaurds the inputs to _evaluate to provide notifications about API
+        changes.
         """
-        legacy_args = None
-        if len(args) == 2:
-            legacy_args = args
-            if len(kwargs) > 0:
-                raise ValueError(ub.paragraph(
-                    '''
-                    input looked like legacy positional arguments, but extra
-                    information was given. This is not handled.
-                    '''))
-        elif set(kwargs) == {'root_dir', 'suite'}:
-            legacy_args = kwargs['root_dir'], kwargs['suite']
-            if len(args) > 0:
-                raise ValueError(ub.paragraph(
-                    '''
-                    input looked like legacy keyword arguments, but extra
-                    information was given. This is not handled.
-                    '''))
+        if len(args) > 0 or len(kwargs) > 0 or helm_runs is None:
+            raise ValueError(ub.paragraph(
+                '''
+                Usage of evaluate has changed.  To specify which HELM results
+                to work on, pass keyword arguments explicitly. Specifically,
+                pass ``helm_runs=<glob>`` as a glob pattern (or list of glob
+                patterns) that matches the runs of interest.
+                '''))
 
-        if legacy_args is not None:
-            ub.schedule_deprecation(
-                modname='magnet', name='root_dir/suite', type='input arguments',
-                migration='Pass the full path to the suite instead, which should take the form ``root_dir / "runs" / suite``',
-                deprecate='0.0.1', error='0.1.0', remove='0.2.0',
-            )
-            root_dir, suite = legacy_args
-            # be flexiable about if benchmark_outputs is given or not
-            root_dir = HelmOutputs._coerce_input_path(root_dir)
-            helm_runs_paths = root_dir / 'runs' / suite / '*'
-        else:
-            if len(kwargs) > 0 or len(args) > 1:
-                raise ValueError('Expected only one positional argument')
-            helm_runs_paths = ub.Path(args[0])
+        helm_runs = HelmRuns.coerce(helm_runs)
+        return helm_runs
 
-        # Default includes all helm runs
-        return helm_runs_paths
-
-    def _run(self, *args, **kwargs):
+    def _evaluate(self, helm_runs=None):
         raise NotImplementedError
 
     def __call__(self, *args, **kwargs):
         """
+        Execute the predictor evaluation
+
         Args:
-            helm_runs_paths (str):
+            helm_runs (str | PathLike | List[str | PathLike]):
                 A path path to the underlying suite directory or pattern
                 matching multiple run paths.
         """
-        return self._run(*args, **kwargs)
+        helm_runs = self._coerce_helm_runs(*args, **kwargs)
+        return self._evaluate(helm_runs=helm_runs)
 
 
 class RunPrediction:
@@ -284,19 +255,19 @@ class RunPredictor(Predictor):
                 sequestered_test_split) -> list[RunPrediction]:
         raise NotImplementedError
 
-    def _run(self, *args, **kwargs):
+    def _evaluate(self, helm_runs=None):
         """
-        Note: I like when __call__ corresponds to a named function (e.g.
-        forward in pytorch), but I'm not sure what to call it here as we
-        already have a predict function. For now I'm naming it _run, but I
-        would like to find a better name.
+        Execute the predictor evaluation
+
+        Args:
+            helm_runs (str | PathLike | List[str | PathLike]):
+                A path path to the underlying suite directory or pattern
+                matching multiple run paths.
         """
-        helm_run_paths = self._coerce_helm_suite_inputs(*args, **kwargs)
-        train_split, test_split = self.prepare_all_dataframes(helm_run_paths)
+        train_split, test_split = self.prepare_all_dataframes(helm_runs=helm_runs)
         sequestered_test_split = test_split.sequester()
         eval_stats_df = test_split.stats
 
-        # TODO: Move the encapsulated splits
         run_predictions = self.predict(train_split, sequestered_test_split)
         predicted_stats_df = RunPrediction.to_df(run_predictions)
 
