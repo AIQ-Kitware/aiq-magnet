@@ -436,6 +436,7 @@ class HelmRemoteStore:
         >>> print(f'runs = {ub.urepr(runs, nl=0)}')
 
     Example:
+        >>> # xdoctest: +REQUIRES(--slow)
         >>> # xdoctest: +REQUIRES(module:gcsfs)
         >>> # Test backends are the same
         >>> from magnet.backends.helm.download_helm_results import *  # NOQA
