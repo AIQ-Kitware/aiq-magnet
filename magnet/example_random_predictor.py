@@ -13,9 +13,9 @@ class ExampleRandomPredictor(RunPredictor):
         >>> from magnet.example_random_predictor import *  # NOQA
         >>> import magnet
         >>> outputs = magnet.HelmOutputs.demo()
-        >>> helm_runs = outputs.suites()[0].runs()
+        >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
-        >>> predictor_instance(helm_runs=helm_runs)
+        >>> predictor_instance(helm_suites=suite_path)
     """
     def predict(self,
                 train_split: TrainSplit,
@@ -49,14 +49,15 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run example random predictor")
 
-    parser.add_argument('helm_runs',
+    parser.add_argument('helm_suite_path',
                         type=str,
-                        help="Pattern matching the set of HELM runs to evaluate on")
+                        nargs='+',
+                        help="Path(s) or pattern to HELM run outputs for a suite (usually 'something/something/benchmark_output/runs/suite_name')")
 
     args = parser.parse_args()
 
     predictor_instance = ExampleRandomPredictor()
-    predictor_instance(helm_runs=args.helm_runs)
+    predictor_instance(helm_suites=args.helm_suite_path)
 
 
 if __name__ == "__main__":

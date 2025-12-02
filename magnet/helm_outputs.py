@@ -348,6 +348,204 @@ class HelmSuite(ub.NiceRepr):
         # return [HelmRun(p) for p in self._run_dirs(pattern)]
 
 
+class HelmSuites(ub.NiceRepr):
+    """
+    Represents multiple suites.
+
+    Stores a list of paths to HelmSuite directories, which may or may not be
+    from the same HelmOutputs root.
+
+    Behaves similar to a ``List[HelmSuite]``, but with convenience methods.
+
+    SeeAlso:
+        :class:`HelmSuite`
+        :class:`HelmRuns`
+
+    Example:
+        >>> from magnet.helm_outputs import *
+        >>> self = HelmSuites.demo()
+        >>> print(self)
+        <HelmSuites(1)...>
+        >>> list(self)
+        [<HelmSuite(my-suite)...>]
+        >>> runs = self.runs()
+        >>> print(runs)
+        <HelmRuns(4)>
+    """
+
+    def __init__(self, paths):
+        # Store the underlying suite directory paths
+        self.paths = list(paths)
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index) -> "HelmSuites | HelmSuite":
+        """
+        Return a slice of HelmSuites or a single HelmSuite
+        """
+        if isinstance(index, slice):
+            return HelmSuites(self.paths[index])
+        else:
+            return HelmSuite(self.paths[index])
+
+    def __iter__(self):
+        for index in range(len(self)):
+            yield self[index]
+
+    def existing(self) -> "HelmSuites":
+        """
+        Filter to only existing suite directories
+        """
+        return self.__class__([p for p in self.paths if ub.Path(p).is_dir()])
+
+    @classmethod
+    def coerce(cls, input) -> Self:
+        """
+        Convert some reasonable representation of multiple suites into an
+        object.
+
+        Args:
+            input (str | PathLike | HelmSuite | HelmOutputs |
+                   HelmSuites | List[str | PathLike | HelmSuite]):
+                An existing HelmSuites object, a HelmOutputs object, a single
+                HelmSuite, one or more suite paths or path patterns that
+                resolve to suites.
+
+        Returns:
+            HelmSuites
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> suites = HelmOutputs.demo().suites()
+            >>> paths = [s.path for s in suites]
+            >>> self = HelmSuites.coerce(paths)
+            >>> assert isinstance(self, HelmSuites)
+            >>> assert len(self) == len(suites)
+            >>> # coerce from a single HelmSuite
+            >>> one = HelmSuites.coerce(suites[0])
+            >>> assert len(one) == 1
+            >>> # coerce from patterned paths
+            >>> root_dir = HelmOutputs.demo().root_dir
+            >>> patterned = root_dir / 'runs' / '*'
+            >>> from_pattern = HelmSuites.coerce(patterned)
+            >>> assert len(from_pattern) >= 1
+        """
+        if isinstance(input, cls):
+            # Input is already a HelmSuites object, return it inplace.
+            self = input
+        elif isinstance(input, HelmOutputs):
+            # Input is a HelmOutputs, grab all suites under it.
+            suite_paths = [s.path for s in input.suites()]
+            self = cls(suite_paths)
+        elif isinstance(input, HelmSuite):
+            # Single suite -> single-element collection
+            self = cls([input.path])
+        elif isinstance(input, list):
+            suite_paths = cls._coerce_from_patterned_paths(input)
+            self = cls(suite_paths)
+        elif isinstance(input, (str, os.PathLike)):
+            # Single path or pattern
+            suite_paths = cls._coerce_from_patterned_paths(input)
+            self = cls(suite_paths)
+        else:
+            raise TypeError(f'Unable to coerce {type(input)}')
+        return self
+
+    @classmethod
+    def _coerce_from_patterned_paths(cls, input):
+        """
+        Coerce helper that determines a set of suite directories based on if
+        the input specifies a pattern matching a specific set of HELM suites.
+
+        Args:
+            input (str | PathLike | List[str | PathLike]):
+                One or more paths or path patterns that resolve to suite
+                directories (i.e. parent directories of runs).
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> root_dir = HelmOutputs.demo().root_dir
+            >>> #
+            >>> # Test coerce from suite-path-patterns
+            >>> cases = [
+            >>>     {'num_expect': 1, 'input': root_dir / 'runs' / 'my-suite'},
+            >>>     {'num_expect': 1, 'input': root_dir / 'runs' / '*suite*'},
+            >>>     {'num_expect': 2, 'input': root_dir / 'runs' / '*'},
+            >>> ]
+            >>> for case in cases:
+            >>>     input = case['input']
+            >>>     suite_paths = HelmSuites._coerce_from_patterned_paths(input)
+            >>>     print(f'case = {ub.urepr(case, nl=1)}')
+            >>>     print(f'suite_paths = {ub.urepr(suite_paths, nl=1)}')
+            >>>     assert len(suite_paths) == case['num_expect'], (
+            >>>         f'Error in case={case}, Got {len(suite_paths)}'
+            >>>     )
+            >>> #
+            >>> # Test that other directory types DONT coerce
+            >>> import pytest
+            >>> invalid_inputs = [
+            >>>     root_dir.parent,
+            >>>     root_dir,
+            >>>     root_dir / 'runs',
+            >>> ]
+            >>> for input in invalid_inputs:
+            >>>     with pytest.raises(ValueError):
+            >>>         HelmSuites._coerce_from_patterned_paths(input)
+        """
+        from kwutil.util_path import coerce_patterned_paths
+        suite_paths = []
+        for path in coerce_patterned_paths(input):
+
+            # TODO: decide if we want to change the semantics here.
+            # We could exclude "latest" by default, or allow a blocklist.
+            # We could just check for is_dir and name != latest like
+            # outputs does instead of using _is_likely_a_suite_path
+            # unsure what the right answer is.
+            path = ub.Path(path)
+            if HelmSuite._is_likely_a_suite_path(path):
+                suite_paths.append(path)
+            else:
+                raise ValueError(f'Did not recognize {path!r} as a suite path')
+        # Keep deterministic order
+        suite_paths = sorted(suite_paths)
+        return suite_paths
+
+    @classmethod
+    def demo(cls) -> Self:
+        """
+        Construct a demo HelmSuites object using the demo HelmOutputs.
+        """
+        outputs = HelmOutputs.demo()
+        suite_paths = [s.path for s in outputs.suites()]
+        self = cls(suite_paths)
+        return self
+
+    def runs(self, pattern='*') -> "HelmRuns":
+        """
+        Collect all runs across all suites in this collection.
+
+        Args:
+            pattern (str):
+                Glob pattern applied within each suite directory to select
+                run directories.
+
+        Returns:
+            HelmRuns
+
+        Example:
+            >>> from magnet.helm_outputs import *
+            >>> suites = HelmSuites.demo()
+            >>> runs = suites.runs()
+            >>> assert len(runs) >= 1
+        """
+        run_paths = []
+        for suite_path in self.paths:
+            suite = HelmSuite(suite_path)
+            run_paths.extend(suite._run_dirs(pattern))
+        return HelmRuns(run_paths)
+
+
 class HelmRuns(ub.NiceRepr):
     """
     Represents multiple runs.

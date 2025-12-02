@@ -6,7 +6,7 @@ import ubelt as ub
 import pandas as pd
 import kwarray
 
-from magnet.helm_outputs import HelmOutputs, HelmRuns
+from magnet.helm_outputs import HelmRuns, HelmSuites
 from magnet.data_splits import TestSplit, TrainSplit
 
 
@@ -118,12 +118,13 @@ class Predictor:
         )
         return train_split, test_split
 
-    def _coerce_helm_runs(self, *args, helm_runs=None, **kwargs):
+    def _coerce_helm_runs(self, *args, helm_runs=None, helm_suites=None, **kwargs):
         """
         Gaurds the inputs to _evaluate to provide notifications about API
         changes.
         """
-        if len(args) > 0 or len(kwargs) > 0 or helm_runs is None:
+        num_input_specified = sum(_ is not None for _ in [helm_runs, helm_suites])
+        if len(args) > 0 or len(kwargs) > 0 or num_input_specified == 0:
             raise ValueError(ub.paragraph(
                 '''
                 Usage of evaluate has changed.  To specify which HELM results
@@ -132,7 +133,14 @@ class Predictor:
                 patterns) that matches the runs of interest.
                 '''))
 
-        helm_runs = HelmRuns.coerce(helm_runs)
+        if num_input_specified > 1:
+            raise ValueError('Specify only one of helm_runs or helm_suites')
+
+        if helm_runs is not None:
+            helm_runs = HelmRuns.coerce(helm_runs)
+        elif helm_suites is not None:
+            helm_suites = HelmSuites.coerce(helm_suites)
+            helm_runs = helm_suites.runs()
         return helm_runs
 
     def _evaluate(self, helm_runs=None):
@@ -144,8 +152,12 @@ class Predictor:
 
         Args:
             helm_runs (str | PathLike | List[str | PathLike]):
-                A path path to the underlying suite directory or pattern
+                A path path to the underlying directory or pattern
                 matching multiple run paths.
+
+            helm_suites (str | PathLike | List[str | PathLike]):
+                A path path to the underlying directory or pattern
+                matching multiple suite paths. All runs will be included.
         """
         helm_runs = self._coerce_helm_runs(*args, **kwargs)
         return self._evaluate(helm_runs=helm_runs)
