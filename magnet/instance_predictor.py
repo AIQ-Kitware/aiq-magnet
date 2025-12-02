@@ -85,9 +85,11 @@ class InstancePredictor(Predictor):
         selected = merged[vantage]
         human_table = selected.rename(human_mapping, axis=1)
         # More human readable float
-        human_table.round(3)
+        rounded_human_table = human_table.round(3)
 
-        rich.print(escape(human_table.to_string()))
+        rich.print(escape(rounded_human_table.to_string()))
+
+        return human_table
 
     def predict(self,
                 train_split,
