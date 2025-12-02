@@ -94,8 +94,8 @@ class InstancePredictor(Predictor):
                 sequestered_test_split) -> list[InstancePrediction]:
         raise NotImplementedError
 
-    def prepare_all_dataframes(self, helm_suite_path):
-        train_split, test_split = super().prepare_all_dataframes(helm_suite_path)
+    def prepare_all_dataframes(self, helm_runs):
+        train_split, test_split = super().prepare_all_dataframes(helm_runs)
 
         eval_instance_stats_df = test_split.per_instance_stats
 
@@ -138,9 +138,16 @@ class InstancePredictor(Predictor):
 
         return train_split, test_split
 
-    def _run(self, *args, **kwargs):
-        helm_suite_path = self._coerce_helm_suite_inputs(*args, **kwargs)
-        train_split, test_split = self.prepare_all_dataframes(helm_suite_path)
+    def _evaluate(self, helm_runs=None):
+        """
+        Execute the predictor evaluation
+
+        Args:
+            helm_runs (str | PathLike | List[str | PathLike]):
+                A path path to the underlying suite directory or pattern
+                matching multiple run paths.
+        """
+        train_split, test_split = self.prepare_all_dataframes(helm_runs=helm_runs)
         sequestered_test_split = test_split.sequester()
         eval_instance_stats_df = test_split.per_instance_stats
 
