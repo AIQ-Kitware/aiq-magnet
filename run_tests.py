@@ -11,6 +11,7 @@ if __name__ == '__main__':
         '--cov-report', 'term',
         '--xdoctest',
         '--cov=' + mod_name,
+        '--durations', '5',
         mod_dpath, test_dpath
     ]
     pytest_args = pytest_args + sys.argv[1:]
