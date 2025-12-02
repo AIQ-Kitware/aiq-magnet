@@ -1,7 +1,7 @@
 import builtins
 from graphlib import TopologicalSorter
 from itertools import product
-from typing import Any, Dict, List, Tuple, get_origin, get_args
+from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
 import yaml
 import argparse
 
@@ -27,36 +27,68 @@ class EvaluationCard:
         self.description = cfg.get("description", "")
 
         self.claim = Claim(cfg.get("claim"))
-        self.symbols = Symbols(cfg.get("symbols", {}))
+        self.symbols = cfg.get("symbols", {})
 
-    def evaluate(self) -> tuple:
+        self.evaluations = []
+
+    def status(self) -> str:
+        """
+        Declaration of card state, whether not started, in progress, or complete
+        """
+        if len(self.evaluations) == 0:
+            return "UNEVALUTED"
+        
+        not_evaluated_count = sum([evaluation.claim.status == "UNVERIFIED" for evaluation in self.evaluations]) 
+        percent_not_evaluated = not_evaluated_count / len(self.evaluations)
+
+        if percent_not_evaluated == 0:
+            return "EVALUATED"
+        else:
+            return f"{percent_not_evaluated:.2f} REMAINING"   
+
+    def evaluate(self):
         """
         Run the evaluation specification
 
         1. Resolve symbol definitions
         2. Evaluate claim under symbol values
+        3. Summarize general finding
         """
-        # Could log requests from here (i.e. timestamps), I think this was done in other code segments
-        self.symbols.resolve()
+        self.evaluations = self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
 
-        aggregate_results = []
-        for symbol_assignment in self.symbols():
-            # FIXME: propagate failure parameters
-            results, _ = self.claim.evaluate(symbol_assignment)
+        results = []
+        for evaluation in self.evaluations:
+            status, _ = evaluation.execute()
+            results.append(status)
 
-            aggregate_results.append(results)
-
-        total = len(self.symbols())
+        total = len(self.evaluations)
         percentage = lambda count: count / total
+
+        verified_count = results.count('VERIFIED')
+        falsified_count = results.count('FALSIFIED')
+        inconclusive_count = results.count('INCONCLUSIVE')
 
         print("================================")
         print(f"Settings Evaluated: {total}")
-        print(f"  Verified:     {percentage(aggregate_results.count('VERIFIED')):.2f}")
-        print(f"  Falsified:    {percentage(aggregate_results.count('FALSIFIED')):.2f}")
-        print(f"  Inconclusive: {percentage(aggregate_results.count('INCONCLUSIVE')):.2f}")
+        print(f"  Verified:     {percentage(verified_count):.2f}")
+        print(f"  Falsified:    {percentage(falsified_count):.2f}")
+        print(f"  Inconclusive: {percentage(inconclusive_count):.2f}")
         print("================================")
+        print('\n')
 
-        return self.claim.status #, aggregate_results
+        card_result = ''
+        if falsified_count: 
+            card_result = 'FALSIFIED'
+        elif inconclusive_count:
+            card_result = 'INCONCLUSIVE'
+        else:
+            card_result = 'VERIFIED'
+
+        self.claim.status = card_result
+        return card_result
+        
+    def dispatch(self, flattened_sweep): #: List[Symbols]) -> List[EvaluationTask]:
+        return [EvaluationTask(Claim({'python': self.claim.claim}), symbols) for symbols in flattened_sweep]
 
     def summarize(self):
         """
@@ -65,10 +97,37 @@ class EvaluationCard:
         print(f"Title:       {self.title}")
         print(f"Description: {self.description}")
         print("================================")
-        print(f"SYMBOLS:     {self.symbols()}")
+        #print(f"SYMBOLS:     {self.symbols()}")
         print(f"CLAIM:       \n{self.claim}")
+
+        status = self.status()
+        if status == 'EVALUATED':
+            print("================================")
+            print(f"RESULT:      {self.claim.status}""")
+
         print("================================")
-        print(f"STATUS:      {self.claim.status}""") # TODO: Fix for parameter sweeps
+        print(f"CARD STATUS: {status}""")
+
+class EvaluationTask:
+    """
+    Singular submission from an Evaluation Card
+    """
+    def __init__(self, claim, symbols):
+        self.claim = claim
+        self.symbols = symbols
+
+    def execute(self) -> Tuple[str, str]:
+        self.symbols.resolve()
+        # x -> y -> z1 -> a1 -> res1
+        #           ...
+        #           zn -> an -> resn
+        # make sure x,y are done once / before sweep
+        return self.claim.evaluate(self.symbols())
+
+    def record_run(self):
+        # Could log requests from here (i.e. timestamps), I think this was done in other code segments
+        # timestamp, symbol value, claim result
+        raise NotImplementedError
 
 class Claim:
     """
@@ -107,20 +166,23 @@ class Claim:
             INCONCLUSIVE
         """
         try:
+            out_msg = ""
             exec(self.claim, symbols)
             self.status = "VERIFIED"
         except AssertionError as e:
             self.status = "FALSIFIED"
-            print(f"Assertion does not hold: {e}")
+            out_msg = f"Assertion does not hold: {e}"
         except NameError as e:
             self.status = "INCONCLUSIVE"
             # This doesn't guarantee the missing variable is a symbol
-            print(f"SymbolNotResolved: {e}")
+            out_msg = f"SymbolNotResolved: {e}"
         except Exception as e:
             self.status = "INCONCLUSIVE"
-            print(f"ERROR evaluating claim: {e}")
+            out_msg = f"ERROR evaluating claim: {e}"
         finally:
-            return self.status, symbols
+            if out_msg:
+                print(out_msg)
+            return self.status, out_msg
 
     def __repr__(self) -> str:
         return self.claim
@@ -154,6 +216,8 @@ class Symbol:
             exec(self.definition, context)
             if self._check_type(self.type, context[self.name]):
                 self.value = context[self.name]
+            else:
+                raise TypeError(f'{self.name}: {context[self.name]} is not {self.type}')
 
         return self.value
 
@@ -200,34 +264,33 @@ class Symbols:
         >>> from magnet.evaluation import Symbols
         >>> symbols = Symbols({'x': {'type': "List[int]", 'python': "x = [10]"}})
         >>> symbols()
-        [{'x': None}]
+        {'x': None}
         >>> symbols.resolve()
         >>> symbols()
-        [{'x': [10]}]
+        {'x': [10]}
     """
     def __init__(self, symbol_specs) -> None:
-        self.symbols = self._decompose_symbol_defs(symbol_specs)
+        self.symbols = {symbol: Symbol(symbol, definition) for symbol, definition in symbol_specs.items()}
 
-    def _decompose_symbol_defs(self, symbol_definitions) -> List[Dict[str, Symbol]]:
+    @classmethod
+    def decompose_symbol_defs(cls, symbol_definitions) -> List[Self]:
         """
-        Flatten sweep values into unique combinations of symbol values
+        Flatten sweep values into a list of resolvable Symbols
         """
         configurations = []
-        aggregate_configuration = {symbol: Symbol(symbol, definition) for symbol, definition in symbol_definitions.items()}
+        aggregate_configuration = cls(symbol_definitions)
 
-        sweep_symbols = self._find_sweep_symbols(aggregate_configuration)
+        sweep_symbols = aggregate_configuration._find_sweep_symbols()
         if sweep_symbols: 
             sweep_values = [sweep.sweep for sweep in sweep_symbols]
             combinations = product(*sweep_values)
             
-            from copy import deepcopy
             for combo in combinations:
-                # TODO: look into if product can maintain some naming
                 sweep_fill = dict(zip([symbol.name for symbol in sweep_symbols], combo))
-                editable = deepcopy(aggregate_configuration)
+                flattened_symbols = cls(symbol_definitions)
                 for k,v in sweep_fill.items():
-                    editable[k].value = v
-                configurations.append(editable)
+                    flattened_symbols.symbols[k].value = v
+                configurations.append(flattened_symbols)
         else:
             configurations.append(aggregate_configuration)
 
@@ -239,25 +302,24 @@ class Symbols:
 
         Values stored in Symbol instances
         """
-        for config in self.symbols:
-            symbol_definitions = {}
+        symbol_definitions = {}
 
-            for symbol in self._construct_dependency_order(config):
-                symbol_definitions[symbol] = config[symbol].eval(symbol_definitions.copy())
+        for symbol in self._construct_dependency_order():
+            symbol_definitions[symbol] = self.symbols[symbol].eval(symbol_definitions.copy())
         
-    def _find_sweep_symbols(self, symbol_definitions) -> List[Symbol]:
-        return [symbol for symbol in symbol_definitions.values() if symbol.sweep]
+    def _find_sweep_symbols(self) -> List[Symbol]:
+        return [symbol for symbol in self.symbols.values() if symbol.sweep]
 
-    def _construct_dependency_order(self, configuration) -> List[Symbol]:
+    def _construct_dependency_order(self) -> List[Symbol]:
         """
         Construct dependency order
         """
-        dependency_graph = {name: symbol.dependencies for name, symbol in configuration.items()}
+        dependency_graph = {name: symbol.dependencies for name, symbol in self.symbols.items()}
         sorter = TopologicalSorter(dependency_graph)
         return list(sorter.static_order())
 
     def __call__(self):
-        return [{symbol: configuration[symbol].value for symbol in configuration} for configuration in self.symbols]
+        return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
 
 def build_parser():
