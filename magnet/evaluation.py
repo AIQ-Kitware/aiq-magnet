@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
 import yaml
 import argparse
 
+from rich import print
+
 
 class EvaluationCard:
     """
@@ -37,14 +39,14 @@ class EvaluationCard:
         """
         if len(self.evaluations) == 0:
             return "UNEVALUTED"
-        
-        not_evaluated_count = sum([evaluation.claim.status == "UNVERIFIED" for evaluation in self.evaluations]) 
+
+        not_evaluated_count = sum([evaluation.claim.status == "UNVERIFIED" for evaluation in self.evaluations])
         percent_not_evaluated = not_evaluated_count / len(self.evaluations)
 
         if percent_not_evaluated == 0:
             return "EVALUATED"
         else:
-            return f"{percent_not_evaluated:.2f} REMAINING"   
+            return f"{percent_not_evaluated:.2f} REMAINING"
 
     def evaluate(self):
         """
@@ -77,7 +79,7 @@ class EvaluationCard:
         print('\n')
 
         card_result = ''
-        if falsified_count: 
+        if falsified_count:
             card_result = 'FALSIFIED'
         elif inconclusive_count:
             card_result = 'INCONCLUSIVE'
@@ -86,7 +88,7 @@ class EvaluationCard:
 
         self.claim.status = card_result
         return card_result
-        
+
     def dispatch(self, flattened_sweep): #: List[Symbols]) -> List[EvaluationTask]:
         return [EvaluationTask(Claim({'python': self.claim.claim}), symbols) for symbols in flattened_sweep]
 
@@ -94,19 +96,26 @@ class EvaluationCard:
         """
         Human-readable summary of card in its current state
         """
-        print(f"Title:       {self.title}")
-        print(f"Description: {self.description}")
+        print(f"[bold]Title:[/bold]       {self.title}")
+        print(f"[bold]Description:[/bold] {self.description}")
         print("================================")
         #print(f"SYMBOLS:     {self.symbols()}")
-        print(f"CLAIM:       \n{self.claim}")
+        print(f"[bold]CLAIM:[/bold]       \n{self.claim}")
 
         status = self.status()
+        if self.claim.status == 'VERIFIED':
+            claim_status_color = "green"
+        elif self.claim.status == 'FALSIFIED':
+            claim_status_color = "red"
+        else:
+            claim_status_color = "yellow"
+
         if status == 'EVALUATED':
             print("================================")
-            print(f"RESULT:      {self.claim.status}""")
+            print(f"[bold]RESULT:[/bold]      [bold][{claim_status_color}]{self.claim.status}[/{claim_status_color}][/bold]""")
 
         print("================================")
-        print(f"CARD STATUS: {status}""")
+        print(f"[bold]CARD STATUS:[/bold] {status}""")
 
 class EvaluationTask:
     """
@@ -281,10 +290,10 @@ class Symbols:
         aggregate_configuration = cls(symbol_definitions)
 
         sweep_symbols = aggregate_configuration._find_sweep_symbols()
-        if sweep_symbols: 
+        if sweep_symbols:
             sweep_values = [sweep.sweep for sweep in sweep_symbols]
             combinations = product(*sweep_values)
-            
+
             for combo in combinations:
                 sweep_fill = dict(zip([symbol.name for symbol in sweep_symbols], combo))
                 flattened_symbols = cls(symbol_definitions)
@@ -295,7 +304,7 @@ class Symbols:
             configurations.append(aggregate_configuration)
 
         return configurations
-    
+
     def resolve(self):
         """
         Trace dependency graph to resolve each symbol definition
@@ -306,7 +315,7 @@ class Symbols:
 
         for symbol in self._construct_dependency_order():
             symbol_definitions[symbol] = self.symbols[symbol].eval(symbol_definitions.copy())
-        
+
     def _find_sweep_symbols(self) -> List[Symbol]:
         return [symbol for symbol in self.symbols.values() if symbol.sweep]
 
