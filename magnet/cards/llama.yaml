@@ -14,20 +14,36 @@ symbols:
     value: 0.1
 
   base_model:
-    sweep: ['meta/llama-2-13b', 'meta/llama-2-70b', 'meta/llama-2-7b', 'meta/llama-3-70b', 'meta/llama-3-8b', 'meta/llama-65b']
+    sweep:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
 
   base_score:
     type: float
-    depends_on: ['base_model', 'exact_match_scores']
+    depends_on:
+      - base_model
+      - exact_match_scores
     python: |
       base_score = [(name, score) for name, score in exact_match_scores if name == base_model][0][1]
 
   comp_model:
-    sweep: ['meta/llama-2-13b', 'meta/llama-2-70b', 'meta/llama-2-7b', 'meta/llama-3-70b', 'meta/llama-3-8b', 'meta/llama-65b']
+    sweep:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
 
   comp_score:
     type: float
-    depends_on: ['comp_model', 'exact_match_scores']
+    depends_on:
+      - comp_model
+      - exact_match_scores
     python: |
       comp_score = [(name, score) for name, score in exact_match_scores if name == comp_model][0][1]
 
@@ -37,7 +53,8 @@ symbols:
 
   run_specs:
     type: object
-    depends_on: ['helm_runs_path']
+    depends_on:
+      - helm_runs_path
     python: |
       import ubelt as ub
       from magnet import HelmOutputs
@@ -57,7 +74,8 @@ symbols:
 
   exact_match_scores:
     type: List[Tuple[str, float]]
-    depends_on: ['run_specs']
+    depends_on:
+      - run_specs
     python: |
       # Get dataframe of results from runs
       run_stats = run_specs.stats()
