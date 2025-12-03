@@ -4,8 +4,31 @@ from itertools import product
 from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
 import yaml
 import argparse
+import sys
 
+import scriptconfig as scfg
 from rich import print
+
+
+class EvaluationConfig(scfg.DataConfig):
+    """
+    Resolve an Evaluation Card
+    """
+    __epilog__ = """
+    Usage:
+      ./evaluation.py <evaluation_card_path>
+
+    Examples:
+      # Show docs
+      python -m magnet.evaluation --help
+
+      # Run example card
+      python -m magnet.evaluation magnet/cards/simple.yaml
+    """
+
+    path = scfg.Value(
+        None, required=True, position=1, help='Path to evaluation card YAML'
+    )
 
 
 class EvaluationCard:
@@ -341,13 +364,18 @@ def build_parser():
     return parser
 
 
-def main():
-    parser = build_parser()
-    args = parser.parse_args()
+def main(argv=None, **kwargs):
+    args = EvaluationConfig.cli(
+        argv=argv, data=kwargs, strict=True, verbose='auto', special_options=False
+    )
 
     card = EvaluationCard(args.path)
     card.evaluate()
     card.summarize()
 
-if __name__ == "__main__":
-    main()
+
+__cli__ = EvaluationConfig
+__cli__.main = main
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
