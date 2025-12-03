@@ -158,10 +158,10 @@ A basic example for getting familar with the structure of an evaluation card is 
     """
 ```
 
-Alternatively, you can evaluate any evaluation card using the `magnet/evaluation.py` script. The following command evaluates the `simple.yaml` example card:
+Alternatively, you can evaluate any evaluation card using the `magnet evaluate` command. The following command evaluates the `simple.yaml` example card:
 
 ```
-python magnet/evaluation.py magnet/cards/simple.yaml
+magnet evaluate magnet/cards/simple.yaml
 ```
 
 In this example, we populate an `EvaluationCard` instance with the `simple.yaml` evaluation card, resolve the symbol values of the claim from their respective python definitions, and assert whether this claim was `VERIFIED` (true assertion), `FALSIFIED` (false assertion), or `INCONCLUSIVE` (failed). We can also call `.summarize()` to expose the contents of this card programmatically.
@@ -225,10 +225,10 @@ An example demonstration is provided below (assuming you've downloaded helm-lite
 ```
 At least one pair of models in the llama family do not satisify the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
 
-Optionally, you could evaluate this card using the `magnet/evaluation.py` script as follows:
+Optionally, you could evaluate this card using the `magnet evaluate` command as follows:
 
 ```
-python magnet/evaluation.py magnet/cards/llama.yaml
+magnet evaluate magnet/cards/llama.yaml
 ```
 
 (If you have not downloaded the entire helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
@@ -283,7 +283,7 @@ card.summarize()
 Or evaluate from the command line using:
 
 ```
-python magnet/evaluation.py path/to/mycard.yaml
+magnet evaluate path/to/mycard.yaml
 ```
 
 
