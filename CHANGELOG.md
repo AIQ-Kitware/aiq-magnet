@@ -9,6 +9,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 * Added per-instance predictor base class (`InstancePredictor`) and random example
 * User can now specify patterns to helm runs, suites, or all outputs as predictor input
+* Added symbol sweeping capability to evaluation card evaluator
+* Added modal CLI for `evaluation.py` script
 
 ### Changed
 
