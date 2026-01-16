@@ -76,6 +76,9 @@ docs = [
 magnet = "magnet.__main__:main"
 magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
 
+[project.entry-points."helm.run_specs"]
+run_specs = "magnet.backends.helm.run_specs"
+
 [tool.pytest.ini_options]
 addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
 norecursedirs = ".git build __pycache__ dev docs dockerfiles"
