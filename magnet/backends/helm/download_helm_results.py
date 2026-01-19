@@ -70,34 +70,35 @@ class DownloadHelmConfig(scfg.DataConfig):
 
     __epilog__ = """
     Usage:
-      ./download_helm_results.py <download_dir> [version]
-      ./download_helm_results.py dir=<download_dir> [version=latest] [benchmark=lite]
-      ./download_helm_results.py --list-benchmarks
-      ./download_helm_results.py --list-versions [--benchmark=lite]
+      magnet download helm <download_dir> <benchmark_pattern> <version_pattern>
+      magnet download helm --dir <download_dir> [--version <pattern|latest>] [--benchmark <pattern>] [--runs <pattern>]
+      magnet download helm --list-benchmarks
+      magnet download helm --list-versions [--benchmark <pattern>]
+      magnet download helm --list-runs [--benchmark <pattern>] [--version <pattern|latest>]
 
     Examples:
       # Show docs
-      python -m magnet.backends.helm.download_helm_results --help
+      magnet download helm --help
 
       # Explore
-      python -m magnet.backends.helm.download_helm_results --list-benchmarks
-      python -m magnet.backends.helm.download_helm_results --benchmark=lite --list-versions
-      python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.9.0 --list-runs
-      python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.9.0 --list-runs --runs "regex:.*subject=abstract.*model=.*llama.*"
-      python -m magnet.backends.helm.download_helm_results --benchmark=lite --version=v1.9.0 --list-runs --runs "
+      magnet download helm --list-benchmarks
+      magnet download helm --benchmark=lite --list-versions
+      magnet download helm --benchmark=lite --version=v1.9.0 --list-runs
+      magnet download helm --benchmark=lite --version=v1.9.0 --list-runs --runs "regex:.*subject=abstract.*model=.*llama.*"
+      magnet download helm --benchmark=lite --version=v1.9.0 --list-runs --runs "
           - wmt_14:language_pair=cs-en,model=meta_llama-*-vision*
           - narrative_qa:model=meta_llama-*-vision-instruct-turbo*
       "
 
-      # Download
-      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public
-      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=ewok
-      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.9.0
+      # Download (single benchmark/version)
+      magnet download helm /data/crfm-helm-public
+      magnet download helm /data/crfm-helm-public --benchmark=ewok
+      magnet download helm /data/crfm-helm-public --benchmark=lite --version=v1.9.0
+      magnet download helm /data/crfm-helm-public --benchmark=lite --version=v1.9.0 --runs "regex:math:subject=precalculus,.*istruct-turbo"
 
-      #
-      python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.9.0 --runs regex:math:subject=precalculus,.*istruct-turbo
-
-      python -m magnet.backends.helm.download_helm_results --dir=./data --version=latest --benchmark=lite
+      # Download (multi-benchmark / multi-version via patterns)
+      magnet download helm /data/crfm-helm-public --benchmark="lite|ewok" --version="v1.9.0|v1.10.0"
+      magnet download helm /data/crfm-helm-public --benchmark="regex:.*" --version="regex:.*"  # everything
 
     Notes:
       - Requires: fsspec or gsutil (Google Cloud SDK)
@@ -111,11 +112,21 @@ class DownloadHelmConfig(scfg.DataConfig):
     download_dir = scfg.Value(
         '', alias=['dir'], position=1, help='Destination directory'
     )
-    benchmark = scfg.Value('lite', position=2, help='Benchmark name (e.g., lite, helm)')
+    benchmark = scfg.Value(
+        'lite',
+        position=2,
+        help='Benchmark name (e.g., lite, helm, classic). Use a kwutil.MultiPattern for multi-select (e.g. "lite|ewok" or "regex:.*")',
+    )
     version = scfg.Value(
         'latest',
         position=3,
-        help='Benchmark version (e.g. v1.9.0). If "latest", will default to the most recent',
+        help='Benchmark version (e.g. v1.9.0). If latest/auto, uses most recent. You may also use a kwutil.MultiPattern to select multiple versions.',
+    )
+    stop_on_error = scfg.Value(
+        False,
+        isflag=True,
+        group='behavior',
+        help='When downloading multiple benchmarks/versions, stop on first error',
     )
 
     runs = scfg.Value(
@@ -186,8 +197,16 @@ class DownloadHelmConfig(scfg.DataConfig):
 
 
 class ExitError(RuntimeError):
-    def __init__(self, msg, code):
+    def __init__(self, msg: str, code: int):
         super().__init__(msg, code)
+    
+    @property
+    def msg(self) -> str:
+        return self.args[0]
+    
+    @property
+    def code(self) -> int:
+        return self.args[1]
 
 
 def eprint(*args, **kwargs):
@@ -302,7 +321,7 @@ class GsutilStorageBackend:
             cp = ub.cmd([gsutil_cmd, 'version'], verbose=verbose)
         except Exception:
             return False
-        out = (cp.stdout or '') + (cp.stderr or '')
+        out = str(cp.stdout or '') + str(cp.stderr or '')
         return bool(
             re.search(r'^gsutil version:', out, flags=re.IGNORECASE | re.MULTILINE)
         )
@@ -349,7 +368,7 @@ class GsutilStorageBackend:
         # Normalize to gs://...
         prefix = prefix.rstrip('/') + '/'
         cp = ub.cmd([self.gsutil, 'ls', prefix], verbose=0)
-        lines = [x.strip() for x in (cp.stdout or '').splitlines()]
+        lines = [x.strip() for x in str(cp.stdout or '').splitlines()]
         out = []
         # match 'gs://bucket/prefix/child/'
         pat = re.compile(rf'^{re.escape(prefix)}([^/]+)/?$')
@@ -564,6 +583,20 @@ def _version_key(v: str):
     return tuple(nums or [0])
 
 
+# If a selector contains any characters outside of this set, treat it as a
+# kwutil.MultiPattern (i.e. it can match multiple items).
+_SIMPLE_SELECTOR_RE = re.compile(r'^[\w\-.]+$')
+
+
+def _looks_like_single_selector(text: str) -> bool:
+    """Heuristic: if it only contains identifier-ish characters, treat as single value.
+
+    Any other characters (e.g. '*', ',', ':', '[', ']', whitespace) are
+    interpreted as a MultiPattern expression, which may match multiple items.
+    """
+    return bool(_SIMPLE_SELECTOR_RE.match(text or ''))
+
+
 def filter_runs(all_runs, runs):
     import kwutil
 
@@ -576,7 +609,7 @@ def _do_requested_download(storage, benchmark, version, dest, verbose, runs, che
     """
     Main download logic, either filtered or not.
     """
-    bucket_base = f'{storage.bucket}/{benchmark}/benchmark_output/runs'
+    bucket_base = storage._runs_root(benchmark)
     src = f'{bucket_base}/{version}'
 
     import subprocess
@@ -632,8 +665,9 @@ def main(argv=None, **kwargs) -> int:
     verbose = bool(args.verbose)
 
     import kwutil
+    benchmark_arg = args.benchmark
+    version_arg = args.version
 
-    benchmark = args.benchmark
     try:
         runs = kwutil.Yaml.coerce(args.runs, backend='pyyaml')
     except Exception:
@@ -648,62 +682,137 @@ def main(argv=None, **kwargs) -> int:
         eprint(ex.msg)
         return ex.code
 
+    # --- listing modes ---
     if args.list_benchmarks:
         for name in storage.list_benchmarks():
             print(name)
         return 0
+
+    def resolve_benchmarks(selector: str) -> List[str]:
+        """Resolve benchmark selector.
+
+        - If the selector looks like a single identifier, we assume it refers
+          to one benchmark and **avoid** listing benchmarks first.
+        - Otherwise, treat it as a kwutil.MultiPattern and match against the
+          available benchmarks.
+        """
+        selector = (selector or '').strip()
+        if _looks_like_single_selector(selector):
+            return [selector]
+        import kwutil
+        pat = kwutil.MultiPattern.coerce(selector)
+        all_benchmarks = storage.list_benchmarks()
+        return [b for b in all_benchmarks if pat.match(b)]
+
+    def resolve_versions(benchmark: str, selector: str) -> List[str]:
+        """Resolve version selector for a benchmark.
+
+        - 'latest' / 'auto' resolves to the most recent version.
+        - If it looks like a single identifier, treat as a single version.
+        - Otherwise treat as kwutil.MultiPattern and match against versions.
+        """
+        selector = (selector or '').strip()
+        if selector in {'latest', 'auto'}:
+            v = storage.latest_version(benchmark)
+            return [v] if v else []
+        if _looks_like_single_selector(selector):
+            return [selector]
+        import kwutil
+        pat = kwutil.MultiPattern.coerce(selector)
+        all_versions = storage.list_versions(benchmark)
+        return [v for v in all_versions if pat.match(v)]
+
+    # Resolve benchmarks set
+    benchmark_list = resolve_benchmarks(benchmark_arg)
+    if not benchmark_list:
+        eprint(f"No benchmarks matched selector '{benchmark_arg}'")
+        return 1
+
     if args.list_versions:
-        for v in storage.list_versions(benchmark):
-            print(v)
+        for benchmark in benchmark_list:
+            for version in storage.list_versions(benchmark):
+                # If listing many benchmarks, prefix to keep output unambiguous
+                if len(benchmark_list) > 1:
+                    print(f'{benchmark}	{version}')
+                else:
+                    print(version)
         return 0
 
-    # Resolve version if latest
-    version = args.version
-    if version in {'latest', 'auto'}:
-        eprint(
-            f"Resolving latest version for benchmark '{args.benchmark}' (backend={args.backend})..."
-        )
-        version = storage.latest_version(benchmark)
-        if not version:
-            eprint('Error: could not determine latest version (no runs found?).')
-            return 1
-        eprint(f'Using latest version: {version}')
-
+    # list-runs mode
     if args.list_runs:
-        all_runs = storage.list_runs(benchmark, version)
-        if runs:
-            matched = filter_runs(all_runs, runs)
-        else:
-            matched = all_runs
-        for v in matched:
-            print(v)
+        # Resolve versions per benchmark. If selector is a MultiPattern, it may
+        # match multiple versions.
+        for benchmark in benchmark_list:
+            version_list = resolve_versions(benchmark, version_arg)
+            for version in version_list:
+                all_runs = storage.list_runs(benchmark, version)
+                if runs:
+                    matched = filter_runs(all_runs, runs)
+                else:
+                    matched = all_runs
+                for r in matched:
+                    # Prefix with benchmark/version when output would otherwise be ambiguous.
+                    if len(benchmark_list) > 1 or len(version_list) > 1:
+                        print(f'{benchmark}\t{version}\t{r}')
+                    else:
+                        print(r)
         return 0
 
-    # Require a destination directory for sync
+    # --- download mode ---
     if not args.download_dir:
         eprint('Error: download directory not provided. Run with --help for usage')
         return 2
 
-    # TODO: probably should have the backend class handle this path stuff to
-    # keep the API at the level of benchmark (i.e. suite) name, versions, and
-    # run names.
-    bucket_base = f'{storage.bucket}/{benchmark}/benchmark_output/runs'
-    src = f'{bucket_base}/{version}'
     download_dir = ub.Path(args.download_dir)
-    dest_root = download_dir / benchmark / 'benchmark_output' / 'runs'
-    dest = dest_root / version
 
-    print(f'HELM benchmark: {args.benchmark}')
-    print(f'Version:        {version}')
-    print(f'Source:         {src}')
-    print(f'Destination:    {dest}')
-    print()
+    # Iterate benchmarks and versions
+    final_ret = 0
+    for benchmark in benchmark_list:
+        # Determine versions per benchmark (may match multiple when selector is a MultiPattern)
+        if version_arg in {'latest', 'auto'}:
+            eprint(
+                f"Resolving latest version for benchmark '{benchmark}' (backend={args.backend})..."
+            )
+        version_list = resolve_versions(benchmark, version_arg)
+        if not version_list:
+            if version_arg in {'latest', 'auto'}:
+                eprint(
+                    f"Error: could not determine latest version for benchmark '{benchmark}' (no runs found?)."
+                )
+                final_ret = 1
+                if args.stop_on_error:
+                    return final_ret
+                continue
+            else:
+                eprint(
+                    f"Warning: no versions matched selector '{version_arg}' for benchmark '{benchmark}'"
+                )
+                continue
 
-    # Idempotent sync
-    ret = _do_requested_download(
-        storage, benchmark, version, dest, verbose, runs, checksum
-    )
-    return ret
+        if version_arg in {'latest', 'auto'}:
+            eprint(f'Using latest version for {benchmark}: {version_list[0]}')
+
+        for version in version_list:
+            bucket_base = storage._runs_root(benchmark)
+            src = f'{bucket_base}/{version}'
+            dest_root = download_dir / benchmark / 'benchmark_output' / 'runs'
+            dest = dest_root / version
+
+            print(f'HELM benchmark: {benchmark}')
+            print(f'Version:        {version}')
+            print(f'Source:         {src}')
+            print(f'Destination:    {dest}')
+            print()
+
+            ret = _do_requested_download(
+                storage, benchmark, version, dest, verbose, runs, checksum
+            )
+            if ret != 0:
+                final_ret = ret
+                if args.stop_on_error:
+                    return final_ret
+
+    return final_ret
 
 __cli__ = DownloadHelmConfig
 __cli__.main = main
