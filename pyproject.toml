@@ -22,7 +22,7 @@ authors = [
 urls = { "Repository" = "https://github.com/AIQ-Kitware/aiq-magnet/" }
 requires-python = ">=3.10"
 dependencies = [
-    "crfm-helm>=0.5.8",
+    "crfm-helm @ git+https://github.com/AIQ-Kitware/helm@kitware-main",
     "pandas>=2.2.3",
     "dacite>=1.9.2",
     "ubelt>=1.3.8",
@@ -76,7 +76,7 @@ docs = [
 magnet = "magnet.__main__:main"
 magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
 
-[project.entry-points."helm.run_specs"]
+[project.entry-points.helm]
 run_specs = "magnet.backends.helm.run_specs"
 
 [tool.pytest.ini_options]
