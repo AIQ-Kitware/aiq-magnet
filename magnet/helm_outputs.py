@@ -648,7 +648,7 @@ class HelmRuns(ub.NiceRepr):
             >>>     {'num_expect': 2, 'input': root_dir / 'runs' / 'my-suite/*subject=philosophy*'},
             >>>     {'num_expect': 2, 'input': root_dir / 'runs' / 'my-suite/*subject=anatomy*'},
             >>>     {'num_expect': 4, 'input': root_dir / 'runs' / 'my-suite/*:*'},
-            >>>     {'num_expect': 8, 'input': root_dir / 'runs' / '*/*:*'},
+            >>>     {'num_expect': 4, 'input': root_dir / 'runs' / '*/*:*'},
             >>> ]
             >>> for case in cases:
             >>>     input = case['input']
