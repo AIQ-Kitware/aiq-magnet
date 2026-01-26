@@ -85,7 +85,6 @@ class HelmOutputs(ub.NiceRepr):
             │           └─╼  ...
             ├─╼ scenario_instances
             └─╼ runs: .size=4.00 KB,.files=1,json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
-                ├─╼ latest -> my-suite: size=4.00 KB
                 └─╼ my-suite: json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
                     ├─╼ runs_to_run_suites.json: size=0.36 KB
         ...
@@ -262,6 +261,7 @@ class HelmOutputs(ub.NiceRepr):
     def _suite_dirs(self, pattern='*'):
         # not robust to extra directories being written.  is there a way to
         # determine that these directories are actually suites?
+        # TODO: no longer need to handle latest.
         return [p for p in sorted((self.root_dir / 'runs').glob(pattern)) if p.is_dir() and p.name != 'latest']
 
     def list_suites(self):
@@ -471,7 +471,7 @@ class HelmSuites(ub.NiceRepr):
             >>> cases = [
             >>>     {'num_expect': 1, 'input': root_dir / 'runs' / 'my-suite'},
             >>>     {'num_expect': 1, 'input': root_dir / 'runs' / '*suite*'},
-            >>>     {'num_expect': 2, 'input': root_dir / 'runs' / '*'},
+            >>>     {'num_expect': 1, 'input': root_dir / 'runs' / '*'},  # was 2 for helm 0.5.11, but symlinks were removed
             >>> ]
             >>> for case in cases:
             >>>     input = case['input']
@@ -502,6 +502,8 @@ class HelmSuites(ub.NiceRepr):
             # We could just check for is_dir and name != latest like
             # outputs does instead of using _is_likely_a_suite_path
             # unsure what the right answer is.
+            # NOTE: latest was removed in
+            # https://github.com/stanford-crfm/helm/pull/3984
             path = ub.Path(path)
             if HelmSuite._is_likely_a_suite_path(path):
                 suite_paths.append(path)
@@ -646,7 +648,7 @@ class HelmRuns(ub.NiceRepr):
             >>>     {'num_expect': 2, 'input': root_dir / 'runs' / 'my-suite/*subject=philosophy*'},
             >>>     {'num_expect': 2, 'input': root_dir / 'runs' / 'my-suite/*subject=anatomy*'},
             >>>     {'num_expect': 4, 'input': root_dir / 'runs' / 'my-suite/*:*'},
-            >>>     {'num_expect': 8, 'input': root_dir / 'runs' / '*/*:*'},
+            >>>     {'num_expect': 4, 'input': root_dir / 'runs' / '*/*:*'},
             >>> ]
             >>> for case in cases:
             >>>     input = case['input']

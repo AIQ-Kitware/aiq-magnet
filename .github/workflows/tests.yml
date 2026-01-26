@@ -30,6 +30,7 @@ jobs:
       run: |-
         python -m pip install pip uv -U
         python -m uv pip install -r pyproject.toml --extra tests
+        python -m uv pip install -r requirements/runtime.txt
     - name: Build sdist
       shell: bash
       run: |-
@@ -205,6 +206,7 @@ jobs:
         echo "UV_RESOLUTION=$UV_RESOLUTION"
         echo "MOD_VERSION=$MOD_VERSION"
         python -m uv pip install --prerelease=allow "aiq-magnet[$INSTALL_EXTRAS]==$MOD_VERSION" -f wheelhouse
+        python -m uv pip install -r requirements/runtime.txt
         echo "Install finished."
     - name: Test wheel ${{ matrix.install-extras }}
       shell: bash
