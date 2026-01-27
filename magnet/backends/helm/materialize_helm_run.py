@@ -48,26 +48,68 @@ Usage (CLI)
 -----------
 Example (compute if missing):
 
+    # Download precomputed results
+    magnet download helm --benchmark=ewok \
+            --runs 'regex:.*physical_interactions.*meta.*' \
+            --download_dir=./local-crfm-helm-public
+
     python -m magnet.backends.helm.materialize_helm_run \
         --run_entry "mmlu:subject=philosophy,model=openai/gpt2" \
         --suite my-suite \
         --max_eval_instances 10 \
-        --out_dpath ./node_out \
-        --precomputed_roots /data/crfm-helm-public
+        --out_dpath ./local-results/node_out_1 \
+        --precomputed_roots ./local-crfm-helm-public
+
+    # This one should find the existing results in your precomputed directory
+    python -m magnet.backends.helm.materialize_helm_run \
+        --run_entry "ewok:domain=physical_interactions,model=meta/llama-3-8b-chat" \
+        --suite my-suite \
+        --max_eval_instances 10 \
+        --out_dpath ./local-results/node_out_2 \
+        --precomputed_roots ./local-crfm-helm-public
 
 The output directory will contain:
 
-    node_out/
-      benchmark_output/
-        runs/
-          my-suite/
-            <run_dir_name>/   (symlinked or computed run)
-              run_spec.json
-              scenario_state.json
-              stats.json
-              ...
-      adapter_manifest.json
-      DONE
+└── local-results
+    ├── node_out_1
+    │   ├── adapter_manifest.json
+    │   ├── benchmark_output
+    │   │   ├── runs
+    │   │   │   └── my-suite
+    │   │   │       ├── eval_cache
+    │   │   │       └── mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2
+    │   │   │           ├── per_instance_stats.json
+    │   │   │           ├── run_spec.json
+    │   │   │           ├── scenario.json
+    │   │   │           ├── scenario_state.json
+    │   │   │           └── stats.json
+    │   │   ├── scenario_instances
+    │   │   └── scenarios
+    │   │       └── mmlu
+    │   │           ├── data
+    │   │           │   ├── auxiliary_train
+    │   │           │   ├── dev
+    │   │           │   ├── possibly_contaminated_urls.txt
+    │   │           │   ├── README.txt
+    │   │           │   ├── test
+    │   │           │   └── val
+    │   │           └── data.lock
+    │   ├── DONE
+    │   └── prod_env
+    │       └── cache
+    │           └── huggingface.sqlite
+    └── node_out_2
+        ├── adapter_manifest.json
+        ├── benchmark_output
+        │   └── runs
+        │       └── my-suite
+        │           └── ewok:domain=physical_interactions,model=meta_llama-3-8b-chat -> ../../../../../local-crfm-helm-public/ewok/benchmark_output/runs/v1.0.0/ewok:domain=physical_interactions,model=meta_llama-3-8b-chat
+        └── DONE
+
+
+
+
+DEV: Testing that the symilnks work.
 
 Doctests
 --------
@@ -83,7 +125,13 @@ NOTES
 * We probably want to support calling HELM via docker to avoid environment
   issues. Punt on this until we need it.
 
+* TODO:
+    We might want to symlink the benchmark_output/scenarios directory to a
+    shared cache if many benchmarks are going to reuse scenarios. The backend
+    huggingface caches might make this unncesssary.
+
 """
+
 from __future__ import annotations
 
 import os
@@ -95,8 +143,9 @@ from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 import ubelt as ub
 import kwutil
 import scriptconfig as scfg
-import loguru
+import sys
 
+from loguru import logger
 
 # We rely on MAGNET's HELM output exploration helpers.
 # These are already present in aiq-magnet and know how to load / validate
@@ -119,54 +168,54 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
 
     suite = scfg.Value(
         None,
-        help="HELM suite name to use for output layout (and for helm-run --suite).",
+        help='HELM suite name to use for output layout (and for helm-run --suite).',
         tags=['algo_param'],
     )
 
     out_dpath = scfg.Value(
         None,
-        help="Output directory (kwdagger node output directory).",
+        help='Output directory (kwdagger node output directory).',
         tags=['out_path'],
     )
 
     precomputed_roots = scfg.Value(
         [],
         nargs='*',
-        help="0+ directories to search for existing HELM outputs (may contain nested benchmark_output dirs).",
+        help='0+ directories to search for existing HELM outputs (may contain nested benchmark_output dirs).',
         tags=['in_param'],
     )
 
     max_eval_instances = scfg.Value(
         None,
         type=int,
-        help="Treat as part of identity. If set, only reuse runs matching this instance count (when inferable).",
+        help='Treat as part of identity. If set, only reuse runs matching this instance count (when inferable).',
         tags=['algo_param'],
     )
 
     require_per_instance_stats = scfg.Value(
         True,
-        help="Require per_instance_stats.json to exist when reusing / validating outputs.",
+        help='Require per_instance_stats.json to exist when reusing / validating outputs.',
         tags=['algo_param'],
     )
 
     mode = scfg.Value(
         'compute_if_missing',
         choices=['reuse_only', 'compute_if_missing', 'force_recompute'],
-        help="reuse_only: never compute; compute_if_missing: reuse else run helm; force_recompute: always run helm.",
+        help='reuse_only: never compute; compute_if_missing: reuse else run helm; force_recompute: always run helm.',
         tags=['perf_param'],
     )
 
     materialize = scfg.Value(
         'symlink',
         choices=['symlink', 'copy'],
-        help="How to materialize reused outputs into out_dpath.",
+        help='How to materialize reused outputs into out_dpath.',
         tags=['perf_param'],
     )
 
     num_threads = scfg.Value(
         1,
         type=int,
-        help="Passed to helm-run --num-threads.",
+        help='Passed to helm-run --num-threads.',
         tags=['perf_param'],
     )
 
@@ -177,15 +226,27 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
     #     tags=['algo_param'],
     # )
 
+    # log_level = scfg.Value(
+    #     'INFO',
+    #     help='Logging level for this script (loguru).',
+    #     tags=['perf_param'],
+    # )
+
+    # log_fname = scfg.Value(
+    #     'materialize_helm_run.log',
+    #     help='if specified, also log to a file name',
+    #     tags=['perf_param'],
+    # )
+
     done_fname = scfg.Value(
         'DONE',
-        help="Name of sentinel file written in out_dpath when the node is complete.",
+        help='Name of sentinel file written in out_dpath when the node is complete.',
         tags=['out_path', 'primary'],
     )
 
     manifest_fname = scfg.Value(
         'adapter_manifest.json',
-        help="Name of a small JSON manifest written in out_dpath describing what happened.",
+        help='Name of a small JSON manifest written in out_dpath describing what happened.',
         tags=['out_path'],
     )
 
@@ -213,11 +274,11 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         config = MaterializeHelmRunConfig.cli(argv=argv, data=kwargs, verbose='auto')
 
         if config.run_entry is None:
-            raise SystemExit("Missing required --run-entry")
+            raise SystemExit('Missing required --run-entry')
         if config.suite is None:
-            raise SystemExit("Missing required --suite")
+            raise SystemExit('Missing required --suite')
         if config.out_dpath is None:
-            raise SystemExit("Missing required --out-dpath")
+            raise SystemExit('Missing required --out-dpath')
 
         out_dpath = Path(config.out_dpath).expanduser().resolve()
         out_dpath.mkdir(parents=True, exist_ok=True)
@@ -229,38 +290,56 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         # we will need to do some file locking.
 
         # If DONE exists, we consider the node complete, unless forcing recompute.
-        if done_fpath.exists() and config.mode != 'force_recompute':
-            # Load existing manifest (if present) to return something useful.
-            if manifest_fpath.exists():
-                try:
-                    return kwutil.Json.load(manifest_fpath, backend='orjson')
-                except Exception:
-                    return {"status": "done", "out_dpath": str(out_dpath)}
-            return {"status": "done", "out_dpath": str(out_dpath)}
+        # if done_fpath.exists() and config.mode != 'force_recompute':
+        #     # Load existing manifest (if present) to return something useful.
+        #     logger.info(
+        #         'DONE sentinel exists; returning cached outputs from {}', out_dpath
+        #     )
+        #     if manifest_fpath.exists():
+        #         try:
+        #             return kwutil.Json.load(manifest_fpath, backend='orjson')
+        #         except Exception:
+        #             return {'status': 'done', 'out_dpath': str(out_dpath)}
+        #     return {'status': 'done', 'out_dpath': str(out_dpath)}
 
-        # If forcing recompute, clean the previous DONE to avoid confusion.
-        if config.mode == 'force_recompute' and done_fpath.exists():
-            done_fpath.unlink()
+        # Maybe we don't do that? To let debugging be ok?
+        # # If forcing recompute, clean the previous DONE to avoid confusion.
+        # if config.mode == 'force_recompute' and done_fpath.exists():
+        #     logger.warning(
+        #         'force_recompute requested; removing existing DONE sentinel: {}',
+        #         done_fpath,
+        #     )
+        #     done_fpath.unlink()
 
         manifest: dict = {
-            "requested": {
-                "run_entry": config.run_entry,
-                "suite": config.suite,
-                "max_eval_instances": config.max_eval_instances,
-                "require_per_instance_stats": config.require_per_instance_stats,
-                "mode": config.mode,
-                "materialize": config.materialize,
+            'requested': {
+                'run_entry': config.run_entry,
+                'suite': config.suite,
+                'max_eval_instances': config.max_eval_instances,
+                'require_per_instance_stats': config.require_per_instance_stats,
+                'mode': config.mode,
+                'materialize': config.materialize,
             },
-            "status": None,
-            "reuse": None,
-            "computed": None,
-            "out_dpath": str(out_dpath),
-            "timestamp": time.time(),
+            'status': None,
+            'reuse': None,
+            'computed': None,
+            'out_dpath': str(out_dpath),
+            'timestamp': time.time(),
         }
 
         # 1) Try reuse
         match = None
+        logger.info(
+            'Requested run_entry={!r} suite={!r} mode={!r}',
+            config.run_entry,
+            config.suite,
+            config.mode,
+        )
         if config.mode != 'force_recompute' and config.precomputed_roots:
+            logger.info(
+                'Searching for reusable runs in {} precomputed roots',
+                len(config.precomputed_roots),
+            )
             match = find_best_precomputed_run(
                 precomputed_roots=config.precomputed_roots,
                 requested_desc=config.run_entry,
@@ -269,38 +348,49 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
             )
 
         if match is not None:
+            logger.success('Found reusable run: {}', match.run_name)
             # Materialize into out_dpath in the suite layout we want.
-            target_run_dir = out_dpath / 'benchmark_output' / 'runs' / config.suite / match.run_name
+            target_run_dir = (
+                out_dpath / 'benchmark_output' / 'runs' / config.suite / match.run_name
+            )
+            logger.info(
+                'Materializing via {}: {} -> {}',
+                config.materialize,
+                match.run_dir,
+                target_run_dir,
+            )
             if config.materialize == 'symlink':
                 ensure_symlink(match.run_dir, target_run_dir)
             else:
                 ensure_copytree(match.run_dir, target_run_dir)
 
-            manifest["status"] = "reused"
-            manifest["reuse"] = {
-                "source_run_dir": str(match.run_dir),
-                "matched_run_name": match.run_name,
-                "materialized_run_dir": str(target_run_dir),
-                "source_benchmark_output_dir": str(match.source_root),
+            manifest['status'] = 'reused'
+            manifest['reuse'] = {
+                'source_run_dir': str(match.run_dir),
+                'matched_run_name': match.run_name,
+                'materialized_run_dir': str(target_run_dir),
+                'source_benchmark_output_dir': str(match.source_root),
             }
 
         else:
             # 2) Compute (unless reuse-only)
             if config.mode == 'reuse_only':
-                manifest["status"] = "missing"
+                logger.error('No reusable run found and mode=reuse_only')
+                manifest['status'] = 'missing'
                 manifest_fpath.write_text(kwutil.Json.dump(manifest, indent=2))
-                raise SystemExit("No reusable HELM run found and mode=reuse_only")
+                raise SystemExit('No reusable HELM run found and mode=reuse_only')
 
             # Ensure benchmark_output exists (helm-run will create, but pre-creating is fine)
             (out_dpath / 'benchmark_output').mkdir(exist_ok=True)
 
+            logger.info('No reusable run found; running helm-run')
             run_helm(
                 requested_desc=config.run_entry,
                 suite=config.suite,
                 out_dpath=out_dpath,
                 max_eval_instances=config.max_eval_instances,
                 num_threads=config.num_threads,
-                # extra_args=config.extra_helm_args,
+                extra_args=[],
             )
 
             # Locate what helm-run produced.
@@ -312,6 +402,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 require_per_instance_stats=config.require_per_instance_stats,
             )
             if computed_run_dir is None:
+                logger.warning(
+                    'Could not locate run via standard suite path; falling back to full scan under out_dpath'
+                )
                 # Fall back: scan everything under benchmark_output for any match
                 match2 = find_best_precomputed_run(
                     precomputed_roots=[out_dpath],
@@ -322,21 +415,28 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 computed_run_dir = match2.run_dir if match2 else None
 
             if computed_run_dir is None:
-                manifest["status"] = "error"
+                logger.warning(
+                    'Could not locate run via standard suite path; falling back to full scan under out_dpath'
+                )
+                manifest['status'] = 'error'
                 manifest_fpath.write_text(kwutil.Json.dump(manifest, indent=2))
-                raise RuntimeError("helm-run completed, but the run directory could not be located/validated")
+                raise RuntimeError(
+                    'helm-run completed, but the run directory could not be located/validated'
+                )
 
-            manifest["status"] = "computed"
-            manifest["computed"] = {
-                "computed_run_dir": str(computed_run_dir),
-                "computed_run_name": computed_run_dir.name,
+            manifest['status'] = 'computed'
+            manifest['computed'] = {
+                'computed_run_dir': str(computed_run_dir),
+                'computed_run_name': computed_run_dir.name,
             }
 
         # Write manifest first (helpful for debugging even if DONE is missing)
         manifest_fpath.write_text(kwutil.Json.dumps(manifest, indent=2))
+        logger.info('Wrote manifest: {}', manifest_fpath)
 
         # Write sentinel last: indicates the node is complete and outputs are ready.
-        done_fpath.write_text("ok\n")
+        done_fpath.write_text('ok\n')
+        logger.success('Wrote DONE sentinel: {}', done_fpath)
 
         return manifest
 
@@ -344,6 +444,7 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
 # -----------------------------
 # Token parsing / normalization
 # -----------------------------
+
 
 def parse_run_entry_description(desc: str) -> Tuple[str, Dict[str, object]]:
     """
@@ -373,11 +474,13 @@ def parse_run_entry_description(desc: str) -> Tuple[str, Dict[str, object]]:
           unsupported for now (you can extend parsing later if needed).
     """
     if ':' not in desc:
-        raise ValueError("Run entry description must contain ':' separating benchmark and parameters")
+        raise ValueError(
+            "Run entry description must contain ':' separating benchmark and parameters"
+        )
     bench, rest = desc.split(':', 1)
     bench = bench.strip()
     if not bench:
-        raise ValueError(f"Invalid benchmark in {desc!r}")
+        raise ValueError(f'Invalid benchmark in {desc!r}')
     tokens: Dict[str, object] = {}
     rest = rest.strip()
     if rest:
@@ -431,15 +534,74 @@ def _split_run_dir_tokens(run_dir_name: str) -> Tuple[str, List[str]]:
     return bench.strip(), tokens
 
 
+def parse_run_name_to_kv(run_name: str) -> Tuple[str, Dict[str, object]]:
+    """
+    Parse a HELM run directory name into (benchmark, kv).
+
+    IMPORTANT:
+        Only the first ':' separates the benchmark prefix.
+        Values may contain ':' (e.g. amazon_nova-premier-v1:0).
+
+    Example:
+        >>> parse_run_name_to_kv("ewok:domain=physical_interactions,model=meta_llama-3-8b-chat")
+        ('ewok', {'domain': 'physical_interactions', 'model': 'meta_llama-3-8b-chat'})
+
+        >>> parse_run_name_to_kv("ifeval:model=amazon_nova-premier-v1:0")
+        ('ifeval', {'model': 'amazon_nova-premier-v1:0'})
+    """
+    if ':' not in run_name:
+        return '', {}
+    bench, rest = run_name.split(':', 1)
+    bench = bench.strip()
+
+    kv: Dict[str, object] = {}
+    rest = rest.strip()
+    if rest:
+        for part in rest.split(','):
+            part = part.strip()
+            if not part:
+                continue
+            if '=' in part:
+                k, v = part.split('=', 1)
+                kv[k.strip()] = v.strip()
+            else:
+                kv[part] = True
+    return bench, kv
+
+
+def canonicalize_kv(kv: Dict[str, object]) -> Dict[str, object]:
+    """
+    Canonicalize key/value pairs in a conservative way.
+
+    Current behavior:
+        - Normalize model strings by replacing '/' with '_'
+
+    Example:
+        >>> canonicalize_kv({'model': 'meta/llama-3-8b-chat'})
+        {'model': 'meta_llama-3-8b-chat'}
+    """
+    kv = dict(kv)
+    model = kv.get('model', None)
+    if isinstance(model, str):
+        kv['model'] = model.replace('/', '_')
+    return kv
+
+
 def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
     """
-    Return True if `run_dir_name` likely corresponds to `requested_desc`.
+    Robust matching: parse + normalize into dicts, then require requested kv ⊆ candidate kv.
 
     Matching policy:
     - benchmark prefix must match (before ':')
     - all required tokens from the requested description must be present in the
       candidate run directory name (token-subset match)
     - candidate may contain extra tokens (HELM defaults / normalization)
+
+    Example:
+        >>> req = "ewok:domain=physical_interactions,model=meta/llama-3-8b-chat"
+        >>> cand = "ewok:domain=physical_interactions,model=meta_llama-3-8b-chat"
+        >>> run_dir_matches_requested(cand, req)
+        True
 
     Example:
         >>> requested = "mmlu:subject=philosophy,model=openai/gpt2"
@@ -450,24 +612,59 @@ def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
         >>> run_dir_matches_requested("ifeval:model=openai_gpt2", requested)
         False
     """
-    req_bench, req_tokens = parse_run_entry_description(requested_desc)
-    req_tokens = canonicalize_requested_tokens(req_tokens)
-
-    cand_bench, cand_tokens = _split_run_dir_tokens(run_dir_name)
-    if cand_bench != req_bench:
+    req_bench, req_kv = parse_run_name_to_kv(requested_desc)
+    cand_bench, cand_kv = parse_run_name_to_kv(run_dir_name)
+    if req_bench != cand_bench:
         return False
 
-    cand_set = set(cand_tokens)
+    req_kv = canonicalize_kv(req_kv)
+    cand_kv = canonicalize_kv(cand_kv)
 
-    # Required tokens are represented as strings in the on-disk naming scheme.
-    required = []
-    for k, v in req_tokens.items():
-        if v is True:
-            required.append(str(k))
-        else:
-            required.append(f"{k}={v}")
+    for k, v in req_kv.items():
+        if k not in cand_kv:
+            return False
+        if cand_kv[k] != v:
+            return False
+    return True
 
-    return all(t in cand_set for t in required)
+
+# def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
+#     """
+#     Return True if `run_dir_name` likely corresponds to `requested_desc`.
+
+#     Matching policy:
+#     - benchmark prefix must match (before ':')
+#     - all required tokens from the requested description must be present in the
+#       candidate run directory name (token-subset match)
+#     - candidate may contain extra tokens (HELM defaults / normalization)
+
+#     Example:
+#         >>> requested = "mmlu:subject=philosophy,model=openai/gpt2"
+#         >>> run_dir_matches_requested("mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2", requested)
+#         True
+#         >>> run_dir_matches_requested("mmlu:subject=anatomy,method=multiple_choice_joint,model=openai_gpt2", requested)
+#         False
+#         >>> run_dir_matches_requested("ifeval:model=openai_gpt2", requested)
+#         False
+#     """
+#     req_bench, req_tokens = parse_run_entry_description(requested_desc)
+#     req_tokens = canonicalize_requested_tokens(req_tokens)
+
+#     cand_bench, cand_tokens = _split_run_dir_tokens(run_dir_name)
+#     if cand_bench != req_bench:
+#         return False
+
+#     cand_set = set(cand_tokens)
+
+#     # Required tokens are represented as strings in the on-disk naming scheme.
+#     required = []
+#     for k, v in req_tokens.items():
+#         if v is True:
+#             required.append(str(k))
+#         else:
+#             required.append(f'{k}={v}')
+
+#     return all(t in cand_set for t in required)
 
 
 def match_score(run_dir_name: str, requested_desc: str) -> Tuple[int, int, str]:
@@ -499,7 +696,7 @@ def match_score(run_dir_name: str, requested_desc: str) -> Tuple[int, int, str]:
 
     required = []
     for k, v in req_tokens.items():
-        required.append(str(k) if v is True else f"{k}={v}")
+        required.append(str(k) if v is True else f'{k}={v}')
     required_set = set(required)
 
     extra = [t for t in cand_tokens if t not in required_set]
@@ -581,6 +778,7 @@ def is_complete_run_dir(run_dir: Path, require_per_instance_stats: bool = True) 
 # Materialization / computation
 # -----------------------------
 
+
 @dataclass
 class MatchResult:
     run_dir: Path
@@ -619,7 +817,7 @@ def discover_benchmark_output_dirs(roots: Iterable[os.PathLike]) -> Iterator[Pat
 
 
 def find_best_precomputed_run(
-    precomputed_roots: List[os.PathLike],
+    precomputed_roots: List[os.PathLike[str]],
     requested_desc: str,
     max_eval_instances: Optional[int] = None,
     require_per_instance_stats: bool = True,
@@ -690,26 +888,37 @@ def find_best_precomputed_run(
     """
     candidates: List[MatchResult] = []
 
+    # TODO: if we can resolve the exact directory name we can avoid O(N) search
+    # Or we could build a cached index of known results to make this faster.
+    # We might not want to use the helm-outputs classes here, not sure.
+
+    # logger.info('Checking')
     for bo in discover_benchmark_output_dirs(precomputed_roots):
+        # logger.info(str(bo))
         try:
             outputs = HelmOutputs.coerce(bo)
         except Exception:
             continue
-
         for suite in outputs.suites(pattern='*'):
             # suite.runs() already filters for ':' in directory name.
             runs = suite.runs(pattern='*')
             for run in runs:
                 run_dir = Path(run.path)
-                if not is_complete_run_dir(run_dir, require_per_instance_stats=require_per_instance_stats):
-                    continue
+                # if not is_complete_run_dir(
+                #     run_dir, require_per_instance_stats=require_per_instance_stats
+                # ):
+                #     continue
                 if not run_dir_matches_requested(run.name, requested_desc):
                     continue
                 if max_eval_instances is not None:
                     n = infer_num_instances(run_dir)
-                    if n is not None and n != max_eval_instances:
+                    if n is not None and n < max_eval_instances:
+                        logger.warn(f'Found candidate: {run_dir}, but not enough instances')
                         continue
-                candidates.append(MatchResult(run_dir=run_dir, run_name=run.name, source_root=bo))
+                logger.info(f'Found candidate: {run_dir}')
+                candidates.append(
+                    MatchResult(run_dir=run_dir, run_name=run.name, source_root=bo)
+                )
 
     if not candidates:
         return None
@@ -721,25 +930,52 @@ def find_best_precomputed_run(
 
 def ensure_symlink(src: Path, dst: Path) -> None:
     """
-    Create a symlink `dst` -> `src`, replacing an existing path if needed.
+    Create a symlink `dst` -> `src`, choosing relative vs absolute target.
+
+    Policy:
+    - If `src` is absolute: create an absolute symlink.
+    - If `src` is relative: create a relative symlink (relative to dst.parent).
+
+    Why:
+    - Relative symlinks are portable when both trees move together.
+    - Absolute symlinks are appropriate when the source is truly external.
     """
+    dst = Path(dst)
+    src = Path(src)
+
     dst.parent.mkdir(parents=True, exist_ok=True)
+
+    if src.is_absolute():
+        link_target = str(src)
+        desired_abs = src.resolve()
+    else:
+        # Interpret relative src relative to the *current working directory*
+        # (because that is how the user passed it / how we found it).
+        src_abs = src.resolve()
+        # But write the symlink target relative to the link location.
+        link_target = os.path.relpath(src_abs, start=dst.parent)
+        desired_abs = src_abs
+
+    # If dst already points where we want, do nothing.
+    if dst.is_symlink():
+        try:
+            existing = os.readlink(dst)
+            existing_abs = (dst.parent / existing).resolve() if not os.path.isabs(existing) else Path(existing).resolve()
+            if existing_abs == desired_abs:
+                return
+        except OSError:
+            pass
+
+    # Replace anything existing at dst
     if dst.exists() or dst.is_symlink():
-        # If already correct, do nothing
-        if dst.is_symlink():
-            try:
-                if Path(os.readlink(dst)) == src:
-                    return
-            except OSError:
-                pass
         ub.Path(dst).delete()
-    os.symlink(src, dst)
+
+    os.symlink(link_target, dst)
 
 
 def ensure_copytree(src: Path, dst: Path) -> None:
-    """
-    Copy a directory tree, replacing `dst` if it already exists.
-    """
+    """Copy a directory tree, replacing ``dst`` if it already exists."""
+    logger.debug('ensure_copytree: {} -> {}', src, dst)
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
         ub.Path(dst).delete()
@@ -752,7 +988,7 @@ def run_helm(
     out_dpath: Path,
     max_eval_instances: Optional[int],
     num_threads: int,
-    extra_args: List[str],
+    extra_args: Optional[List[str]] = None,
 ) -> None:
     """
     Execute helm-run in `out_dpath`, writing outputs under out_dpath/benchmark_output.
@@ -765,6 +1001,7 @@ def run_helm(
     if num_threads is not None:
         cmd += ['--num-threads', str(num_threads)]
     cmd += list(extra_args or [])
+    logger.info('Executing: {}', ' '.join(map(str, cmd)))
     ub.cmd(cmd, cwd=out_dpath, verbose=3, system=True).check_returncode()
 
 
@@ -800,7 +1037,9 @@ def find_run_in_out_dpath(
     candidates = []
     for run in suite_obj.runs(pattern='*'):
         run_dir = Path(run.path)
-        if not is_complete_run_dir(run_dir, require_per_instance_stats=require_per_instance_stats):
+        if not is_complete_run_dir(
+            run_dir, require_per_instance_stats=require_per_instance_stats
+        ):
             continue
         if not run_dir_matches_requested(run.name, requested_desc):
             continue
@@ -815,6 +1054,48 @@ def find_run_in_out_dpath(
 
     candidates.sort(key=lambda p: match_score(p.name, requested_desc))
     return candidates[0]
+
+
+# -----------------------------
+# Logging
+# -----------------------------
+
+
+def configure_logging(
+    out_dpath: Path,
+    level: str = 'INFO',
+    log_fname: str | None = 'materialize_helm_run.log',
+) -> None:
+    """Configure loguru for both console and (optionally) a log file.
+
+    The log file is written inside the node output directory so it is always
+    collected with other node artifacts.
+    """
+    logger.remove()
+
+    logger.add(
+        sys.stderr,
+        level=level.upper(),
+        colorize=True,
+        enqueue=True,
+        backtrace=False,
+        diagnose=False,
+    )
+
+    if log_fname is not None:
+        try:
+            log_fpath = out_dpath / log_fname
+            logger.add(
+                str(log_fpath),
+                level=level.upper(),
+                enqueue=True,
+                rotation='10 MB',
+                retention='14 days',
+                backtrace=False,
+                diagnose=False,
+            )
+        except Exception:
+            logger.exception('Failed to configure file logging')
 
 
 __cli__ = MaterializeHelmRunConfig
