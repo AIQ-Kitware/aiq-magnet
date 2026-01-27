@@ -167,8 +167,8 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
     )
 
     suite = scfg.Value(
-        None,
-        help='HELM suite name to use for output layout (and for helm-run --suite).',
+        'default-suite',
+        help='HELM suite name to use for output layout (and for helm-run --suite). DO NOT USE.',
         tags=['algo_param'],
     )
 
@@ -178,10 +178,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['out_path'],
     )
 
-    precomputed_roots = scfg.Value(
+    precomputed_root = scfg.Value(
         [],
-        nargs='*',
-        help='0+ directories to search for existing HELM outputs (may contain nested benchmark_output dirs).',
+        help='directory to search for existing HELM outputs (may contain nested benchmark_output dirs).',
         tags=['in_param'],
     )
 
@@ -335,13 +334,13 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
             config.suite,
             config.mode,
         )
-        if config.mode != 'force_recompute' and config.precomputed_roots:
+        if config.mode != 'force_recompute' and config.precomputed_root:
             logger.info(
                 'Searching for reusable runs in {} precomputed roots',
-                len(config.precomputed_roots),
+                config.precomputed_root,
             )
             match = find_best_precomputed_run(
-                precomputed_roots=config.precomputed_roots,
+                precomputed_root=config.precomputed_root,
                 requested_desc=config.run_entry,
                 max_eval_instances=config.max_eval_instances,
                 require_per_instance_stats=config.require_per_instance_stats,
@@ -407,7 +406,7 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 )
                 # Fall back: scan everything under benchmark_output for any match
                 match2 = find_best_precomputed_run(
-                    precomputed_roots=[out_dpath],
+                    precomputed_root=out_dpath,
                     requested_desc=config.run_entry,
                     max_eval_instances=config.max_eval_instances,
                     require_per_instance_stats=config.require_per_instance_stats,
@@ -817,7 +816,7 @@ def discover_benchmark_output_dirs(roots: Iterable[os.PathLike]) -> Iterator[Pat
 
 
 def find_best_precomputed_run(
-    precomputed_roots: List[os.PathLike[str]],
+    precomputed_root: os.PathLike[str],
     requested_desc: str,
     max_eval_instances: Optional[int] = None,
     require_per_instance_stats: bool = True,
@@ -858,7 +857,7 @@ def find_best_precomputed_run(
         >>> # We don't *require* per_instance_stats here because some suites/versions
         >>> # might omit it.
         >>> result = find_best_precomputed_run(
-        ...     precomputed_roots=[root],
+        ...     precomputed_root=root,
         ...     requested_desc=requested_desc,
         ...     require_per_instance_stats=False,
         ... )
@@ -870,7 +869,7 @@ def find_best_precomputed_run(
         >>> n = infer_num_instances(Path(result.run_dir))
         >>> if n is not None:
         ...     result2 = find_best_precomputed_run(
-        ...         precomputed_roots=[root],
+        ...         precomputed_root=[root],
         ...         requested_desc=requested_desc,
         ...         max_eval_instances=n,
         ...         require_per_instance_stats=False,
@@ -879,7 +878,7 @@ def find_best_precomputed_run(
         ...     assert result2.run_name == requested_desc
         ...     # Asking for a greater instance count should yield no match
         ...     result3 = find_best_precomputed_run(
-        ...         precomputed_roots=[root],
+        ...         precomputed_root=root,
         ...         requested_desc=requested_desc,
         ...         max_eval_instances=n + 1,
         ...         require_per_instance_stats=False,
@@ -893,7 +892,7 @@ def find_best_precomputed_run(
     # We might not want to use the helm-outputs classes here, not sure.
 
     # logger.info('Checking')
-    for bo in discover_benchmark_output_dirs(precomputed_roots):
+    for bo in discover_benchmark_output_dirs([precomputed_root]):
         # logger.info(str(bo))
         try:
             outputs = HelmOutputs.coerce(bo)
