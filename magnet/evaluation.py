@@ -5,6 +5,10 @@ from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
 import yaml
 import argparse
 import sys
+import datetime
+import os
+import json
+import random 
 
 import scriptconfig as scfg
 from rich import print
@@ -50,6 +54,8 @@ class EvaluationCard:
 
         self.title = cfg.get("title", "")
         self.description = cfg.get("description", "")
+        self.category = cfg.get("category", "Model Generalization")
+        self.id = int(random.random() * 100)
 
         self.claim = Claim(cfg.get("claim"))
         self.symbols = cfg.get("symbols", {})
@@ -81,6 +87,11 @@ class EvaluationCard:
         """
         self.evaluations = self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
 
+        out_dir = f"./magnet/cards/evaluations/"
+        os.makedirs(out_dir, exist_ok=True)
+        os.makedirs(out_dir + f'{self.id}', exist_ok=True)
+
+
         results = []
         for evaluation in self.evaluations:
             status, _ = evaluation.execute()
@@ -110,10 +121,23 @@ class EvaluationCard:
             card_result = 'VERIFIED'
 
         self.claim.status = card_result
+
+        result_dict = {"id":self.id, 
+                       "title": self.title, 
+                       "description": self.description, 
+                       "category": self.category, 
+                       "claim": repr(self.claim), 
+                       "runs": [execution.log for execution in self.evaluations], 
+                       "result": card_result
+                       }
+        
+        with open(out_dir + f'{self.id}/results.json', 'w') as f:
+            json.dump(result_dict, f)
+        print(result_dict)
         return card_result
 
     def dispatch(self, flattened_sweep): #: List[Symbols]) -> List[EvaluationTask]:
-        return [EvaluationTask(Claim({'python': self.claim.claim}), symbols) for symbols in flattened_sweep]
+        return [EvaluationTask(i+1, Claim({'python': self.claim.claim}), symbols) for i, symbols in enumerate(flattened_sweep)]
 
     def summarize(self):
         """
@@ -144,9 +168,12 @@ class EvaluationTask:
     """
     Singular submission from an Evaluation Card
     """
-    def __init__(self, claim, symbols):
+    def __init__(self, id, claim, symbols):
+        self.id = id
         self.claim = claim
         self.symbols = symbols
+        self.output_msg = ""
+        self.log = ""
 
     def execute(self) -> Tuple[str, str]:
         self.symbols.resolve()
@@ -154,12 +181,21 @@ class EvaluationTask:
         #           ...
         #           zn -> an -> resn
         # make sure x,y are done once / before sweep
-        return self.claim.evaluate(self.symbols())
+        result, out = self.claim.evaluate(self.symbols())
+        self.result = result
+        self.output_msg = out
+        self.record_run()
+        return result, out
 
     def record_run(self):
-        # Could log requests from here (i.e. timestamps), I think this was done in other code segments
-        # timestamp, symbol value, claim result
-        raise NotImplementedError
+        completion_time = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        self.log = {"id": self.id, 
+                    "symbols": self.symbols.simple_view(), 
+                    "status": self.result, 
+                    "output": self.output_msg, 
+                    "timestamp": completion_time
+                    }
+        #print(self.log)
 
 class Claim:
     """
@@ -197,8 +233,8 @@ class Claim:
         else:
             INCONCLUSIVE
         """
+        out_msg = ""
         try:
-            out_msg = ""
             exec(self.claim, symbols)
             self.status = "VERIFIED"
         except AssertionError as e:
@@ -217,7 +253,8 @@ class Claim:
             return self.status, out_msg
 
     def __repr__(self) -> str:
-        return self.claim
+        # FIXME: incomplete solution (trying to remove error message)
+        return "".join(self.claim.split(',')[:-1])
 
 class Symbol:
     """
@@ -350,6 +387,10 @@ class Symbols:
         sorter = TopologicalSorter(dependency_graph)
         return list(sorter.static_order())
 
+    def simple_view(self):
+        ALLOWABLE_TYPES = [int, float, str]
+        return {k:v for k,v in self().items() if type(v) in ALLOWABLE_TYPES or (type(v) == list and type(v[0]) == int)}
+    
     def __call__(self):
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
