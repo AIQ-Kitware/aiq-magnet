@@ -785,34 +785,42 @@ class MatchResult:
     source_root: Path
 
 
-def discover_benchmark_output_dirs(roots: Iterable[os.PathLike]) -> Iterator[Path]:
+def discover_benchmark_output_dirs(
+    roots: Iterable[os.PathLike],
+) -> Iterator[Path]:
     """
-    Yield directories named ``benchmark_output`` under the given roots.
+    Walk-based discovery of directories named `benchmark_output`.
 
-    This supports both layouts you've seen:
-
-    (A) Local helm-run output:
-        <root>/benchmark_output/...
-
-    (B) Downloaded bundle:
-        <root>/<suite>/benchmark_output/...
-
-    Example:
-        >>> # xdoctest: +SKIP
-        >>> list(discover_benchmark_output_dirs(['/data/crfm-helm-public']))  # doctest: +ELLIPSIS
-        [...]
+    Behavior:
+      - For each root, walk top-down so we can prune.
+      - When we encounter a `benchmark_output` dir:
+          * yield it
+          * prune descent into it (it can be huge)
     """
     for root in roots:
         root = Path(root)
         if not root.exists():
             continue
-        if root.name == 'benchmark_output' and root.is_dir():
+
+        if root.name == "benchmark_output" and root.is_dir():
             yield root
             continue
-        # Recursive discovery: find any nested benchmark_output directories
-        for p in root.rglob('benchmark_output'):
-            if p.is_dir():
-                yield p
+
+        # os.walk gives strings; use Path for comparisons
+        for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+            # Prune heavy/common dirs (optional but often helpful)
+            # Adjust list based on what exists in your environments.
+            prunable = {".git", "__pycache__", ".venv", "venv", "node_modules"}
+            dirnames[:] = [d for d in dirnames if d not in prunable]
+
+            # If any immediate child is named benchmark_output, yield it and prune it
+            if "benchmark_output" in dirnames:
+                bo = Path(dirpath) / "benchmark_output"
+                if bo.is_dir():
+                    yield bo
+
+                # Don't descend into benchmark_output itself
+                dirnames[:] = [d for d in dirnames if d != "benchmark_output"]
 
 
 def find_best_precomputed_run(
@@ -869,7 +877,7 @@ def find_best_precomputed_run(
         >>> n = infer_num_instances(Path(result.run_dir))
         >>> if n is not None:
         ...     result2 = find_best_precomputed_run(
-        ...         precomputed_root=[root],
+        ...         precomputed_root=root,
         ...         requested_desc=requested_desc,
         ...         max_eval_instances=n,
         ...         require_per_instance_stats=False,
@@ -912,7 +920,7 @@ def find_best_precomputed_run(
                 if max_eval_instances is not None:
                     n = infer_num_instances(run_dir)
                     if n is not None and n < max_eval_instances:
-                        logger.warn(f'Found candidate: {run_dir}, but not enough instances')
+                        logger.warning(f'Found candidate: {run_dir}, but not enough instances')
                         continue
                 logger.info(f'Found candidate: {run_dir}')
                 candidates.append(
