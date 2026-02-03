@@ -408,17 +408,35 @@ class FsspecStorageBackend:
             self = FsspecStorageBackend('gs://crfm-helm-public')
             prefix = 'gs://crfm-helm-public/lite/benchmark_output/runs/v1.0.0'
             self.list_dirs(prefix)
+
+        Example:
+            >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+            >>> backend_fs = FsspecStorageBackend('gs://crfm-helm-public')
+            >>> dirs_fs = backend_fs.list_dirs('gs://crfm-helm-public/image2struct/benchmark_output/runs')
+            >>> assert 'runs' not in dirs_fs, 'should not return the base dir'
+            >>> # xdoctest: +REQUIRES(module:gcsfs)
+            >>> # Test list dirs is the same on ffspec and gsutil
+            >>> backend_gs = GsutilStorageBackend('gs://crfm-helm-public')
+            >>> dirs_gs = backend_gs.list_dirs('gs://crfm-helm-public/image2struct/benchmark_output/runs')
+            >>> assert dirs_fs == dirs_gs
         """
         # Accept either 'gs://...' or 'bucket/...'
         root = _strip_gs(prefix).rstrip('/') + '/'
+        root_noslash = root.rstrip('/')  # e.g. ".../runs"
         try:
             entries = self.fs.ls(root, detail=True)
         except FileNotFoundError:
             return []
+
         out = []
         for e in entries:
-            if e.get('type') == 'directory':
-                out.append(e['name'].rstrip('/').split('/')[-1])
+            if e.get('type') != 'directory':
+                continue
+            name = (e.get('name') or '').rstrip('/')
+            # gcsfs includes the root itself as a DIRECTORY entry; skip it
+            if name == root_noslash:
+                continue
+            out.append(name.split('/')[-1])
         return sorted(set(out))
 
     def download_tree(
