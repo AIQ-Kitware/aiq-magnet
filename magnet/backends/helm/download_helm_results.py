@@ -410,11 +410,12 @@ class FsspecStorageBackend:
             self.list_dirs(prefix)
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:gcsfs)
             >>> from magnet.backends.helm.download_helm_results import *  # NOQA
             >>> backend_fs = FsspecStorageBackend('gs://crfm-helm-public')
             >>> dirs_fs = backend_fs.list_dirs('gs://crfm-helm-public/image2struct/benchmark_output/runs')
             >>> assert 'runs' not in dirs_fs, 'should not return the base dir'
-            >>> # xdoctest: +REQUIRES(module:gcsfs)
+            >>> # xdoctest: +REQUIRES(env:HAS_GSUTIL)
             >>> # Test list dirs is the same on ffspec and gsutil
             >>> backend_gs = GsutilStorageBackend('gs://crfm-helm-public')
             >>> dirs_gs = backend_gs.list_dirs('gs://crfm-helm-public/image2struct/benchmark_output/runs')
@@ -578,6 +579,14 @@ class HelmRemoteStore:
         return sorted(names - blocklist)
 
     def list_versions(self, benchmark: str) -> List[str]:
+        """
+        Example:
+            >>> # xdoctest: +REQUIRES(module:gcsfs)
+            >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+            >>> store = HelmRemoteStore()
+            >>> versions = store.list_versions('image2struct')
+            >>> assert 'runs' not in versions
+        """
         from packaging.version import parse as Version, InvalidVersion
         root = self._runs_root(benchmark)
         vers = self.backend.list_dirs(root)
