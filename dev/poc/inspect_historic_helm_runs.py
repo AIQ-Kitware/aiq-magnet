@@ -10,6 +10,8 @@ Outputs are structured so you can:
 
 Ignore:
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public
+    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
+
 
 """
 
