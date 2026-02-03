@@ -41,6 +41,7 @@ dependencies = [
     "pyyaml>=6.0.2",
     "typing-extensions>=4.0.0",
     "ruamel.yaml>=0.17.22",
+    "loguru>=0.7.3",
 ]
 
 [project.optional-dependencies]

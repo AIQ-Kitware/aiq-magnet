@@ -57,6 +57,7 @@ import ubelt as ub
 import scriptconfig as scfg
 from functools import cached_property
 from typing import List
+from loguru import logger
 
 
 class DownloadHelmConfig(scfg.DataConfig):
@@ -209,8 +210,46 @@ class ExitError(RuntimeError):
         return self.args[1]
 
 
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+def setup_logging(verbose: bool = False) -> None:
+    """Configure loguru logging.
+
+    - Default level is INFO, or DEBUG when --verbose is set.
+    - You may override via MAGNET_LOG_LEVEL (e.g. DEBUG, INFO, WARNING).
+    """
+    import os
+    level = os.environ.get('MAGNET_LOG_LEVEL')
+    if not level:
+        level = 'DEBUG' if verbose else 'INFO'
+    logger.remove()
+    # logger.add(sys.stderr, level=level, backtrace=False, diagnose=False)
+    # 3. Attempt to use richuru, otherwise fallback to standard loguru
+    try:
+        from rich.logging import RichHandler
+        # Add RichHandler as the sink
+        # We use format="{message}" because RichHandler handles its own formatting
+        from rich.console import Console
+        # Create a console specifically for stderr
+        error_console = Console(stderr=True)
+        logger.add(
+            RichHandler(
+                console=error_console,  # Force Rich to use stderr
+                markup=True,
+                rich_tracebacks=True
+            ),
+            level=level,
+            format="{message}",
+            backtrace=False,
+            diagnose=False
+        )
+    except ImportError:
+        # Fallback to standard loguru output if rich is not available
+        logger.add(
+            sys.stderr,
+            level=level,
+            colorize=True,
+            backtrace=False,
+            diagnose=False
+        )
 
 
 # ===============================
@@ -249,7 +288,7 @@ class GsutilStorageBackend:
         if gsutil:
             return gsutil
 
-        eprint(
+        logger.info(
             "Google Cloud 'gsutil' not found (or a conflicting 'gsutil' is first on PATH)."
         )
 
@@ -332,7 +371,7 @@ class GsutilStorageBackend:
 
     @classmethod
     def _install_gsutil_ubuntu(cls) -> None:
-        eprint('Installing Google Cloud SDK (gsutil) via apt...')
+        logger.info('Installing Google Cloud SDK (gsutil) via apt...')
         cmds = [
             ['sudo', 'apt-get', 'update', '-y'],
             [
@@ -365,6 +404,7 @@ class GsutilStorageBackend:
 
     # ---- protocol ----
     def list_dirs(self, prefix: str) -> List[str]:
+        logger.debug(f'list_dirs: {prefix}')
         # Normalize to gs://...
         prefix = prefix.rstrip('/') + '/'
         cp = ub.cmd([self.gsutil, 'ls', prefix], verbose=0)
@@ -381,6 +421,7 @@ class GsutilStorageBackend:
     def download_tree(
         self, src_prefix: str, dest_dir: ub.Path, checksum: bool = False
     ) -> None:
+        logger.info('gsutil rsync src={} -> dest={} checksum={}', src_prefix, dest_dir, bool(checksum))
         dest_dir.ensuredir()
         cmd = [self.gsutil, '-m', 'rsync', '-r']
         if checksum:
@@ -422,6 +463,7 @@ class FsspecStorageBackend:
             >>> assert dirs_fs == dirs_gs
         """
         # Accept either 'gs://...' or 'bucket/...'
+        logger.debug(f'list_dirs: {prefix}')
         root = _strip_gs(prefix).rstrip('/') + '/'
         root_noslash = root.rstrip('/')  # e.g. ".../runs"
         try:
@@ -445,9 +487,10 @@ class FsspecStorageBackend:
     ) -> None:
 
         from fsspec.callbacks import TqdmCallback
+        logger.debug('fsspec rsync src={} -> dest={}', src_prefix, dest_dir)
 
         if checksum:
-            eprint(
+            logger.warning(
                 'Note: checksum verification is not supported with fsspec; proceeding without it.'
             )
 
@@ -484,7 +527,7 @@ class FsspecStorageBackend:
                 lpaths.append(str(lpath))
 
             if not rpaths:
-                print(f'All files already present under: {dest_dir}')
+                logger.info(f'All files already present under: {dest_dir}')
                 return
 
             callback = TqdmCallback(
@@ -676,6 +719,8 @@ def _do_requested_download(storage, benchmark, version, dest, verbose, runs, che
     """
     Main download logic, either filtered or not.
     """
+    logger.info('Download request benchmark={} version={} runs_filter={} dest={}', benchmark, version, bool(runs), dest)
+
     bucket_base = storage._runs_root(benchmark)
     src = f'{bucket_base}/{version}'
 
@@ -688,24 +733,24 @@ def _do_requested_download(storage, benchmark, version, dest, verbose, runs, che
             # Filter to a subset of run IDs by regex (comma-separated supported).
             all_runs = storage.list_runs(benchmark, version)
             if not all_runs:
-                eprint(f'No runs found under version path: {src}')
+                logger.warning(f'No runs found under version path: {src}')
                 return 1
 
             pattern = kwutil.MultiPattern.coerce(runs)
             matched = filter_runs(all_runs, pattern)
+            logger.info('Matched {} / {} runs under {}', len(matched), len(all_runs), src)
             if not matched:
-                eprint(f'No runs matched patterns {pattern} under {src}')
-                eprint('Available runs:')
-                for r in all_runs:
-                    eprint(f'  - {r}')
-                eprint(
+                logger.warning(f'No runs matched patterns {pattern} under {src}')
+                available_text = '\n'.join([f'  - {r}' for r in all_runs])
+                logger.warning('Available runs:' + available_text)
+                logger.warning(
                     f'No runs matched patterns {pattern} under {src}. Choose a pattern matching some of the above'
                 )
                 return 1
 
-            print(f'Matching runs ({len(matched)}):')
-            for r in matched:
-                print(f'  - {r}')
+            logger.info(f'Matching runs ({len(matched)}):')
+            matched_text = '\n'.join([f'  - {r}' for r in matched])
+            logger.info(matched_text)
 
             # Sync each selected run subdirectory independently.
             dest.mkdir(parents=True, exist_ok=True)
@@ -714,22 +759,31 @@ def _do_requested_download(storage, benchmark, version, dest, verbose, runs, che
             )
         else:
             # Download entire version.
+            logger.info('Downloading entire version tree: {}', src)
             storage.download_version(benchmark, version, dest, checksum=bool(checksum))
 
     except subprocess.CalledProcessError as ex:
-        eprint('gsutil rsync failed.')
+        logger.error('gsutil rsync failed.')
         if ex.stderr:
-            eprint(ex.stderr.strip())
+            logger.error(ex.stderr.strip())
         return ex.returncode or 1
-    print(f'Done. Files are under: {dest}')
+    logger.info(f'Done. Files are under: {dest}')
     return 0
 
 
 def main(argv=None, **kwargs) -> int:
     args = DownloadHelmConfig.cli(
-        argv=argv, data=kwargs, strict=True, verbose='auto', special_options=False
+        argv=argv, data=kwargs, strict=True, special_options=False
     )
     verbose = bool(args.verbose)
+    setup_logging(verbose)
+
+    try:
+        from rich.markup import escape
+    except ImportError:
+        logger.debug('config = ' + ub.urepr(args, nl=1))
+    else:
+        logger.debug('config = ' + escape(ub.urepr(args, nl=1)))
 
     import kwutil
     benchmark_arg = args.benchmark
@@ -746,7 +800,7 @@ def main(argv=None, **kwargs) -> int:
     try:
         storage = HelmRemoteStore(args.bucket, backend=args.backend)
     except ExitError as ex:
-        eprint(ex.msg)
+        logger.error(ex.msg)
         return ex.code
 
     # --- listing modes ---
@@ -769,7 +823,9 @@ def main(argv=None, **kwargs) -> int:
         import kwutil
         pat = kwutil.MultiPattern.coerce(selector)
         all_benchmarks = storage.list_benchmarks()
-        return [b for b in all_benchmarks if pat.match(b)]
+        matched = [b for b in all_benchmarks if pat.match(b)]
+        logger.debug('Benchmark selector {} matched {} / {}', selector, len(matched), len(all_benchmarks))
+        return matched
 
     def resolve_versions(benchmark: str, selector: str) -> List[str]:
         """Resolve version selector for a benchmark.
@@ -781,8 +837,10 @@ def main(argv=None, **kwargs) -> int:
         selector = (selector or '').strip()
         if selector in {'latest', 'auto'}:
             v = storage.latest_version(benchmark)
+            logger.debug("Resolved latest version for {} -> {}", benchmark, v)
             return [v] if v else []
         if _looks_like_single_selector(selector):
+            logger.debug('Version selector treated as single for {}: {}', benchmark, selector)
             return [selector]
         import kwutil
         pat = kwutil.MultiPattern.coerce(selector)
@@ -792,7 +850,7 @@ def main(argv=None, **kwargs) -> int:
     # Resolve benchmarks set
     benchmark_list = resolve_benchmarks(benchmark_arg)
     if not benchmark_list:
-        eprint(f"No benchmarks matched selector '{benchmark_arg}'")
+        logger.warning(f"No benchmarks matched selector '{benchmark_arg}'")
         return 1
 
     if args.list_versions:
@@ -827,23 +885,25 @@ def main(argv=None, **kwargs) -> int:
 
     # --- download mode ---
     if not args.download_dir:
-        eprint('Error: download directory not provided. Run with --help for usage')
+        logger.error('Error: download directory not provided. Run with --help for usage')
         return 2
 
     download_dir = ub.Path(args.download_dir)
+
+    logger.debug(f'benchmark_list={benchmark_list}')
 
     # Iterate benchmarks and versions
     final_ret = 0
     for benchmark in benchmark_list:
         # Determine versions per benchmark (may match multiple when selector is a MultiPattern)
         if version_arg in {'latest', 'auto'}:
-            eprint(
+            logger.info(
                 f"Resolving latest version for benchmark '{benchmark}' (backend={args.backend})..."
             )
         version_list = resolve_versions(benchmark, version_arg)
         if not version_list:
             if version_arg in {'latest', 'auto'}:
-                eprint(
+                logger.error(
                     f"Error: could not determine latest version for benchmark '{benchmark}' (no runs found?)."
                 )
                 final_ret = 1
@@ -851,25 +911,28 @@ def main(argv=None, **kwargs) -> int:
                     return final_ret
                 continue
             else:
-                eprint(
+                logger.warning(
                     f"Warning: no versions matched selector '{version_arg}' for benchmark '{benchmark}'"
                 )
                 continue
 
         if version_arg in {'latest', 'auto'}:
-            eprint(f'Using latest version for {benchmark}: {version_list[0]}')
+            logger.debug(f'Using latest version for {benchmark}: {version_list[0]}')
 
+        logger.debug(f'version_list={version_list}')
         for version in version_list:
             bucket_base = storage._runs_root(benchmark)
             src = f'{bucket_base}/{version}'
             dest_root = download_dir / benchmark / 'benchmark_output' / 'runs'
             dest = dest_root / version
 
-            print(f'HELM benchmark: {benchmark}')
-            print(f'Version:        {version}')
-            print(f'Source:         {src}')
-            print(f'Destination:    {dest}')
-            print()
+            logger.info(ub.codeblock(
+                f'''
+                HELM benchmark: {benchmark}
+                Version:        {version}
+                Source:         {src}
+                Destination:    {dest}
+                '''))
 
             ret = _do_requested_download(
                 storage, benchmark, version, dest, verbose, runs, checksum
