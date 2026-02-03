@@ -199,11 +199,11 @@ class DownloadHelmConfig(scfg.DataConfig):
 class ExitError(RuntimeError):
     def __init__(self, msg: str, code: int):
         super().__init__(msg, code)
-    
+
     @property
     def msg(self) -> str:
         return self.args[0]
-    
+
     @property
     def code(self) -> int:
         return self.args[1]
@@ -424,16 +424,56 @@ class FsspecStorageBackend:
     def download_tree(
         self, src_prefix: str, dest_dir: ub.Path, checksum: bool = False
     ) -> None:
+
+        from fsspec.callbacks import TqdmCallback
+
         if checksum:
             eprint(
                 'Note: checksum verification is not supported with fsspec; proceeding without it.'
             )
-        base = _strip_gs(src_prefix).rstrip('/')
-        dest_dir.ensuredir()
-        from fsspec.callbacks import TqdmCallback
-        # TODO: can we use fsspec.generic.rsync here?
-        callback = TqdmCallback(tqdm_kwargs={"desc": f"Downloading {base}"})
-        self.fs.get(base, str(dest_dir.parent) + '/', recursive=True, callback=callback)
+
+        REDOWNLOAD = False
+        if REDOWNLOAD:
+            base = _strip_gs(src_prefix).rstrip('/')
+            dest_dir.ensuredir()
+            # TODO: can we use fsspec.generic.rsync here?
+            callback = TqdmCallback(tqdm_kwargs={"desc": f"Downloading {base}"})
+            self.fs.get(base, str(dest_dir.parent) + '/', recursive=True, callback=callback)
+        else:
+            base = _strip_gs(src_prefix).rstrip('/')
+            dest_dir.ensuredir()
+            # fsspec's get() overwrites; compute which files are already present
+            # (same size) and only download missing/changed files.
+            remote = self.fs.find(base, detail=True)
+
+            rpaths = []
+            lpaths = []
+            skipped = 0
+            for rpath, info in remote.items():
+                if info.get('type') == 'directory':
+                    continue
+                rel = rpath[len(base):].lstrip('/')
+                if not rel:
+                    continue
+                lpath = dest_dir / rel
+                if lpath.exists():
+                    rsize = info.get('size', None)
+                    if rsize is not None and lpath.stat().st_size == rsize:
+                        skipped += 1
+                        continue
+                rpaths.append(rpath)
+                lpaths.append(str(lpath))
+
+            if not rpaths:
+                print(f'All files already present under: {dest_dir}')
+                return
+
+            callback = TqdmCallback(
+                tqdm_kwargs={
+                    "desc": f"Downloading {base} ({len(rpaths)} files; {skipped} up-to-date)",
+                }
+            )
+            self.fs.get(rpaths, lpaths, callback=callback)
 
 
 class HelmRemoteStore:
