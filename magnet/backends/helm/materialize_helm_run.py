@@ -449,14 +449,13 @@ def parse_run_entry_description(desc: str) -> Tuple[str, Dict[str, object]]:
     """
     Parse a run-entry description into (benchmark, tokens).
 
-    The run-entry description format commonly looks like:
+    Thin wrapper around :func:`helm.common.object_spec.parse_object_spec`
 
-        "<benchmark>:k1=v1,k2=v2,..."
-
-    The parser also supports "flag" tokens with no ``=`` (rare, but possible in
-    some naming conventions); those are stored as ``True``.
+    Args:
+        desc (str): has the format <class_name>:<key>=<value>,<key>=<value>
 
     Example:
+        >>> from magnet.backends.helm.materialize_helm_run import *  # NOQA
         >>> parse_run_entry_description("mmlu:subject=philosophy,model=openai/gpt2")
         ('mmlu', {'subject': 'philosophy', 'model': 'openai/gpt2'})
 
@@ -466,33 +465,15 @@ def parse_run_entry_description(desc: str) -> Tuple[str, Dict[str, object]]:
         >>> # Values may contain ':' (e.g. AWS model ids like ':0')
         >>> parse_run_entry_description("ifeval:model=amazon_nova-premier-v1:0")
         ('ifeval', {'model': 'amazon_nova-premier-v1:0'})
-
-    Notes:
-        - This script expects the HELM-style "benchmark:params" form.
-          If you have an exotic description with multiple colons, treat it as
-          unsupported for now (you can extend parsing later if needed).
     """
     if ':' not in desc:
         raise ValueError(
             "Run entry description must contain ':' separating benchmark and parameters"
         )
-    bench, rest = desc.split(':', 1)
-    bench = bench.strip()
-    if not bench:
-        raise ValueError(f'Invalid benchmark in {desc!r}')
-    tokens: Dict[str, object] = {}
-    rest = rest.strip()
-    if rest:
-        for part in rest.split(','):
-            part = part.strip()
-            if not part:
-                continue
-            if '=' in part:
-                k, v = part.split('=', 1)
-                tokens[k.strip()] = v.strip()
-            else:
-                # Bare token / flag
-                tokens[part] = True
+    from helm.common.object_spec import parse_object_spec
+    spec = parse_object_spec(desc)
+    bench = spec.class_name
+    tokens = spec.args
     return bench, tokens
 
 
