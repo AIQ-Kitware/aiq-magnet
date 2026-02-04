@@ -138,7 +138,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Tuple
+from typing import Iterable, Iterator, Optional
 
 import ubelt as ub
 import kwutil
@@ -445,7 +445,7 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
 # -----------------------------
 
 
-def parse_run_entry_description(desc: str) -> Tuple[str, Dict[str, object]]:
+def parse_run_entry_description(desc: str) -> tuple[str, dict[str, object]]:
     """
     Parse a run-entry description into (benchmark, tokens).
 
@@ -477,7 +477,7 @@ def parse_run_entry_description(desc: str) -> Tuple[str, Dict[str, object]]:
     return bench, tokens
 
 
-def canonicalize_requested_tokens(tokens: Dict[str, object]) -> Dict[str, object]:
+def canonicalize_requested_tokens(tokens: dict[str, object]) -> dict[str, object]:
     """
     Apply small, conservative normalizations that we have observed in practice.
 
@@ -498,7 +498,7 @@ def canonicalize_requested_tokens(tokens: Dict[str, object]) -> Dict[str, object
     return tokens
 
 
-def _split_run_dir_tokens(run_dir_name: str) -> Tuple[str, List[str]]:
+def _split_run_dir_tokens(run_dir_name: str) -> tuple[str, list[str]]:
     """
     Split a run directory name into (benchmark, [token_str, ...]).
 
@@ -514,7 +514,7 @@ def _split_run_dir_tokens(run_dir_name: str) -> Tuple[str, List[str]]:
     return bench.strip(), tokens
 
 
-def parse_run_name_to_kv(run_name: str) -> Tuple[str, Dict[str, object]]:
+def parse_run_name_to_kv(run_name: str) -> tuple[str, dict[str, object]]:
     """
     Parse a HELM run directory name into (benchmark, kv).
 
@@ -534,7 +534,7 @@ def parse_run_name_to_kv(run_name: str) -> Tuple[str, Dict[str, object]]:
     bench, rest = run_name.split(':', 1)
     bench = bench.strip()
 
-    kv: Dict[str, object] = {}
+    kv: dict[str, object] = {}
     rest = rest.strip()
     if rest:
         for part in rest.split(','):
@@ -549,7 +549,7 @@ def parse_run_name_to_kv(run_name: str) -> Tuple[str, Dict[str, object]]:
     return bench, kv
 
 
-def canonicalize_kv(kv: Dict[str, object]) -> Dict[str, object]:
+def canonicalize_kv(kv: dict[str, object]) -> dict[str, object]:
     """
     Canonicalize key/value pairs in a conservative way.
 
@@ -647,7 +647,7 @@ def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
 #     return all(t in cand_set for t in required)
 
 
-def match_score(run_dir_name: str, requested_desc: str) -> Tuple[int, int, str]:
+def match_score(run_dir_name: str, requested_desc: str) -> tuple[int, int, str]:
     """
     Produce a deterministic score used to select the "best" match when multiple
     candidates satisfy token-subset matching.
@@ -874,7 +874,7 @@ def find_best_precomputed_run(
         ...     )
         ...     assert result3 is None
     """
-    candidates: List[MatchResult] = []
+    candidates: list[MatchResult] = []
 
     # TODO: if we can resolve the exact directory name we can avoid O(N) search
     # Or we could build a cached index of known results to make this faster.
@@ -976,7 +976,7 @@ def run_helm(
     out_dpath: Path,
     max_eval_instances: Optional[int],
     num_threads: int,
-    extra_args: Optional[List[str]] = None,
+    extra_args: Optional[list[str]] = None,
 ) -> None:
     """
     Execute helm-run in `out_dpath`, writing outputs under out_dpath/benchmark_output.
