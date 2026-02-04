@@ -10,7 +10,7 @@ Outputs are structured so you can:
 
 Ignore:
 
-    LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_infos.json
+    LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
 
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
 
@@ -141,7 +141,8 @@ class CompileHelmReproListConfig(scfg.DataConfig):
         chosen_model_rows = [
             r for r in model_rows if (
                 set(r['tags']).issuperset(require_tags) and
-                r['num_parameters'] <= MAX_PARAMS
+                (r['num_parameters'] is not None and r['num_parameters'] <= MAX_PARAMS) and
+                (r['access'] == 'open')
             )
         ]
         logger.info('Filter to {} / {} models', len(chosen_model_rows), len(model_rows))
