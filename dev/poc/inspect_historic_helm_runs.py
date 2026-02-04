@@ -9,7 +9,7 @@ Outputs are structured so you can:
 - optionally include max_eval_instances inferred from per_instance_stats.json
 
 Ignore:
-    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public
+    LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
 
 
@@ -26,7 +26,7 @@ import kwutil
 import scriptconfig as scfg
 from loguru import logger
 
-from magnet.helm_outputs import HelmOutputs
+from magnet.helm_outputs import HelmOutputs, HelmRun
 
 # Reuse your existing discovery + inference logic
 from magnet.backends.helm.materialize_helm_run import (
@@ -35,10 +35,12 @@ from magnet.backends.helm.materialize_helm_run import (
     is_complete_run_dir,
 )
 
+from line_profiler import profile
+
 
 class CompileHelmReproListConfig(scfg.DataConfig):
     roots = scfg.Value(
-        [],
+        ['/data/crfm-helm-public'],
         nargs="+",
         help=(
             "One or more roots that either ARE a benchmark_output dir, contain "
@@ -63,8 +65,8 @@ class CompileHelmReproListConfig(scfg.DataConfig):
     )
 
     include_max_eval_instances = scfg.Value(
-        True,
-        help="If True, infer max_eval_instances from per_instance_stats.json when possible.",
+        False,
+        help="If True, infer max_eval_instances from per_instance_stats.json when possible. CAN BE VERY SLOW",
     )
 
     out_fpath = scfg.Value(
@@ -85,6 +87,18 @@ class CompileHelmReproListConfig(scfg.DataConfig):
 
     @classmethod
     def main(cls, argv=None, **kwargs):
+        """
+        Example:
+            >>> # It's a good idea to setup a doctest.
+            >>> import sys, ubelt
+            >>> sys.path.append(ubelt.expandpath('~/code/aiq-magnet/dev/poc'))
+            >>> from inspect_historic_helm_runs import *  # NOQA
+            >>> argv = False
+            >>> kwargs = dict()
+            >>> cls = CompileHelmReproListConfig
+            >>> config = cls(**kwargs)
+            >>> cls.main(argv=argv, **config)
+        """
         config = cls.cli(argv=argv, data=kwargs, verbose="auto")
         roots = [Path(r).expanduser() for r in config.roots]
         if not roots:
@@ -123,6 +137,7 @@ class CompileHelmReproListConfig(scfg.DataConfig):
         return payload
 
 
+@profile
 def compile_repro_rows(
     roots: Iterable[Path],
     suite_pattern: str = "*",
@@ -135,7 +150,6 @@ def compile_repro_rows(
     # Discover all benchmark_output dirs under provided roots
     logger.info('Discover benchmarks')
     bo_dirs = list(ub.ProgIter(discover_benchmark_output_dirs(roots), desc='discovering benchmarks', verbose=3, homogeneous=False))
-    print(f'bo_dirs = {ub.urepr(bo_dirs, nl=1)}')
     logger.info('Finished Discover benchmarks')
     if not bo_dirs:
         logger.warning("No benchmark_output dirs found under roots={}", roots)
@@ -154,6 +168,8 @@ def compile_repro_rows(
                 if not is_complete_run_dir(run_dir, require_per_instance_stats=require_per_instance_stats):
                     continue
 
+                run = HelmRun.coerce(run_dir)
+
                 max_eval_instances = None
                 if include_max_eval_instances:
                     max_eval_instances = infer_num_instances(run_dir)
@@ -170,6 +186,7 @@ def compile_repro_rows(
 
     # Stable order
     rows.sort(key=lambda r: (r["suite"], r["run_entry"], r["max_eval_instances"] or -1, r["run_dir"]))
+    logger.info('Found {len(rows)} run directories')
     return rows
 
 

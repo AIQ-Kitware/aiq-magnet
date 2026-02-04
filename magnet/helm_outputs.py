@@ -36,7 +36,7 @@ StatStruct = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
 PerInstanceStatsStruct = util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
 
 # monkey patch until kwutil 0.3.7
-MONKEYPATCH_KWUTIL = True
+MONKEYPATCH_KWUTIL = False  # remove if stable
 if MONKEYPATCH_KWUTIL:
     from kwutil import util_dotdict
     kwutil.DotDict = util_dotdict.DotDict
