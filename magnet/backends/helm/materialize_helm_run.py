@@ -1031,10 +1031,11 @@ def find_run_in_out_dpath(
             continue
         if not run_dir_matches_requested(run.name, requested_desc):
             continue
-        if max_eval_instances is not None:
-            n = infer_num_instances(run_dir)
-            if n is not None and n != max_eval_instances:
-                continue
+        # If the scenario has fewer instances, this check fails, ignore it.
+        # if max_eval_instances is not None:
+        #     n = infer_num_instances(run_dir)
+        #     if n is not None and n != max_eval_instances:
+        #         continue
         candidates.append(run_dir)
 
     if not candidates:
