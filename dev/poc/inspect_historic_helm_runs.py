@@ -1,4 +1,4 @@
-"""
+r"""
 Compile a reproduction list from existing HELM outputs on disk.
 
 Given one or more roots that contain HELM outputs, discover all run directories
@@ -10,10 +10,45 @@ Outputs are structured so you can:
 
 Ignore:
 
-    LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_infos.json
+    ls /data/crfm-helm-public/thaiexam/benchmark_output/runs/v1.1.0/thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore_llama3-8b-cpt-sea-lionv2.1-instruct
+
+    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_detail_specs.yaml
+
+    cat run_specs.yaml | grep -v together > run_specs2.yaml
 
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
 
+    # we need fully featured helm installed
+    uv pip install crfm-helm[all] -U
+
+    # Need to login to huggingface can pass token via --token
+    hf auth login
+
+    # Need TogetherAPI credentials
+
+    kwdagger schedule \
+      --params="
+        pipeline: 'magnet.backends.helm.pipeline.helm_single_run_pipeline()'
+        matrix:
+          helm.run_entry:
+            - __include__: run_specs2.yaml
+          helm.max_eval_instances:
+            - 1000
+          helm.precomputed_root: null
+      " \
+      --devices="0,1,2,3" \
+      --tmux_workers=4 \
+      --root_dpath=$PWD/results \
+      --backend=tmux \
+      --skip_existing=1 \
+      --run=1
+
+
+2026-02-04T15:56:09 INFO       Done.                                                                                                                                    [3104/19060]
+2026-02-04T15:56:09 INFO     } [22m24.096s]
+└─── END CMD ───
+2026-02-04 15:56:11.463 | INFO     | __main__:main:434 - Wrote manifest: /home/local/KHQ/jon.crall/code/aiq-magnet/results/helm/helm_id_122cc4nm308f/adapter_manifest.json
+2026-02-04 15:56:11.463 | SUCCESS  | __main__:main:438 - Wrote DONE sentinel: /home/local/KHQ/jon.crall/code/aiq-magnet/results/helm/helm_id_122cc4nm308f/DONE
 
 """
 
@@ -34,8 +69,6 @@ from magnet.backends.helm.materialize_helm_run import (
     infer_num_instances,
     is_complete_run_dir,
 )
-
-from line_profiler import profile
 
 
 class CompileHelmReproListConfig(scfg.DataConfig):
@@ -72,6 +105,11 @@ class CompileHelmReproListConfig(scfg.DataConfig):
     out_fpath = scfg.Value(
         None,
         help="Where to write output. If omitted, prints to stdout.",
+    )
+
+    out_detail_fpath = scfg.Value(
+        None,
+        help="Where to write detailed output.",
     )
 
     dedupe = scfg.Value(
@@ -127,9 +165,16 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             try:
                 model_meta = model_deployment_registry.get_model_metadata(model_name)
                 model_row = model_meta.__dict__ | {'count': count}
+                if model_meta.deployment_names:
+                    for deploy_name in model_meta.deployment_names:
+                        deploy_info = model_deployment_registry.get_model_deployment(deploy_name)
+                        model_row['client'] = deploy_info.client_spec.class_name
                 model_rows.append(model_row)
-            except Exception:
-                logger.warning(f'missing: model_name = {ub.urepr(model_name, nl=1)}')
+            except (TypeError, ValueError) as ex:
+                logger.warning(f'missing: model_name = {ub.urepr(model_name, nl=1)} {ex}')
+
+        if 0:
+            ub.dict_hist([r.get('client') for r in model_rows])
 
         require_tags = {
             'FULL_FUNCTIONALITY_TEXT_MODEL_TAG'
@@ -141,14 +186,17 @@ class CompileHelmReproListConfig(scfg.DataConfig):
         chosen_model_rows = [
             r for r in model_rows if (
                 set(r['tags']).issuperset(require_tags) and
-                r['num_parameters'] <= MAX_PARAMS
+                (r['num_parameters'] is not None and r['num_parameters'] <= MAX_PARAMS) and
+                (r['access'] == 'open') and
+                (r.get('client') == 'helm.clients.huggingface_client.HuggingFaceClient')
             )
         ]
+        chosen_model_names = {r['name'] for r in chosen_model_rows}
         logger.info('Filter to {} / {} models', len(chosen_model_rows), len(model_rows))
 
-        chosen_model_names = {r['name'] for r in chosen_model_rows}
         chosen_rows = [r for r in rows if r['model'] in chosen_model_names]
         logger.info('Filter to {} / {} runs', len(chosen_rows), len(rows))
+        # logger.info(f'chosen_rows = {ub.urepr(chosen_rows, nl=1)}')
 
         if 1:
             # Show filtered histograms
@@ -159,8 +207,12 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             logger.info(f'scenario_histo = {ub.urepr(scenario_histo, nl=1)}')
             logger.info(f'model_histo = {ub.urepr(model_histo, nl=1)}')
 
-        run_spec_names = [r["run_spec_name"] for r in rows]
+        if config.out_detail_fpath:
+            text = kwutil.Yaml.dumps(chosen_rows)
+            Path(config.out_detail_fpath).write_text(text)
+            logger.success("Wrote {}", config.out_detail_fpath)
 
+        run_spec_names = [r["run_spec_name"] for r in chosen_rows]
         text = kwutil.Yaml.dumps(run_spec_names)
         if config.out_fpath:
             Path(config.out_fpath).write_text(text)
@@ -169,7 +221,6 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             print(text, end="")
 
 
-@profile
 def gather_runs(
     roots: Iterable[Path],
     suite_pattern: str = "*",
@@ -211,7 +262,6 @@ def gather_runs(
     return runs
 
 
-@profile
 def build_run_table(runs: list[HelmRun]) -> list[dict]:
     rows = []
 
@@ -241,6 +291,12 @@ def build_run_table(runs: list[HelmRun]) -> list[dict]:
                 'run.path.name': run.path.name,
                 'run_spec_name': run_spec_name,
             })
+
+        # Hack: run spec names sometimes don't correctly encode the model
+        FIX_RUN_SPEC_NAME = True
+        if FIX_RUN_SPEC_NAME:
+            normalized_model = model.replace('/', '_')
+            run_spec_name = run_spec_name.replace(normalized_model, model)
 
         rows.append({
             # "benchmark_output_dir": str(Path(outputs.root_dir)),

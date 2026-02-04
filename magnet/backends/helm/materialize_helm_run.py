@@ -376,7 +376,7 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
             if config.mode == 'reuse_only':
                 logger.error('No reusable run found and mode=reuse_only')
                 manifest['status'] = 'missing'
-                manifest_fpath.write_text(kwutil.Json.dump(manifest, indent=2))
+                manifest_fpath.write_text(kwutil.Json.dumps(manifest, indent=2))
                 raise SystemExit('No reusable HELM run found and mode=reuse_only')
 
             # Ensure benchmark_output exists (helm-run will create, but pre-creating is fine)
@@ -418,7 +418,7 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                     'Could not locate run via standard suite path; falling back to full scan under out_dpath'
                 )
                 manifest['status'] = 'error'
-                manifest_fpath.write_text(kwutil.Json.dump(manifest, indent=2))
+                manifest_fpath.write_text(kwutil.Json.dumps(manifest, indent=2))
                 raise RuntimeError(
                     'helm-run completed, but the run directory could not be located/validated'
                 )
@@ -1031,10 +1031,11 @@ def find_run_in_out_dpath(
             continue
         if not run_dir_matches_requested(run.name, requested_desc):
             continue
-        if max_eval_instances is not None:
-            n = infer_num_instances(run_dir)
-            if n is not None and n != max_eval_instances:
-                continue
+        # If the scenario has fewer instances, this check fails, ignore it.
+        # if max_eval_instances is not None:
+        #     n = infer_num_instances(run_dir)
+        #     if n is not None and n != max_eval_instances:
+        #         continue
         candidates.append(run_dir)
 
     if not candidates:
