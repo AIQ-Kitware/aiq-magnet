@@ -10,7 +10,7 @@ Outputs are structured so you can:
 
 Ignore:
 
-    LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
+    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
 
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
 
@@ -25,11 +25,7 @@ Ignore:
         pipeline: 'magnet.backends.helm.pipeline.helm_single_run_pipeline()'
         matrix:
           helm.run_entry:
-            # - __include__: run_specs.yaml
-            - thai_exam:exam=tgat,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2-base
-            - thai_exam:exam=tgat,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2.1-instruct
-            - thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2-base
-            - thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2.1-instruct
+            - __include__: run_specs.yaml
           helm.max_eval_instances:
             - 1000
           helm.precomputed_root: null
@@ -59,8 +55,6 @@ from magnet.backends.helm.materialize_helm_run import (
     infer_num_instances,
     is_complete_run_dir,
 )
-
-from line_profiler import profile
 
 
 class CompileHelmReproListConfig(scfg.DataConfig):
@@ -170,11 +164,13 @@ class CompileHelmReproListConfig(scfg.DataConfig):
                 (r['access'] == 'open')
             )
         ]
+        chosen_model_names = {r['name'] for r in chosen_model_rows}
         logger.info('Filter to {} / {} models', len(chosen_model_rows), len(model_rows))
 
-        chosen_model_names = {r['name'] for r in chosen_model_rows}
         chosen_rows = [r for r in rows if r['model'] in chosen_model_names]
         logger.info('Filter to {} / {} runs', len(chosen_rows), len(rows))
+
+        logger.info(f'chosen_rows = {ub.urepr(chosen_rows, nl=1)}')
 
         if 1:
             # Show filtered histograms
@@ -195,7 +191,6 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             print(text, end="")
 
 
-@profile
 def gather_runs(
     roots: Iterable[Path],
     suite_pattern: str = "*",
@@ -237,7 +232,6 @@ def gather_runs(
     return runs
 
 
-@profile
 def build_run_table(runs: list[HelmRun]) -> list[dict]:
     rows = []
 
