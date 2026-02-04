@@ -45,7 +45,7 @@ SHELL ["/bin/bash", "-l", "-c"]
 # curl -LsSf https://astral.sh/uv/install.sh | bash
 
 # Control the version of uv
-ARG UV_VERSION=0.8.8
+ARG UV_VERSION=0.9.27
 
 RUN --mount=type=cache,target=/root/.cache <<EOF
 #!/bin/bash
@@ -54,6 +54,7 @@ mkdir /bootstrap
 cd /bootstrap
 # For new releases see: https://github.com/astral-sh/uv/releases
 declare -A UV_INSTALL_KNOWN_HASHES=(
+    ["0.9.27"]="6a2da893cd56f9e2d1c9140d0c434fd1de097358bedeb89add559ef3179c932e"
     ["0.8.8"]="f86123768d4602c5de570fe2e43d3ef0720e907d420aec8c663da81e41c8de57"
     ["0.8.4"]="601321180a10e0187c99d8a15baa5ccc11b03494c2ca1152fc06f5afeba0a460"
     ["0.7.20"]="3b7ca115ec2269966c22201b3a82a47227473bef2fe7066c62ea29603234f921"

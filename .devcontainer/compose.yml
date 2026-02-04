@@ -1,0 +1,39 @@
+services:
+  uv:
+    build:
+      context: ..
+      dockerfile: dockerfiles/uv.dockerfile
+      args:
+        BASE_IMAGE: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+        UV_VERSION: 0.9.27
+        PYTHON_VERSION: 3.13
+    image: local/uv:dev
+
+  magnet:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        BASE_IMAGE: local/uv:dev
+    image: local/magnet-dev:latest
+    depends_on:
+      - uv
+    entrypoint: []
+
+    # keepalive for devcontainers
+    command: sleep infinity
+
+    # alternative to workspaceMount
+    volumes:
+      - ..:/workspaces/aiq-magnet:cached
+
+    # --- security hardening ---
+    init: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=1g
+
