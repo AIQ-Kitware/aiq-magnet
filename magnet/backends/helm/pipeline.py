@@ -12,6 +12,8 @@ the materialized HELM outputs.
 .. code:: bash
 
 
+helm-run --run-entries civil_comments:demographic=LGBTQ,model=meta/llama-7b,data_augmentation=canonical --suite my-suite --max-eval-instances 1000 --num-threads 1
+
     kwdagger schedule \
       --params="
         pipeline: 'magnet.backends.helm.pipeline.helm_single_run_pipeline()'
@@ -23,6 +25,7 @@ the materialized HELM outputs.
             - 10
           helm.precomputed_root: '/data/crfm-helm-public'
       " \
+      --tmux_workers=4 \
       --root_dpath=$PWD/results \
       --backend=serial \
       --skip_existing=1 \

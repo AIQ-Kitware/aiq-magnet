@@ -14,28 +14,54 @@ Ignore:
 
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
 
+    cat run_specs.yaml | grep -v together > run_specs2.yaml
+
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
 
     # we need fully featured helm installed
-    uv pip install crfm-helm[all]
+    uv pip install crfm-helm[all] -U
 
     # Need to login to huggingface can pass token via --token
     hf auth login
+
+    # Need TogetherAPI credentials
 
     kwdagger schedule \
       --params="
         pipeline: 'magnet.backends.helm.pipeline.helm_single_run_pipeline()'
         matrix:
           helm.run_entry:
-            - __include__: run_specs.yaml
+            - __include__: run_specs2.yaml
           helm.max_eval_instances:
             - 1000
           helm.precomputed_root: null
       " \
+      --tmux_workers=4 \
       --root_dpath=$PWD/results \
       --backend=tmux \
       --skip_existing=1 \
       --run=1
+
+
+2026-02-04T14:50:45 INFO             Loading eleutherai/pythia-6.9b (kwargs={}) for HELM model eleutherai/pythia-6.9b with Hugging Face Transformers {
+2026-02-04T14:50:45 INFO               Hugging Face device set to "cuda:0" because CUDA is available.
+2026-02-04T14:50:45 INFO               Loading Hugging Face model eleutherai/pythia-6.9b {
+2026-02-04 14:50:46.306571: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off er
+rors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
+2026-02-04 14:50:46.352244: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical opera
+tions.
+To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [01:52<00:00, 56.16s/it]
+Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:03<00:00,  1.77s/it]
+2026-02-04T14:52:49 INFO               } [2m4.589s]███████████████████████████████████                                                               | 1/2 [01:52<01:52, 112.32s/it]
+2026-02-04T14:52:49 INFO             } [2m4.744s]█████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:03<00:00,  1.64s/it]
+Setting `pad_token_id` to `eos_token_id`:187 for open-end generation.
+2026-02-04T14:52:50 ERROR            CUDA out of memory. Tried to allocate 78.00 MiB. GPU 0 has a total capacity of 94.97 GiB of which 77.50 MiB is free. Process 836764 has 13.90 G
+iB memory in use. Process 838163 has 14.97 GiB memory in use. Process 836760 has 13.98 GiB memory in use. Process 846239 has 25.32 GiB memory in use. Including non-PyTorch memory,
+this process has 26.70 GiB memory in use. Of the allocated memory 25.93 GiB is allocated by PyTorch, and 117.82 MiB is reserved by PyTorch but unallocated. If reserved but unalloca
+ted memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes
+/cuda.html#environment-variables)
+
 
 
 """
@@ -148,9 +174,16 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             try:
                 model_meta = model_deployment_registry.get_model_metadata(model_name)
                 model_row = model_meta.__dict__ | {'count': count}
+                if model_meta.deployment_names:
+                    for deploy_name in model_meta.deployment_names:
+                        deploy_info = model_deployment_registry.get_model_deployment(deploy_name)
+                        model_row['client'] = deploy_info.client_spec.class_name
                 model_rows.append(model_row)
-            except Exception:
-                logger.warning(f'missing: model_name = {ub.urepr(model_name, nl=1)}')
+            except (TypeError, ValueError) as ex:
+                logger.warning(f'missing: model_name = {ub.urepr(model_name, nl=1)} {ex}')
+
+        if 0:
+            ub.dict_hist([r.get('client') for r in model_rows])
 
         require_tags = {
             'FULL_FUNCTIONALITY_TEXT_MODEL_TAG'
@@ -163,7 +196,8 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             r for r in model_rows if (
                 set(r['tags']).issuperset(require_tags) and
                 (r['num_parameters'] is not None and r['num_parameters'] <= MAX_PARAMS) and
-                (r['access'] == 'open')
+                (r['access'] == 'open') and
+                (r.get('client') == 'helm.clients.huggingface_client.HuggingFaceClient')
             )
         ]
         chosen_model_names = {r['name'] for r in chosen_model_rows}
@@ -171,8 +205,7 @@ class CompileHelmReproListConfig(scfg.DataConfig):
 
         chosen_rows = [r for r in rows if r['model'] in chosen_model_names]
         logger.info('Filter to {} / {} runs', len(chosen_rows), len(rows))
-
-        logger.info(f'chosen_rows = {ub.urepr(chosen_rows, nl=1)}')
+        # logger.info(f'chosen_rows = {ub.urepr(chosen_rows, nl=1)}')
 
         if 1:
             # Show filtered histograms
