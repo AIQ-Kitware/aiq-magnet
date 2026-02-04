@@ -12,29 +12,32 @@ Ignore:
 
     LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
 
-    python -m magnet.backends.helm.materialize_helm_run \
-        --run_entry "ewok:domain=physical_interactions,model=meta/llama-3-8b-chat" \
-        --suite my-suite \
-        --max_eval_instances 1000 \
-        --out_dpath ./local-results/node_out_2 \
-        --precomputed_roots ./local-crfm-helm-public
-
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
+
+    # we need fully featured helm installed
+    uv pip install crfm-helm[all]
+
+    # Need to login to huggingface can pass token via --token
+    hf auth login
 
     kwdagger schedule \
       --params="
         pipeline: 'magnet.backends.helm.pipeline.helm_single_run_pipeline()'
         matrix:
           helm.run_entry:
-            - __include__: run_specs.yaml
+            # - __include__: run_specs.yaml
+            - thai_exam:exam=tgat,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2-base
+            - thai_exam:exam=tgat,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2.1-instruct
+            - thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2-base
+            - thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore/llama3-8b-cpt-sea-lionv2.1-instruct
           helm.max_eval_instances:
             - 1000
           helm.precomputed_root: null
       " \
       --root_dpath=$PWD/results \
-      --backend=serial \
+      --backend=tmux \
       --skip_existing=1 \
-      --run=0
+      --run=1
 
 
 """
