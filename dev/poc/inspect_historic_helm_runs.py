@@ -1,4 +1,4 @@
-"""
+r"""
 Compile a reproduction list from existing HELM outputs on disk.
 
 Given one or more roots that contain HELM outputs, discover all run directories
@@ -12,7 +12,29 @@ Ignore:
 
     LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
 
+    python -m magnet.backends.helm.materialize_helm_run \
+        --run_entry "ewok:domain=physical_interactions,model=meta/llama-3-8b-chat" \
+        --suite my-suite \
+        --max_eval_instances 1000 \
+        --out_dpath ./local-results/node_out_2 \
+        --precomputed_roots ./local-crfm-helm-public
+
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
+
+    kwdagger schedule \
+      --params="
+        pipeline: 'magnet.backends.helm.pipeline.helm_single_run_pipeline()'
+        matrix:
+          helm.run_entry:
+            - __include__: run_specs.yaml
+          helm.max_eval_instances:
+            - 1000
+          helm.precomputed_root: null
+      " \
+      --root_dpath=$PWD/results \
+      --backend=serial \
+      --skip_existing=1 \
+      --run=0
 
 
 """
@@ -160,7 +182,7 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             logger.info(f'scenario_histo = {ub.urepr(scenario_histo, nl=1)}')
             logger.info(f'model_histo = {ub.urepr(model_histo, nl=1)}')
 
-        run_spec_names = [r["run_spec_name"] for r in rows]
+        run_spec_names = [r["run_spec_name"] for r in chosen_rows]
 
         text = kwutil.Yaml.dumps(run_spec_names)
         if config.out_fpath:
