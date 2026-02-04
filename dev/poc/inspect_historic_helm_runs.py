@@ -9,17 +9,17 @@ Outputs are structured so you can:
 - optionally include max_eval_instances inferred from per_instance_stats.json
 
 Ignore:
-    LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public
+
+    LINE_PROFILE=1 python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_infos.json
+
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
 
 
 """
 
 from __future__ import annotations
-
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Optional, List, Dict, Any
+from typing import Iterable, Any
 
 import ubelt as ub
 import kwutil
@@ -71,13 +71,7 @@ class CompileHelmReproListConfig(scfg.DataConfig):
 
     out_fpath = scfg.Value(
         None,
-        help="Where to write JSON output. If omitted, prints to stdout.",
-    )
-
-    format = scfg.Value(
-        "json",
-        choices=["json", "txt"],
-        help="Output format. json is structured; txt is one run_entry per line.",
+        help="Where to write output. If omitted, prints to stdout.",
     )
 
     dedupe = scfg.Value(
@@ -106,7 +100,7 @@ class CompileHelmReproListConfig(scfg.DataConfig):
 
         suite_pattern = config.suite_pattern
         run_pattern = config.run_pattern
-        require_per_instance_stats = config.require_per_instance_stat
+        require_per_instance_stats = config.require_per_instance_stats
         include_max_eval_instances = config.include_max_eval_instances
 
         runs = gather_runs(
@@ -118,18 +112,16 @@ class CompileHelmReproListConfig(scfg.DataConfig):
         )
         rows = build_run_table(runs)
 
-        import pandas as pd
-        df = pd.DataFrame(rows)
+        scenario_histo = ub.dict_hist([r['scenario_class'] for r in rows])
         model_histo = ub.dict_hist([r['model'] for r in rows])
+        scenario_histo = ub.udict.sorted_values(scenario_histo)
+        model_histo = ub.udict.sorted_values(model_histo)
+        print(f'scenario_histo = {ub.urepr(scenario_histo, nl=1)}')
         print(f'model_histo = {ub.urepr(model_histo, nl=1)}')
-        print(df['scenario_class'].value_counts().to_string())
-        print(df['model'].value_counts().to_string())
 
-        from helm.benchmark.config_registry import (
-            register_builtin_configs_from_helm_package,
-        )
+        from helm.benchmark import config_registry
         from helm.benchmark import  model_deployment_registry
-        register_builtin_configs_from_helm_package()
+        config_registry.register_builtin_configs_from_helm_package()
         model_rows = []
         for model_name, count in model_histo.items():
             try:
@@ -137,80 +129,44 @@ class CompileHelmReproListConfig(scfg.DataConfig):
                 model_row = model_meta.__dict__ | {'count': count}
                 model_rows.append(model_row)
             except Exception:
-                print(f'missing: model_name = {ub.urepr(model_name, nl=1)}')
+                logger.warning(f'missing: model_name = {ub.urepr(model_name, nl=1)}')
 
-        flags = ['FULL_FUNCTIONALITY_TEXT_MODEL_TAG' in r['tags'] for r in model_rows]
-        model_rows = list(ub.compress(model_rows, flags))
-
-        model_df = pd.DataFrame(model_rows)
-        sub = model_df[model_df['access'] == 'open']
-        printable = sub.drop(['description'], axis=1)
-        printable = printable.drop(['deployment_names'], axis=1)
-        # printable = printable.drop(['tags'], axis=1)
-        printable = printable.sort_values('count')
-        printable = printable[printable['num_parameters'] < 200e9]
-        print(printable.to_string())
-        print(printable['num_parameters'].describe().round())
-
-        # {'TEXT_MODEL_TAG': 262,
-        #  'FULL_FUNCTIONALITY_TEXT_MODEL_TAG': 66,
-        #  'ANTHROPIC_CLAUDE_3_MODEL_TAG': 8,
-        #  'VISION_LANGUAGE_MODEL_TAG': 85,
-        #  'LIMITED_FUNCTIONALITY_TEXT_MODEL_TAG': 168,
-        #  'INSTRUCTION_FOLLOWING_MODEL_TAG': 184,
-        #  'PARTIAL_FUNCTIONALITY_TEXT_MODEL_TAG': 34,
-        #  'GOOGLE_GEMINI_MODEL_TAG': 30,
-        #  'OPENAI_CHATGPT_MODEL_TAG': 28,
-        #  'DEPRECATED_MODEL_TAG': 37,
-        #  'AUDIO_LANGUAGE_MODEL_TAG': 27,
-        #  'ABLATION_MODEL_TAG': 8,
-        #  'FULL_FUNCTIONALITY_VLM_TAG': 18,
-        #  'NOVA_MODEL_TAG': 4,
-        #  'CODE_MODEL_TAG': 2,
-        #  'GOOGLE_GEMMA_INSTRUCT_MODEL_TAG': 4,
-        #  'TEXT_TO_IMAGE_MODEL_TAG': 25,
-        #  'IDEFICS_MODEL_TAG': 5,
-        #  'IDEFICS_INSTRUCT_MODEL_TAG': 2,
-        #  'GOOGLE_GEMINI_PRO_VISION_V1_TAG': 1,
-        #  'LLAVA_MODEL_TAG': 2,
-        #  'LIMITED_FUNCTIONALITY_VLM_TAG': 4,
-        #  'ANTHROPIC_CLAUDE_1_MODEL_TAG': 3,
-        #  'ANTHROPIC_CLAUDE_2_MODEL_TAG': 2,
-        #  'GOOGLE_PALM_2_MODEL_TAG': 2,
-        #  'OPEN_FLAMINGO_MODEL_TAG': 1}
-
-        # BF16 cap: ~150B
-        # INT8 cap: ~300B
-        # 4-bit cap: ~600B
-        ub.dict_hist(ub.flatten(model_df['tags'].values))
-
-        chosen_names = set(printable.name)
-        rows = [r for r in rows if r['model'] in chosen_names]
-        logger.info(f'Filter to {len(rows)}')
-
-        # if config.dedupe:
-        #     rows = dedupe_rows(rows)
-
-        if config.format == "txt":
-            text = "\n".join([r["run_spec_name"] for r in rows]) + ("\n" if rows else "")
-            if config.out_fpath:
-                Path(config.out_fpath).write_text(text)
-                logger.success("Wrote {}", config.out_fpath)
-            else:
-                print(text, end="")
-            return {"num_rows": len(rows)}
-
-        payload = {
-            "num_rows": len(rows),
-            "rows": rows,
+        require_tags = {
+            'FULL_FUNCTIONALITY_TEXT_MODEL_TAG'
         }
+        MAX_PARAMS = 10e9
+        # MAX_PARAMS = 200e9
 
+        # Filter to text models that will fit in memory
+        chosen_model_rows = [
+            r for r in model_rows if (
+                set(r['tags']).issuperset(require_tags) and
+                r['num_parameters'] <= MAX_PARAMS
+            )
+        ]
+        logger.info('Filter to {} / {} models', len(chosen_model_rows), len(model_rows))
+
+        chosen_model_names = {r['name'] for r in chosen_model_rows}
+        chosen_rows = [r for r in rows if r['model'] in chosen_model_names]
+        logger.info('Filter to {} / {} runs', len(chosen_rows), len(rows))
+
+        if 1:
+            # Show filtered histograms
+            scenario_histo = ub.dict_hist([r['scenario_class'] for r in chosen_rows])
+            model_histo = ub.dict_hist([r['model'] for r in chosen_rows])
+            scenario_histo = ub.udict.sorted_values(scenario_histo)
+            model_histo = ub.udict.sorted_values(model_histo)
+            logger.info(f'scenario_histo = {ub.urepr(scenario_histo, nl=1)}')
+            logger.info(f'model_histo = {ub.urepr(model_histo, nl=1)}')
+
+        run_spec_names = [r["run_spec_name"] for r in rows]
+
+        text = kwutil.Yaml.dumps(run_spec_names)
         if config.out_fpath:
-            Path(config.out_fpath).write_text(kwutil.Json.dumps(payload, indent=2))
+            Path(config.out_fpath).write_text(text)
             logger.success("Wrote {}", config.out_fpath)
         else:
-            print(kwutil.Json.dumps(payload, indent=2))
-        return payload
+            print(text, end="")
 
 
 @profile
@@ -220,7 +176,7 @@ def gather_runs(
     run_pattern: str = "*:*",
     require_per_instance_stats: bool = False,
     include_max_eval_instances: bool = True,
-) -> List[HelmRun]:
+) -> list[HelmRun]:
 
     # Discover all benchmark_output dirs under provided roots
     logger.info('Discover benchmarks')
@@ -229,7 +185,7 @@ def gather_runs(
     if not bo_dirs:
         logger.warning("No benchmark_output dirs found under roots={}", roots)
 
-    runs: List[HelmRun] = []
+    runs: list[HelmRun] = []
     for bo in ub.ProgIter(bo_dirs, desc='Check dirs'):
         try:
             outputs = HelmOutputs.coerce(bo)
@@ -251,7 +207,7 @@ def gather_runs(
                 runs.append(run)
 
     # Stable order
-    logger.info(f'Found {len(runs)} run directories')
+    logger.info('Found {} run directories', len(runs))
     return runs
 
 
@@ -266,18 +222,23 @@ def build_run_table(runs: list[HelmRun]) -> list[dict]:
         if include_max_eval_instances:
             max_eval_instances = infer_num_instances(run.path)
 
-        run_spec = run.json.run_spec()
-        run_spec['scenario_spec']['class_name']
+        # Not sure if there is an advantage to msgspec or json here
+        # ZFS is likely messing up my timings.
+        if 1:
+            run_spec = run.json.run_spec()
+            scenario_class = run_spec['scenario_spec']['class_name']
+            model = run_spec['adapter_spec']['model']
+            run_spec_name = run_spec['name']
+        else:
+            run_spec = run.msgspec.run_spec()
+            scenario_class = run_spec.scenario_spec.class_name
+            model = run_spec.adapter_spec.model
+            run_spec_name = run_spec.name
 
-        run_spec = run.msgspec.run_spec()
-        scenario_class = run_spec.scenario_spec.class_name
-        model = run_spec.adapter_spec.model
-
-        run_spec_name = run_spec.name
-        if run.name != run_spec_name.replace('/', '_'):
+        if run.path.name != run_spec_name.replace('/', '_'):
             mismatches.append({
                 'run.path.parent': run.path.parent,
-                'run.name': run.name,
+                'run.path.name': run.path.name,
                 'run_spec_name': run_spec_name,
             })
 
@@ -295,12 +256,12 @@ def build_run_table(runs: list[HelmRun]) -> list[dict]:
             'model': model,
             'scenario_class': scenario_class,
         })
-    print(f'mismatches = {ub.urepr(mismatches, nl=2, align=":")}')
+    logger.warning(f'mismatches = {ub.urepr(mismatches, nl=2, align=":")}')
     rows.sort(key=lambda r: (r["run_dir"]))
     return rows
 
 
-def dedupe_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def dedupe_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     seen = set()
     out = []
     for r in rows:
