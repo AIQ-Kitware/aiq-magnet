@@ -10,6 +10,8 @@ Outputs are structured so you can:
 
 Ignore:
 
+    ls /data/crfm-helm-public/thaiexam/benchmark_output/runs/v1.1.0/thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore_llama3-8b-cpt-sea-lionv2.1-instruct
+
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
 
     python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/Public/AIQ/crfm-helm-public/
@@ -261,6 +263,12 @@ def build_run_table(runs: list[HelmRun]) -> list[dict]:
                 'run.path.name': run.path.name,
                 'run_spec_name': run_spec_name,
             })
+
+        # Hack: run spec names sometimes don't correctly encode the model
+        FIX_RUN_SPEC_NAME = True
+        if FIX_RUN_SPEC_NAME:
+            normalized_model = model.replace('/', '_')
+            run_spec_name = run_spec_name.replace(normalized_model, model)
 
         rows.append({
             # "benchmark_output_dir": str(Path(outputs.root_dir)),
