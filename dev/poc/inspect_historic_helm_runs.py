@@ -12,7 +12,7 @@ Ignore:
 
     ls /data/crfm-helm-public/thaiexam/benchmark_output/runs/v1.1.0/thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore_llama3-8b-cpt-sea-lionv2.1-instruct
 
-    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml
+    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_detail_specs.yaml
 
     cat run_specs.yaml | grep -v together > run_specs2.yaml
 
@@ -36,6 +36,7 @@ Ignore:
             - 1000
           helm.precomputed_root: null
       " \
+      --devices="0,1,2,3" \
       --tmux_workers=4 \
       --root_dpath=$PWD/results \
       --backend=tmux \
@@ -43,26 +44,11 @@ Ignore:
       --run=1
 
 
-2026-02-04T14:50:45 INFO             Loading eleutherai/pythia-6.9b (kwargs={}) for HELM model eleutherai/pythia-6.9b with Hugging Face Transformers {
-2026-02-04T14:50:45 INFO               Hugging Face device set to "cuda:0" because CUDA is available.
-2026-02-04T14:50:45 INFO               Loading Hugging Face model eleutherai/pythia-6.9b {
-2026-02-04 14:50:46.306571: I tensorflow/core/util/port.cc:153] oneDNN custom operations are on. You may see slightly different numerical results due to floating-point round-off er
-rors from different computation orders. To turn them off, set the environment variable `TF_ENABLE_ONEDNN_OPTS=0`.
-2026-02-04 14:50:46.352244: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical opera
-tions.
-To enable the following instructions: AVX2 AVX512F AVX512_VNNI AVX512_BF16 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
-Fetching 2 files: 100%|███████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [01:52<00:00, 56.16s/it]
-Loading checkpoint shards: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:03<00:00,  1.77s/it]
-2026-02-04T14:52:49 INFO               } [2m4.589s]███████████████████████████████████                                                               | 1/2 [01:52<01:52, 112.32s/it]
-2026-02-04T14:52:49 INFO             } [2m4.744s]█████████████████████████████████████████████████████████████████████████████████████████████████████| 2/2 [00:03<00:00,  1.64s/it]
-Setting `pad_token_id` to `eos_token_id`:187 for open-end generation.
-2026-02-04T14:52:50 ERROR            CUDA out of memory. Tried to allocate 78.00 MiB. GPU 0 has a total capacity of 94.97 GiB of which 77.50 MiB is free. Process 836764 has 13.90 G
-iB memory in use. Process 838163 has 14.97 GiB memory in use. Process 836760 has 13.98 GiB memory in use. Process 846239 has 25.32 GiB memory in use. Including non-PyTorch memory,
-this process has 26.70 GiB memory in use. Of the allocated memory 25.93 GiB is allocated by PyTorch, and 117.82 MiB is reserved by PyTorch but unallocated. If reserved but unalloca
-ted memory is large try setting PYTORCH_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes
-/cuda.html#environment-variables)
-
-
+2026-02-04T15:56:09 INFO       Done.                                                                                                                                    [3104/19060]
+2026-02-04T15:56:09 INFO     } [22m24.096s]
+└─── END CMD ───
+2026-02-04 15:56:11.463 | INFO     | __main__:main:434 - Wrote manifest: /home/local/KHQ/jon.crall/code/aiq-magnet/results/helm/helm_id_122cc4nm308f/adapter_manifest.json
+2026-02-04 15:56:11.463 | SUCCESS  | __main__:main:438 - Wrote DONE sentinel: /home/local/KHQ/jon.crall/code/aiq-magnet/results/helm/helm_id_122cc4nm308f/DONE
 
 """
 
@@ -119,6 +105,11 @@ class CompileHelmReproListConfig(scfg.DataConfig):
     out_fpath = scfg.Value(
         None,
         help="Where to write output. If omitted, prints to stdout.",
+    )
+
+    out_detail_fpath = scfg.Value(
+        None,
+        help="Where to write detailed output.",
     )
 
     dedupe = scfg.Value(
@@ -216,8 +207,12 @@ class CompileHelmReproListConfig(scfg.DataConfig):
             logger.info(f'scenario_histo = {ub.urepr(scenario_histo, nl=1)}')
             logger.info(f'model_histo = {ub.urepr(model_histo, nl=1)}')
 
-        run_spec_names = [r["run_spec_name"] for r in chosen_rows]
+        if config.out_detail_fpath:
+            text = kwutil.Yaml.dumps(chosen_rows)
+            Path(config.out_detail_fpath).write_text(text)
+            logger.success("Wrote {}", config.out_detail_fpath)
 
+        run_spec_names = [r["run_spec_name"] for r in chosen_rows]
         text = kwutil.Yaml.dumps(run_spec_names)
         if config.out_fpath:
             Path(config.out_fpath).write_text(text)
