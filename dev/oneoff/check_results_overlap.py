@@ -56,6 +56,8 @@ for helm_row in ub.ProgIter(helm_rows, desc="compare runs"):
         helm_row["agreement_bucket_base_task"] = "not attempted"
         continue
 
+    raise Exception
+
     helm_run = HelmRun.coerce(run_dir)
     kwdg_run = kwrow["run"]
 

@@ -44,6 +44,32 @@ CORE_PREFIXES = (
     'air_category_',
 )
 
+BOOKKEEPING_PREFIXES = (
+    # token/size/runtime / resource accounting
+    'num_',
+    'training_',
+    'inference_',
+    'batch_size',
+    'max_prob',
+    'logprob',
+    'num_perplexity_tokens',
+    'num_bytes',
+    'perplexity',
+    'bits_per_byte',
+    'logprob_per_byte',
+    # decoding / stopping bookkeeping
+    'finish_reason_',
+    'prompt_truncated',
+    # calibration / fitting plumbing (often depends on details)
+    'ece_',
+    'platt_',
+    'selective_',
+    # meta / dataset sizing
+    'num_instances',
+    'num_train_',
+    'num_references',
+)
+
 
 def is_core_metric_name(metric_name: str) -> bool:
     return any(metric_name.startswith(p) for p in CORE_PREFIXES)
@@ -940,7 +966,7 @@ class RunDiff:
 
     # --------- small helpers ----------
     def _mark(self, ok: bool) -> str:
-        return "✅" if ok else "❌"
+        return '✅' if ok else '❌'
 
     def _safe_get(self, d, key, default=None):
         try:
@@ -952,13 +978,13 @@ class RunDiff:
         """
         Best effort: prefer run.json.run_spec() if available; fall back to other attrs.
         """
-        if hasattr(run, "json") and hasattr(run.json, "run_spec"):
+        if hasattr(run, 'json') and hasattr(run.json, 'run_spec'):
             try:
                 return run.json.run_spec()
             except Exception:
                 pass
         # fallback: sometimes run spec name is in metadata; caller may also store it elsewhere
-        return getattr(run, "run_spec", None)
+        return getattr(run, 'run_spec', None)
 
     def _get_scenario_class(self, run):
         """
@@ -967,15 +993,20 @@ class RunDiff:
         rs = self._get_run_spec(run)
         if isinstance(rs, dict):
             # common keys you might see
-            for k in ["scenario_class", "scenario", "scenarioClass", "scenario_name"]:
+            for k in ['scenario_class', 'scenario', 'scenarioClass', 'scenario_name']:
                 if k in rs:
                     return rs[k]
         # fallback: scenario_state often includes it
-        if hasattr(run, "json") and hasattr(run.json, "scenario_state"):
+        if hasattr(run, 'json') and hasattr(run.json, 'scenario_state'):
             try:
                 st = run.json.scenario_state()
                 if isinstance(st, dict):
-                    for k in ["scenario_class", "scenario", "scenarioClass", "scenario_name"]:
+                    for k in [
+                        'scenario_class',
+                        'scenario',
+                        'scenarioClass',
+                        'scenario_name',
+                    ]:
                         if k in st:
                             return st[k]
             except Exception:
@@ -990,11 +1021,11 @@ class RunDiff:
 
         Note: we intentionally DO NOT canonicalize ordering here; ub.hash_data handles dict order.
         """
-        name_obj = stat.get("name", None)
+        name_obj = stat.get('name', None)
         if include_count:
-            key_obj = {"name": name_obj, "count": stat.get("count", None)}
+            key_obj = {'name': name_obj, 'count': stat.get('count', None)}
         else:
-            key_obj = {"name": name_obj}
+            key_obj = {'name': name_obj}
         return ub.hash_data(key_obj, base=36)
 
     def _coverage_counts(self, keys_a, keys_b):
@@ -1003,12 +1034,12 @@ class RunDiff:
         isect = set_a & set_b
         union = set_a | set_b
         return {
-            "nA": len(set_a),
-            "nB": len(set_b),
-            "isect": len(isect),
-            "union": len(union),
-            "onlyA": len(set_a - set_b),
-            "onlyB": len(set_b - set_a),
+            'nA': len(set_a),
+            'nB': len(set_b),
+            'isect': len(isect),
+            'union': len(union),
+            'onlyA': len(set_a - set_b),
+            'onlyB': len(set_b - set_a),
         }
 
     def _extract_instance_ids(self, per_instance_stats):
@@ -1019,15 +1050,15 @@ class RunDiff:
         ids = []
         for row in per_instance_stats:
             if isinstance(row, dict):
-                if "instance_id" in row:
-                    ids.append(("instance_id", row["instance_id"]))
-                elif "id" in row:
-                    ids.append(("id", row["id"]))
+                if 'instance_id' in row:
+                    ids.append(('instance_id', row['instance_id']))
+                elif 'id' in row:
+                    ids.append(('id', row['id']))
                 else:
                     # fallback: hash the whole row (not great, but provides overlap signal)
-                    ids.append(("hash", ub.hash_data(row, base=36)))
+                    ids.append(('hash', ub.hash_data(row, base=36)))
             else:
-                ids.append(("hash", ub.hash_data(row, base=36)))
+                ids.append(('hash', ub.hash_data(row, base=36)))
         return ids
 
     # --------- the requested first-level summary ----------
@@ -1042,70 +1073,607 @@ class RunDiff:
         5) Instance coverage (using per_instance_stats overlap)
         """
         lines = []
-        lines.append("=" * 80)
-        lines.append("RUNDIFF SUMMARY (L1)")
-        lines.append("")
+        lines.append('=' * 80)
+        lines.append('RUNDIFF SUMMARY (L1)')
+        lines.append('')
 
-        # 1) run spec check
-        run_spec_a = self._get_run_spec(self.run_a)
-        run_spec_b = self._get_run_spec(self.run_b)
-        same_spec = ub.hash_data(run_spec_a, base=36) == ub.hash_data(run_spec_b, base=36)
-        lines.append(f"1) Run spec: {self._mark(same_spec)}")
-        # compact repr
-        lines.append(f"   A: {ub.urepr(run_spec_a, compact=1, nl=0, nobr=1)[:max_show]}")
-        lines.append(f"   B: {ub.urepr(run_spec_b, compact=1, nl=0, nobr=1)[:max_show]}")
-        lines.append("")
+        # 0) run spec name check (fast + readable)
+        run_spec_a = self.run_a.json.run_spec()
+        run_spec_b = self.run_b.json.run_spec()
+        run_spec_name_a = run_spec_a.get('name', None)
+        run_spec_name_b = run_spec_b.get('name', None)
 
-        # 2) scenario check
-        scen_a = self._get_scenario_class(self.run_a)
-        scen_b = self._get_scenario_class(self.run_b)
-        same_scen = (scen_a == scen_b) and (scen_a is not None)
-        # if both None, treat as "unknown" rather than mismatch
-        if scen_a is None and scen_b is None:
-            lines.append("2) Scenario: ⚠️ (unknown)")
+        same_name = (run_spec_name_a == run_spec_name_b) and (
+            run_spec_name_a is not None
+        )
+        if same_name:
+            lines.append(f'0) Run spec name: {self._mark(True)} {run_spec_name_a}')
         else:
-            lines.append(f"2) Scenario: {self._mark(same_scen)}")
-        lines.append(f"   A: {scen_a}")
-        lines.append(f"   B: {scen_b}")
-        lines.append("")
+            lines.append(f'0) Run spec name: {self._mark(False)}')
+            lines.append(f'   A: {run_spec_name_a}')
+            lines.append(f'   B: {run_spec_name_b}')
+        lines.append('')
+
+        # 1) run spec structural check (print diffs, not full blobs)
+        # Choose a consistent diff direction: diff = B.diff(A)
+        # Then:
+        #   - faillist entries show B vs A values
+        #   - unique1 are only in B
+        #   - unique2 are only in A
+        spec_diff_raw = ub.IndexableWalker(run_spec_b).diff(run_spec_a)
+        spec_diff = ub.udict(spec_diff_raw) - {'passlist'}
+
+        same_spec = (
+            len(spec_diff.get('faillist', [])) == 0
+            and len(spec_diff.get('unique1', [])) == 0
+            and len(spec_diff.get('unique2', [])) == 0
+        )
+
+        lines.append(f'1) Run spec (full): {self._mark(same_spec)}')
+        if not same_spec:
+            lines.extend(
+                _format_diff(spec_diff, label_a='A', label_b='B', max_items=12)
+            )
+        lines.append('')
+
+        # 2) scenario check (again: diff-first)
+        scen_a = self.run_a.json.scenario()
+        scen_b = self.run_b.json.scenario()
+
+        if scen_a is None and scen_b is None:
+            lines.append('2) Scenario: ⚠️ (unknown)')
+            lines.append('')
+        else:
+            scen_diff_raw = ub.IndexableWalker(scen_b).diff(scen_a)
+            scen_diff = ub.udict(scen_diff_raw) - {'passlist'}
+
+            same_scen = (
+                len(scen_diff.get('faillist', [])) == 0
+                and len(scen_diff.get('unique1', [])) == 0
+                and len(scen_diff.get('unique2', [])) == 0
+            )
+
+            lines.append(f'2) Scenario: {self._mark(same_scen)}')
+            if not same_scen:
+                lines.extend(
+                    _format_diff(scen_diff, label_a='A', label_b='B', max_items=12)
+                )
+            else:
+                # short one-liner when equal
+                lines.append(f'   {ub.urepr(scen_a, compact=1, nl=0, nobr=1)}')
+            lines.append('')
 
         # 3) stats coverage (names only)
         stats_a = self.stats_a()
         stats_b = self.stats_b()
-        keys_a = [self._namekey(s, include_count=False) for s in stats_a if isinstance(s, dict)]
-        keys_b = [self._namekey(s, include_count=False) for s in stats_b if isinstance(s, dict)]
+
+        # Build *displayable* ids alongside hashed ids so we can preview differences.
+        # Identity here: just the 'name' object (dict) -> hash
+        def stat_name_obj(stat):
+            return stat.get('name', None)
+
+        def stat_name_disp(name_obj):
+            # compact display: metric + split + maybe a hint if perturbation present
+            if isinstance(name_obj, dict):
+                metric = name_obj.get('name', None)
+                split = name_obj.get('split', None)
+                pert = name_obj.get('perturbation', None)
+                if pert:
+                    pert_name = pert.get('name', 'pert')
+                    return f'{metric} split={split} pert={pert_name}'
+                else:
+                    return f'{metric} split={split}'
+            return ub.urepr(name_obj, compact=1, nl=0, nobr=1)
+
+        def name_hash(name_obj):
+            return ub.hash_data({'name': name_obj}, base=36)
+
+        # maps: hash -> display string (keep first)
+        disp_a = {}
+        disp_b = {}
+        keys_a = []
+        keys_b = []
+        for s in stats_a:
+            if isinstance(s, dict):
+                h = name_hash(stat_name_obj(s))
+                keys_a.append(h)
+                disp_a.setdefault(h, stat_name_disp(stat_name_obj(s)))
+        for s in stats_b:
+            if isinstance(s, dict):
+                h = name_hash(stat_name_obj(s))
+                keys_b.append(h)
+                disp_b.setdefault(h, stat_name_disp(stat_name_obj(s)))
+
         cov = self._coverage_counts(keys_a, keys_b)
-        lines.append("3) Stats coverage by name (ignoring count/value):")
+        lines.append('3) Stats coverage by name (ignoring count/value):')
         lines.append(
-            f"   nA={cov['nA']} nB={cov['nB']}  isect={cov['isect']} union={cov['union']}  onlyA={cov['onlyA']} onlyB={cov['onlyB']}"
+            f'   nA={cov["nA"]} nB={cov["nB"]}  isect={cov["isect"]} union={cov["union"]}  onlyA={cov["onlyA"]} onlyB={cov["onlyB"]}'
         )
-        lines.append("")
+
+        # quick preview of what differs (top-k)
+        if cov['onlyA'] or cov['onlyB']:
+            set_a = set(keys_a)
+            set_b = set(keys_b)
+            onlyA = sorted(set_a - set_b)
+            onlyB = sorted(set_b - set_a)
+            k = 8
+            if onlyA:
+                lines.append(
+                    f'   Only in A (showing {min(k, len(onlyA))}/{len(onlyA)}):'
+                )
+                for h in onlyA[:k]:
+                    lines.append(f'     - {disp_a.get(h, h)}')
+            if onlyB:
+                lines.append(
+                    f'   Only in B (showing {min(k, len(onlyB))}/{len(onlyB)}):'
+                )
+                for h in onlyB[:k]:
+                    lines.append(f'     - {disp_b.get(h, h)}')
+        lines.append('')
 
         # 4) stats coverage (name + count)
-        keys_a2 = [self._namekey(s, include_count=True) for s in stats_a if isinstance(s, dict)]
-        keys_b2 = [self._namekey(s, include_count=True) for s in stats_b if isinstance(s, dict)]
+        def namecount_hash(stat):
+            name_obj = stat.get('name', None)
+            cnt = stat.get('count', None)
+            return ub.hash_data({'name': name_obj, 'count': cnt}, base=36)
+
+        disp2_a = {}
+        disp2_b = {}
+        keys_a2 = []
+        keys_b2 = []
+        for s in stats_a:
+            if isinstance(s, dict):
+                h = namecount_hash(s)
+                keys_a2.append(h)
+                # add count to display
+                nobj = stat_name_obj(s)
+                disp2_a.setdefault(
+                    h, stat_name_disp(nobj) + f' count={s.get("count", None)}'
+                )
+        for s in stats_b:
+            if isinstance(s, dict):
+                h = namecount_hash(s)
+                keys_b2.append(h)
+                nobj = stat_name_obj(s)
+                disp2_b.setdefault(
+                    h, stat_name_disp(nobj) + f' count={s.get("count", None)}'
+                )
+
         cov2 = self._coverage_counts(keys_a2, keys_b2)
-        lines.append("4) Stats coverage by (name + count) (ignoring value):")
+        lines.append('4) Stats coverage by (name + count) (ignoring value):')
         lines.append(
-            f"   nA={cov2['nA']} nB={cov2['nB']}  isect={cov2['isect']} union={cov2['union']}  onlyA={cov2['onlyA']} onlyB={cov2['onlyB']}"
+            f'   nA={cov2["nA"]} nB={cov2["nB"]}  isect={cov2["isect"]} union={cov2["union"]}  onlyA={cov2["onlyA"]} onlyB={cov2["onlyB"]}'
         )
-        lines.append("")
+
+        # This section is most useful if we ALSO show “same name but different count”.
+        # Compute per-name count multiset diffs.
+        def name_only_key(stat):
+            return ub.hash_data({'name': stat.get('name', None)}, base=36)
+
+        counts_by_name_a = {}
+        counts_by_name_b = {}
+        for s in stats_a:
+            if isinstance(s, dict):
+                k = name_only_key(s)
+                counts_by_name_a.setdefault(k, Counter())[s.get('count', None)] += 1
+        for s in stats_b:
+            if isinstance(s, dict):
+                k = name_only_key(s)
+                counts_by_name_b.setdefault(k, Counter())[s.get('count', None)] += 1
+
+        count_mismatch_names = []
+        for k in set(counts_by_name_a) & set(counts_by_name_b):
+            if counts_by_name_a[k] != counts_by_name_b[k]:
+                count_mismatch_names.append(k)
+
+        if cov2['onlyA'] or cov2['onlyB']:
+            set_a2 = set(keys_a2)
+            set_b2 = set(keys_b2)
+            onlyA2 = sorted(set_a2 - set_b2)
+            onlyB2 = sorted(set_b2 - set_a2)
+            k = 8
+            if onlyA2:
+                lines.append(
+                    f'   Only in A (showing {min(k, len(onlyA2))}/{len(onlyA2)}):'
+                )
+                for h in onlyA2[:k]:
+                    lines.append(f'     - {disp2_a.get(h, h)}')
+            if onlyB2:
+                lines.append(
+                    f'   Only in B (showing {min(k, len(onlyB2))}/{len(onlyB2)}):'
+                )
+                for h in onlyB2[:k]:
+                    lines.append(f'     - {disp2_b.get(h, h)}')
+
+        if count_mismatch_names:
+            k = 8
+            lines.append(
+                f'   Same metric-name but different count-distribution (showing {min(k, len(count_mismatch_names))}/{len(count_mismatch_names)}):'
+            )
+            for nk in count_mismatch_names[:k]:
+                # try to recover a representative display from either side
+                # (we can’t map name-only hash back reliably, but we can approximate by searching disp_a keys)
+                # Better: build a reverse map once; here keep it cheap.
+                label = None
+                for h, d in disp_a.items():
+                    if h == nk:
+                        label = d
+                        break
+                if label is None:
+                    for h, d in disp_b.items():
+                        if h == nk:
+                            label = d
+                            break
+                if label is None:
+                    label = nk
+                lines.append(f'     - {label}')
+                lines.append(f'       A counts: {dict(counts_by_name_a.get(nk, {}))}')
+                lines.append(f'       B counts: {dict(counts_by_name_b.get(nk, {}))}')
+
+        lines.append('')
 
         # 5) instance coverage
         try:
             pia = self.per_instance_stats_a()
             pib = self.per_instance_stats_b()
-            ids_a = self._extract_instance_ids(pia)
+            ids_a = self._extract_instance_ids(pia)  # your tuple ids
             ids_b = self._extract_instance_ids(pib)
-            # treat ids as set of tuples
-            covi = self._coverage_counts(ids_a, ids_b)
-            lines.append("5) Instance coverage (per_instance_stats overlap):")
-            lines.append(
-                f"   nA={covi['nA']} nB={covi['nB']}  isect={covi['isect']} union={covi['union']}  onlyA={covi['onlyA']} onlyB={covi['onlyB']}"
-            )
-        except Exception as ex:
-            lines.append("5) Instance coverage: ⚠️ (could not compute)")
-            lines.append(f"   reason: {type(ex).__name__}: {ex}")
 
-        lines.append("=" * 80)
-        return "\n".join(lines)
+            covi = self._coverage_counts(ids_a, ids_b)
+            lines.append('5) Instance coverage (per_instance_stats overlap):')
+            lines.append(
+                f'   nA={covi["nA"]} nB={covi["nB"]}  isect={covi["isect"]} union={covi["union"]}  onlyA={covi["onlyA"]} onlyB={covi["onlyB"]}'
+            )
+
+            # show what key type we ended up using (instance_id vs hash fallback)
+            def key_type_hist(ids):
+                return Counter(
+                    [t[0] if isinstance(t, tuple) and len(t) else '?' for t in ids]
+                )
+
+            ktypes_a = key_type_hist(ids_a)
+            ktypes_b = key_type_hist(ids_b)
+            if ktypes_a != ktypes_b:
+                lines.append(
+                    f'   key-types differ: A={dict(ktypes_a)}  B={dict(ktypes_b)}'
+                )
+
+        except Exception as ex:
+            lines.append('5) Instance coverage: ⚠️ (could not compute)')
+            lines.append(f'   reason: {type(ex).__name__}: {ex}')
+
+        def _stat_disp(name_obj: dict) -> str:
+            metric = name_obj.get('name', None) if isinstance(name_obj, dict) else None
+            split = name_obj.get('split', None) if isinstance(name_obj, dict) else None
+            pn = _pert_name(name_obj)
+            if pn:
+                return f'{metric} split={split} pert={pn}'
+            return f'{metric} split={split}'
+
+        def _fmt_float(x, nd=4):
+            try:
+                return f'{float(x):.{nd}g}'
+            except Exception:
+                return str(x)
+
+        def _classify_metric(metric_name: str):
+            """
+            Returns: ('core'|'bookkeeping'|'untracked', matched_prefix)
+            """
+            if not metric_name:
+                return ('untracked', None)
+
+            for p in CORE_PREFIXES:
+                if metric_name.startswith(p):
+                    return ('core', p)
+
+            for p in BOOKKEEPING_PREFIXES:
+                if metric_name.startswith(p):
+                    return ('bookkeeping', p)
+
+            return ('untracked', None)
+
+        def _top(counter, k=8):
+            return sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))[:k]
+
+        def _summarize_bucket(bucket_label, bucket, *, topk=6):
+            """
+            bucket is a dict with:
+              n, mism, rows, prefix_all, prefix_mism, metric_all, metric_mism
+            """
+            lines = []
+            n = bucket['n']
+            mism = bucket['mism']
+            agree = 1 - mism / max(n, 1)
+            lines.append(
+                f'     {bucket_label}: comparable={n}  mismatched={mism}  agreement={_fmt_float(agree, 4)}'
+            )
+
+            if n == 0:
+                return lines
+
+            # show what exists vs what mismatches
+            lines.append(f'       top prefixes(all): {_top(bucket["prefix_all"], 6)}')
+            if mism:
+                lines.append(
+                    f'       top prefixes(mism): {_top(bucket["prefix_mism"], 6)}'
+                )
+
+            # show top untracked metric names if this is untracked
+            if bucket_label == 'untracked':
+                # metric_all/mism store full metric names
+                lines.append(
+                    f'       top metric names(all): {_top(bucket["metric_all"], 6)}'
+                )
+                if mism:
+                    lines.append(
+                        f'       top metric names(mism): {_top(bucket["metric_mism"], 6)}'
+                    )
+
+            if mism:
+                rows_sorted = sorted(
+                    bucket['rows'],
+                    key=lambda r: (float('-inf') if r['abs'] is None else -r['abs']),
+                )
+                lines.append(
+                    f'       Top {min(topk, len(rows_sorted))} abs(mean) deltas:'
+                )
+                for r in rows_sorted[:topk]:
+                    pert_tag = r['pert_name'] if r['pert_name'] else '-'
+                    lines.append(
+                        '         - '
+                        f'abs={ub.urepr(r["abs"], nl=0)} rel={ub.urepr(r["rel"], nl=0)} | '
+                        f'class={r["metric_class"]} pref={r["matched_prefix"]} | '
+                        f'split={r["split"]} pert={pert_tag} | '
+                        f'{_stat_disp(r["name"])} | '
+                        f'A={ub.urepr(r["mean_a"], nl=0)} B={ub.urepr(r["mean_b"], nl=0)}'
+                    )
+            return lines
+
+        # 6) value-aware summary for intersecting stats (compare mean only), split by perturbed and metric class
+        rel_tol = 1e-4
+        abs_tol = 1e-8
+        FIELDS = ['mean']  # keep it mean-only for now
+
+        def name_hash(name_obj):
+            return ub.hash_data({'name': name_obj}, base=36)
+
+        stats_a = self.stats_a()
+        stats_b = self.stats_b()
+
+        lut_a = {}
+        lut_b = {}
+        for s in stats_a:
+            if isinstance(s, dict) and 'name' in s:
+                lut_a.setdefault(name_hash(s['name']), s)
+        for s in stats_b:
+            if isinstance(s, dict) and 'name' in s:
+                lut_b.setdefault(name_hash(s['name']), s)
+
+        isect = sorted(set(lut_a) & set(lut_b))
+
+        # Structure:
+        # groups[pert_group][metric_class] -> bucket stats
+        def _new_bucket():
+            return {
+                'n': 0,
+                'mism': 0,
+                'rows': [],
+                'prefix_all': Counter(),
+                'prefix_mism': Counter(),
+                'metric_all': Counter(),
+                'metric_mism': Counter(),
+            }
+
+        groups = {
+            'unperturbed': {
+                'core': _new_bucket(),
+                'bookkeeping': _new_bucket(),
+                'untracked': _new_bucket(),
+            },
+            'perturbed': {
+                'core': _new_bucket(),
+                'bookkeeping': _new_bucket(),
+                'untracked': _new_bucket(),
+            },
+        }
+
+        for k in isect:
+            sa = lut_a[k]
+            sb = lut_b[k]
+            name_obj = sa.get('name', None)
+
+            if isinstance(name_obj, dict):
+                is_pert = bool(name_obj.get('perturbation', None))
+                metric = name_obj.get('name', None)
+                split = name_obj.get('split', None)
+                pn = _pert_name(name_obj)
+            else:
+                is_pert = False
+                metric = None
+                split = None
+                pn = None
+
+            metric_class, matched_prefix = _classify_metric(metric)
+            pert_group = 'perturbed' if is_pert else 'unperturbed'
+            bucket = groups[pert_group][metric_class]
+
+            bucket['n'] += 1
+            if matched_prefix is not None:
+                bucket['prefix_all'][matched_prefix] += 1
+            else:
+                # For untracked, also keep a simple prefix hint = first token before '_' or ':'
+                if metric:
+                    hint = metric.split('_', 1)[0].split(':', 1)[0]
+                    bucket['prefix_all'][hint] += 1
+                else:
+                    bucket['prefix_all']['?'] += 1
+
+            if metric:
+                bucket['metric_all'][metric] += 1
+
+            # Compare selected fields
+            field_mismatch = False
+            for f in FIELDS:
+                va = sa.get(f, None)
+                vb = sb.get(f, None)
+                if va is None and vb is None:
+                    continue
+                if not _isclose(va, vb, rel_tol=rel_tol, abs_tol=abs_tol):
+                    field_mismatch = True
+                    break
+
+            if field_mismatch:
+                bucket['mism'] += 1
+                if matched_prefix is not None:
+                    bucket['prefix_mism'][matched_prefix] += 1
+                else:
+                    if metric:
+                        hint = metric.split('_', 1)[0].split(':', 1)[0]
+                        bucket['prefix_mism'][hint] += 1
+                    else:
+                        bucket['prefix_mism']['?'] += 1
+
+                if metric:
+                    bucket['metric_mism'][metric] += 1
+
+                va = sa.get('mean', None)
+                vb = sb.get('mean', None)
+                try:
+                    absd = abs(float(va) - float(vb))
+                    reld = absd / (abs(float(vb)) + 1e-12)
+                except Exception:
+                    absd = None
+                    reld = None
+
+                bucket['rows'].append(
+                    {
+                        'metric_class': metric_class,
+                        'matched_prefix': matched_prefix,
+                        'split': split,
+                        'pert_name': pn,
+                        'metric': metric,
+                        'name': name_obj,
+                        'mean_a': va,
+                        'mean_b': vb,
+                        'abs': absd,
+                        'rel': reld,
+                    }
+                )
+
+        # Emit summary
+        lines.append('6) Value check on intersecting stats (compare mean only):')
+        lines.append('   split by perturbation × (core / bookkeeping / untracked)')
+        for pg in ['unperturbed', 'perturbed']:
+            lines.append(f'   {pg}:')
+            lines.extend(_summarize_bucket('core', groups[pg]['core'], topk=6))
+            lines.extend(
+                _summarize_bucket('bookkeeping', groups[pg]['bookkeeping'], topk=6)
+            )
+            lines.extend(
+                _summarize_bucket('untracked', groups[pg]['untracked'], topk=6)
+            )
+        lines.append('')
+
+        text = '\n'.join(lines)
+        print(text)
+
+        return text
+
+
+def _pretty_path(path):
+    # IndexableWalker paths are tuples; make them readable
+    if isinstance(path, (list, tuple)):
+        return '.'.join(map(str, path))
+    return str(path)
+
+
+def _format_diff(diff, *, label_a='A', label_b='B', max_items=12, indent='   '):
+    """
+    Format ub.IndexableWalker.diff output into a short, readable list.
+
+    diff should be a dict-like with at least 'faillist' / 'unique1' / 'unique2'.
+    We treat:
+      - 'faillist' as mismatched values at shared paths
+      - 'unique1' as present only in B (depending on diff direction)
+      - 'unique2' as present only in A
+    (Direction depends on how you call diff; we’ll label consistently below.)
+    """
+    lines = []
+    if diff is None:
+        return lines
+
+    faillist = diff.get('faillist', []) or []
+    unique_b = diff.get('unique1', []) or []  # see note below on direction
+    unique_a = diff.get('unique2', []) or []
+
+    # Mismatched values
+    if faillist:
+        lines.append(f'{indent}Value mismatches ({len(faillist)}):')
+        for item in faillist[:max_items]:
+            # item is often (path, v1, v2) or dict-ish; handle both
+            if isinstance(item, (list, tuple)) and len(item) >= 3:
+                path, vb, va = item[0], item[1], item[2]
+                p = _pretty_path(path)
+                lines.append(
+                    f'{indent}  {p}: {label_a}={ub.urepr(va, nl=0)}  {label_b}={ub.urepr(vb, nl=0)}'
+                )
+            else:
+                lines.append(f'{indent}  {ub.urepr(item, nl=0)}')
+        if len(faillist) > max_items:
+            lines.append(f'{indent}  ... +{len(faillist) - max_items} more')
+
+    # Coverage-only differences (paths only; values are sometimes in the item)
+    if unique_a:
+        lines.append(f'{indent}Only in {label_a} ({len(unique_a)}):')
+        for item in unique_a[:max_items]:
+            path = item[0] if isinstance(item, (list, tuple)) else item
+            lines.append(f'{indent}  {_pretty_path(path)}')
+        if len(unique_a) > max_items:
+            lines.append(f'{indent}  ... +{len(unique_a) - max_items} more')
+
+    if unique_b:
+        lines.append(f'{indent}Only in {label_b} ({len(unique_b)}):')
+        for item in unique_b[:max_items]:
+            path = item[0] if isinstance(item, (list, tuple)) else item
+            lines.append(f'{indent}  {_pretty_path(path)}')
+        if len(unique_b) > max_items:
+            lines.append(f'{indent}  ... +{len(unique_b) - max_items} more')
+
+    return lines
+
+
+def _isclose(a, b, rel_tol=1e-4, abs_tol=1e-8):
+    try:
+        return math.isclose(float(a), float(b), rel_tol=rel_tol, abs_tol=abs_tol)
+    except Exception:
+        return a == b
+
+
+def _stat_family(metric_name: str) -> str:
+    # lightweight family heuristic; you already have a better one — feel free to swap
+    if not metric_name:
+        return '?'
+    return metric_name.split('_', 1)[0].split(':', 1)[0]
+
+
+def _stat_is_perturbed(name_obj: dict) -> bool:
+    return bool(isinstance(name_obj, dict) and name_obj.get('perturbation', None))
+
+
+def _stat_disp(name_obj: dict) -> str:
+    # compact label for report lines
+    metric = name_obj.get('name', None) if isinstance(name_obj, dict) else None
+    split = name_obj.get('split', None) if isinstance(name_obj, dict) else None
+    pert = None
+    if isinstance(name_obj, dict) and name_obj.get('perturbation', None):
+        pert = name_obj['perturbation'].get('name', 'pert')
+    if pert:
+        return f'{metric} split={split} pert={pert}'
+    return f'{metric} split={split}'
+
+
+def _pert_name(name_obj):
+    if isinstance(name_obj, dict) and name_obj.get('perturbation', None):
+        return name_obj['perturbation'].get('name', 'pert')
+    return None
