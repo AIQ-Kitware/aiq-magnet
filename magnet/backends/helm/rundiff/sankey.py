@@ -269,122 +269,38 @@ class SankeyDiGraph(nx.DiGraph):
         Demodata for tests
         """
         import random
+
         r = random.Random(seed)
 
         rows = [
             dict(
-                dataset=r.choice(["coco", "openimages", "cityscapes"]),
-                backend=r.choice(["cuda", "cpu"]),
-                status=("fail" if r.random() < 0.15 else "ok"),
+                dataset=r.choice(['coco', 'openimages', 'cityscapes']),
+                backend=r.choice(['cuda', 'cpu']),
+                status=('fail' if r.random() < 0.15 else 'ok'),
             )
             for _ in range(n)
         ]
         for row in rows:
-            row["reason"] = (r.choice(["oom", "timeout"]) if row["status"] == "fail" else None)
+            row['reason'] = (
+                r.choice(['oom', 'timeout']) if row['status'] == 'fail' else None
+            )
 
         plan = Plan(
-            Root("All Runs"),
-            Group("dataset", "dataset"),
+            Root('All Runs'),
+            Group('dataset', 'dataset'),
             Split(
-                "status", "status",
+                'status',
+                'status',
                 branches={
-                    "ok": Plan(Group("backend", "backend")),
-                    "fail": Plan(Bucket("reason", "reason"), Group("backend", "backend")),
+                    'ok': Plan(Group('backend', 'backend')),
+                    'fail': Plan(
+                        Bucket('reason', 'reason'), Group('backend', 'backend')
+                    ),
                 },
             ),
         )
         self = plan.build_sankey(rows)
         return self
-
-    # ---- core conversions ----
-
-    def _to_sankey_data(self) -> Tuple[List[Any], List[int], List[int], List[float]]:
-        """
-        Convert into (nodes, source, target, value) for Plotly Sankey.
-
-        Example:
-            >>> # Convert nx graph to plotly sankey arrays
-            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
-            >>> import networkx as nx
-            >>> G = SankeyDiGraph()
-            >>> G.add_edge("A", "B", value=2)
-            >>> G.add_edge("A", "C", value=3)
-            >>> nodes, source, target, value = G._to_sankey_data()
-            >>> set(nodes) == {"A", "B", "C"}
-            True
-            >>> len(source) == len(target) == len(value) == 2
-            True
-            >>> sorted(value)
-            [2.0, 3.0]
-        """
-        try:
-            nodes = list(nx.topological_sort(self))
-        except nx.NetworkXUnfeasible:
-            nodes = list(self.nodes)
-
-        idx = {n: i for i, n in enumerate(nodes)}
-        source: List[int] = []
-        target: List[int] = []
-        value: List[float] = []
-
-        for u, v, data in self.edges(data=True):
-            source.append(idx[u])
-            target.append(idx[v])
-            value.append(float(data.get(self.edge_attr, 0)))
-
-        return nodes, source, target, value
-
-    def to_plotly(self, *, title: str = 'Sankey') -> PlotlyFigureLike:
-        """
-        Build a publishable Plotly Sankey figure.
-
-        Example:
-            >>> # xdoctest: +REQUIRES(module:plotly)
-            >>> import plotly
-            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
-            >>> G = SankeyDiGraph.demo(n=20)
-            >>> fig = G.to_plotly(title='Demo')
-            >>> assert fig.layout.title.text == 'Demo'
-            >>> # xdoctest: +REQUIRES(module:kaleido)
-            >>> # xdoctest: +REQUIRES(module:kwplot)
-            >>> # xdoctest: +REQUIRES(--show)
-            >>> import kwplot
-            >>> kwplot.autompl()
-            >>> import tempfile
-            >>> import os
-            >>> with tempfile.TemporaryDirectory() as d:
-            ...     fpath = os.path.join(d, "sankey_demo.png")
-            ...     fig.write_image(fpath, scale=1)
-            ...     assert os.path.exists(fpath)
-            ...     kwplot.imshow(fpath)
-        """
-        import plotly.graph_objects as go
-        nodes, source, target, value = self._to_sankey_data()
-        fig = go.Figure(
-            go.Sankey(
-                node=dict(label=nodes, pad=15, thickness=18),
-                link=dict(source=source, target=target, value=value),
-            )
-        )
-        fig.update_layout(title_text=title, font_size=14)
-        return fig
-
-    def write_plotly_figure(
-        self,
-        out_prefix: str,
-        *,
-        title: str = 'Sankey',
-        scale: int = 2,
-        formats: Tuple[str, ...] = ('png', 'pdf', 'svg', 'jpg'),
-    ) -> go.Figure:
-        """
-        Render to plotly and export images. Requires kaleido for export.
-        Returns the figure as well.
-        """
-        fig = self.to_plotly(title=title)
-        for ext in formats:
-            fig.write_image(f'{out_prefix}.{ext}', scale=scale)
-        return fig
 
     # ---- light reporting helpers (optional, but nice) ----
 
@@ -450,3 +366,77 @@ class SankeyDiGraph(nx.DiGraph):
         if max_edges is not None and len(edges) > max_edges:
             lines.append(f'... ({len(edges) - max_edges} more edges)')
         return '\n'.join(lines)
+
+    # ---- core conversions ----
+
+    def _to_sankey_data(self) -> Tuple[List[Any], List[int], List[int], List[float]]:
+        """
+        Convert into (nodes, source, target, value) for Plotly Sankey.
+
+        Example:
+            >>> # Convert nx graph to plotly sankey arrays
+            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
+            >>> import networkx as nx
+            >>> G = SankeyDiGraph()
+            >>> G.add_edge("A", "B", value=2)
+            >>> G.add_edge("A", "C", value=3)
+            >>> nodes, source, target, value = G._to_sankey_data()
+            >>> set(nodes) == {"A", "B", "C"}
+            True
+            >>> len(source) == len(target) == len(value) == 2
+            True
+            >>> sorted(value)
+            [2.0, 3.0]
+        """
+        try:
+            nodes = list(nx.topological_sort(self))
+        except nx.NetworkXUnfeasible:
+            nodes = list(self.nodes)
+
+        idx = {n: i for i, n in enumerate(nodes)}
+        source: List[int] = []
+        target: List[int] = []
+        value: List[float] = []
+
+        for u, v, data in self.edges(data=True):
+            source.append(idx[u])
+            target.append(idx[v])
+            value.append(float(data.get(self.edge_attr, 0)))
+
+        return nodes, source, target, value
+
+    def to_plotly(self, *, title: str = 'Sankey') -> PlotlyFigureLike:
+        """
+        Build a publishable Plotly Sankey figure.
+
+        Example:
+            >>> # xdoctest: +REQUIRES(module:plotly)
+            >>> import plotly
+            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
+            >>> G = SankeyDiGraph.demo(n=20)
+            >>> fig = G.to_plotly(title='Demo')
+            >>> assert fig.layout.title.text == 'Demo'
+            >>> # xdoctest: +REQUIRES(module:kaleido)
+            >>> # xdoctest: +REQUIRES(module:kwplot)
+            >>> # xdoctest: +REQUIRES(--show)
+            >>> import kwplot
+            >>> kwplot.autompl()
+            >>> import tempfile
+            >>> import os
+            >>> with tempfile.TemporaryDirectory() as d:
+            ...     fpath = os.path.join(d, "sankey_demo.png")
+            ...     fig.write_image(fpath, scale=1)
+            ...     assert os.path.exists(fpath)
+            ...     kwplot.imshow(fpath)
+        """
+        import plotly.graph_objects as go
+
+        nodes, source, target, value = self._to_sankey_data()
+        fig = go.Figure(
+            go.Sankey(
+                node=dict(label=nodes, pad=15, thickness=18),
+                link=dict(source=source, target=target, value=value),
+            )
+        )
+        fig.update_layout(title_text=title, font_size=14)
+        return fig
