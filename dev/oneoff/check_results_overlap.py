@@ -7,7 +7,8 @@ import ubelt as ub
 import kwutil
 from magnet.helm_outputs import HelmRun
 from magnet.helm_outputs import HelmOutputs
-from magnet.backends.helm.rundiff import compare, sankey
+from magnet.backends.helm.rundiff import sankey
+from magnet.backends.helm.rundiff.compare import RunDiff
 
 """
 !python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_details.yaml
@@ -56,30 +57,51 @@ for helm_row in ub.ProgIter(helm_rows, desc="compare runs"):
         helm_row["agreement_bucket_base_task"] = "not attempted"
         continue
 
-    raise Exception
-
     helm_run = HelmRun.coerce(run_dir)
     kwdg_run = kwrow["run"]
 
-    rd = compare.RunDiff(run_a=helm_run, run_b=kwdg_run)
+    rd = RunDiff(run_a=helm_run, run_b=kwdg_run, a_name="HELM", b_name="KWDG")
+    self = rd  # NOQA
+    print(rd.summary_l1())          # run spec + scenario + coverage + instances
+    print(rd.summary_values())      # value differences grouped core/bookkeeping/untracked
+    print(rd.report_core())         # existing core metric report
+
+    if 0:
+        print(rd.drilldown_core_metric_instances())
+        rd.lookup_instance(('instance_id', 'id14045'), which='a')
+        rd.lookup_instance(('instance_id', 'id14045'), which='b')
+
+    raise Exception
+
     helm_row.update(rd.summary_base_task())
     helm_row.update(rd.summary_core())
     rundiff_lut[run_spec_name] = rd   # save for later drilldown
 
-    helm_stats = helm_run.json.stats()
-    kwdg_stats = kwdg_run.json.stats()
+    # helm_stats = helm_run.json.stats()
+    # kwdg_stats = kwdg_run.json.stats()
 
-    out = compare.compare_run_pair(helm_stats, kwdg_stats, rel_tol=1e-4, abs_tol=1e-8)
-    helm_row.update(out)
+    # # out = compare.compare_run_pair(helm_stats, kwdg_stats, rel_tol=1e-4, abs_tol=1e-8)
+    # helm_row.update(out)
 
 df = pd.DataFrame(helm_rows)
 print(df.value_counts(["benchmark_name", "reproduced_step1"]))
 
+
+def attempt_status(row: dict[str, object]) -> str:
+    return (
+        'attempted' if row.get('reproduced_step1', False) else 'not_attempted'
+    )
+
+
+def agreement_label(row: dict[str, object]) -> str:
+    # Used in the sankey plan; keep it stable.
+    return row.get('agreement_bucket_base_task', 'unknown')
+
 plan = sankey.Plan(
     sankey.Root("Initial Set"),
     sankey.Group("benchmark", by="benchmark_name"),
-    sankey.Bucket("attempt", by=compare.attempt_status),
-    sankey.Bucket("agreement", by=compare.agreement_label),
+    sankey.Bucket("attempt", by=attempt_status),
+    sankey.Bucket("agreement", by=agreement_label),
 )
 print(plan.to_text())
 
