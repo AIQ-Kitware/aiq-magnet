@@ -296,6 +296,71 @@ class SankeyDiGraph(nx.DiGraph):
         self = plan.build_sankey(rows)
         return self
 
+    # ---- light reporting helpers (optional, but nice) ----
+
+    def summarize(
+        self,
+        *,
+        edge_attr: Optional[str] = None,
+        max_edges: Optional[int] = 200,
+        sort: str = 'value_desc',
+    ) -> str:
+        """
+        Like Plan.graph_to_text, but bound to the graph.
+
+        Example:
+            >>> import plotly
+            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
+            >>> self = SankeyDiGraph.demo()
+            >>> print(self.summarize())
+            Nodes: 10  Edges: 17
+            ...
+            Top nodes by outflow/inflow:
+              All Runs  out=200 in=0
+              status: ok  out=171 in=171
+              dataset: cityscapes  out=71 in=71
+              ...
+            Edges:
+              status: ok  ->  backend: cuda   value=94
+              status: ok  ->  backend: cpu   value=77
+              All Runs  ->  dataset: cityscapes   value=71
+              ...
+        """
+        edge_attr = edge_attr or self.edge_attr
+        lines: List[str] = []
+        lines.append(
+            f'Nodes: {self.number_of_nodes()}  Edges: {self.number_of_edges()}'
+        )
+        lines.append('')
+
+        def outflow(n):
+            return sum(self[n][v].get(edge_attr, 0) for v in self.successors(n))
+
+        def inflow(n):
+            return sum(self[u][n].get(edge_attr, 0) for u in self.predecessors(n))
+
+        nodes_sorted = sorted(
+            self.nodes, key=lambda n: (outflow(n), inflow(n)), reverse=True
+        )
+        lines.append('Top nodes by outflow/inflow:')
+        for n in nodes_sorted[:20]:
+            lines.append(f'  {n}  out={outflow(n):g} in={inflow(n):g}')
+        lines.append('')
+
+        edges = [(u, v, self[u][v].get(edge_attr, 0)) for u, v in self.edges]
+        if sort == 'value_desc':
+            edges.sort(key=lambda t: t[2], reverse=True)
+        elif sort == 'lex':
+            edges.sort(key=lambda t: (str(t[0]), str(t[1])))
+
+        lines.append('Edges:')
+        shown = edges if max_edges is None else edges[:max_edges]
+        for u, v, val in shown:
+            lines.append(f'  {u}  ->  {v}   {edge_attr}={val:g}')
+        if max_edges is not None and len(edges) > max_edges:
+            lines.append(f'... ({len(edges) - max_edges} more edges)')
+        return '\n'.join(lines)
+
     # ---- core conversions ----
 
     def _to_sankey_data(self) -> Tuple[List[Any], List[int], List[int], List[float]]:
@@ -368,85 +433,3 @@ class SankeyDiGraph(nx.DiGraph):
         )
         fig.update_layout(title_text=title, font_size=14)
         return fig
-
-    def write_plotly_figure(
-        self,
-        out_prefix: str,
-        *,
-        title: str = 'Sankey',
-        scale: int = 2,
-        formats: Tuple[str, ...] = ('png', 'pdf', 'svg', 'jpg'),
-    ) -> go.Figure:
-        """
-        Render to plotly and export images. Requires kaleido for export.
-        Returns the figure as well.
-        """
-        fig = self.to_plotly(title=title)
-        for ext in formats:
-            fig.write_image(f'{out_prefix}.{ext}', scale=scale)
-        return fig
-
-    # ---- light reporting helpers (optional, but nice) ----
-
-    def summarize(
-        self,
-        *,
-        edge_attr: Optional[str] = None,
-        max_edges: Optional[int] = 200,
-        sort: str = 'value_desc',
-    ) -> str:
-        """
-        Like Plan.graph_to_text, but bound to the graph.
-
-        Example:
-            >>> import plotly
-            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
-            >>> self = SankeyDiGraph.demo()
-            >>> print(self.summarize())
-            Nodes: 10  Edges: 17
-            ...
-            Top nodes by outflow/inflow:
-              All Runs  out=200 in=0
-              status: ok  out=171 in=171
-              dataset: cityscapes  out=71 in=71
-              ...
-            Edges:
-              status: ok  ->  backend: cuda   value=94
-              status: ok  ->  backend: cpu   value=77
-              All Runs  ->  dataset: cityscapes   value=71
-              ...
-        """
-        edge_attr = edge_attr or self.edge_attr
-        lines: List[str] = []
-        lines.append(
-            f'Nodes: {self.number_of_nodes()}  Edges: {self.number_of_edges()}'
-        )
-        lines.append('')
-
-        def outflow(n):
-            return sum(self[n][v].get(edge_attr, 0) for v in self.successors(n))
-
-        def inflow(n):
-            return sum(self[u][n].get(edge_attr, 0) for u in self.predecessors(n))
-
-        nodes_sorted = sorted(
-            self.nodes, key=lambda n: (outflow(n), inflow(n)), reverse=True
-        )
-        lines.append('Top nodes by outflow/inflow:')
-        for n in nodes_sorted[:20]:
-            lines.append(f'  {n}  out={outflow(n):g} in={inflow(n):g}')
-        lines.append('')
-
-        edges = [(u, v, self[u][v].get(edge_attr, 0)) for u, v in self.edges]
-        if sort == 'value_desc':
-            edges.sort(key=lambda t: t[2], reverse=True)
-        elif sort == 'lex':
-            edges.sort(key=lambda t: (str(t[0]), str(t[1])))
-
-        lines.append('Edges:')
-        shown = edges if max_edges is None else edges[:max_edges]
-        for u, v, val in shown:
-            lines.append(f'  {u}  ->  {v}   {edge_attr}={val:g}')
-        if max_edges is not None and len(edges) > max_edges:
-            lines.append(f'... ({len(edges) - max_edges} more edges)')
-        return '\n'.join(lines)

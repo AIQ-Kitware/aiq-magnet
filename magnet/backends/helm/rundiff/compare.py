@@ -13,6 +13,12 @@ import ubelt as ub
 
 from .run_analysis import build_bucket_index
 
+try:
+    # for type checking; avoid hard import costs in some contexts
+    from magnet.helm_outputs import HelmRun
+except Exception:  # pragma: no cover
+    HelmRun = Any  # type: ignore
+
 # --- Core metric matching ---
 CORE_PREFIXES = (
     "exact_match",
@@ -232,3 +238,215 @@ def attempt_status(row: Dict[str, Any]) -> str:
 
 def agreement_label(row: Dict[str, Any]) -> str:
     return row.get("agreement_bucket_base_task", "unknown")
+
+
+class RunDiff:
+    """
+    Lazy run-vs-run comparator with caching.
+
+    - `_a_cache`: items read from run_a (stats, scenario_state, per_instance_stats, etc.)
+    - `_b_cache`: items read from run_b
+    - `_cache`: computed comparisons (bucket compare, core compare, reports, etc.)
+
+    Notebook usage pattern:
+        rd = RunDiff(run_a, run_b)
+        row.update(rd.summary_base_task())
+        row.update(rd.summary_core())
+
+        # later
+        print(rd.report_base_task())
+        print(rd.report_core(topn=20))
+        dd = rd.drilldown_scenario_state()
+        pi = rd.drilldown_per_instance_stats(key_fields=("instance_id",))
+    """
+
+    def __init__(self, run_a: HelmRun, run_b: HelmRun):
+        self.run_a = run_a
+        self.run_b = run_b
+        self._a_cache: Dict[str, Any] = {}
+        self._b_cache: Dict[str, Any] = {}
+        self._cache: Dict[Any, Any] = {}
+
+    # -----------------------
+    # Lazy reads from each run
+    # -----------------------
+    def _a(self, key: str, factory):
+        if key not in self._a_cache:
+            self._a_cache[key] = factory()
+        return self._a_cache[key]
+
+    def _b(self, key: str, factory):
+        if key not in self._b_cache:
+            self._b_cache[key] = factory()
+        return self._b_cache[key]
+
+    def stats_a(self) -> List[Dict[str, Any]]:
+        return self._a("stats", lambda: self.run_a.json.stats())
+
+    def stats_b(self) -> List[Dict[str, Any]]:
+        return self._b("stats", lambda: self.run_b.json.stats())
+
+    def scenario_state_a(self) -> Dict[str, Any]:
+        return self._a("scenario_state", lambda: self.run_a.json.scenario_state())
+
+    def scenario_state_b(self) -> Dict[str, Any]:
+        return self._b("scenario_state", lambda: self.run_b.json.scenario_state())
+
+    def per_instance_stats_a(self) -> List[Dict[str, Any]]:
+        return self._a("per_instance_stats", lambda: self.run_a.json.per_instance_stats())
+
+    def per_instance_stats_b(self) -> List[Dict[str, Any]]:
+        return self._b("per_instance_stats", lambda: self.run_b.json.per_instance_stats())
+
+    # -----------------------
+    # Cached computed objects
+    # -----------------------
+    def _cached(self, key, factory):
+        if key not in self._cache:
+            self._cache[key] = factory()
+        return self._cache[key]
+
+    # ---- Bucketed comparisons (your “base_task / ops / pert” machinery) ----
+    def bucket_indices(self):
+        """
+        Returns preprocessed indices for bucketed comparisons.
+
+        This should call into your existing canonicalization / indexing routines
+        in `run_analysis.py` (or wherever you kept them).
+        """
+        from magnet.backends.helm.rundiff import run_analysis
+
+        def factory():
+            idx_a = run_analysis.build_bucket_index(
+                self.stats_a(),
+                drop_zero_count=True,
+                require_mean=True,
+            )
+            idx_b = run_analysis.build_bucket_index(
+                self.stats_b(),
+                drop_zero_count=True,
+                require_mean=True,
+            )
+            return idx_a, idx_b
+
+        return self._cached("bucket_indices", factory)
+
+    def bucket_compare(self, *, rel_tol=1e-4, abs_tol=1e-8):
+        """
+        Compare bucket indices and cache result.
+        """
+        from magnet.backends.helm.rundiff import compare as compare_mod
+
+        key = ("bucket_compare", float(rel_tol), float(abs_tol))
+
+        def factory():
+            idx_a, idx_b = self.bucket_indices()
+            return compare_mod.compare_bucket_indices(idx_a, idx_b, rel_tol=rel_tol, abs_tol=abs_tol)
+
+        return self._cached(key, factory)
+
+    def summary_base_task(self, *, rel_tol=1e-4, abs_tol=1e-8) -> Dict[str, Any]:
+        """
+        Small scalar summary for tables / Sankey.
+
+        Assumes your compare module has a summarizer that produces:
+            base_task_coverage, base_task_agreement, agreement_bucket_base_task
+        """
+        from magnet.backends.helm.rundiff import compare as compare_mod
+
+        comp = self.bucket_compare(rel_tol=rel_tol, abs_tol=abs_tol)
+        feats = compare_mod.summarize_for_sankey(comp)
+        return {
+            "base_task_cov": feats.get("base_task_coverage"),
+            "base_task_agree": feats.get("base_task_agreement"),
+            "agreement_bucket_base_task": feats.get("agreement_bucket_base_task"),
+        }
+
+    def report_base_task(self, *, rel_tol=1e-4, abs_tol=1e-8, topn=5) -> str:
+        """
+        Human-readable report (families, coverage deltas, top mean deltas).
+        Keep this deterministic and compact for notebook scanning.
+        """
+        from magnet.backends.helm.rundiff import compare as compare_mod
+
+        comp = self.bucket_compare(rel_tol=rel_tol, abs_tol=abs_tol)
+        return compare_mod.format_bucket_report(comp, topn=topn)
+
+    # ---- “Core” metric comparisons ----
+    def core_compare(self, *, rel_tol=1e-4, abs_tol=1e-8, topn=10):
+        from magnet.backends.helm.rundiff import compare as compare_mod
+
+        key = ("core_compare", float(rel_tol), float(abs_tol), int(topn))
+
+        def factory():
+            return compare_mod.compare_core_stats(
+                self.stats_a(), self.stats_b(),
+                rel_tol=rel_tol, abs_tol=abs_tol, topn=topn
+            )
+
+        return self._cached(key, factory)
+
+    def summary_core(self, *, rel_tol=1e-4, abs_tol=1e-8) -> Dict[str, Any]:
+        core = self.core_compare(rel_tol=rel_tol, abs_tol=abs_tol, topn=0)
+        return {
+            "core_cov": core.get("core_coverage"),
+            "core_agree": core.get("core_agreement"),
+            "core_mismatches": core.get("core_mismatches"),
+            "core_onlyA": core.get("core_onlyA"),
+            "core_onlyB": core.get("core_onlyB"),
+        }
+
+    def report_core(self, *, rel_tol=1e-4, abs_tol=1e-8, topn=10) -> str:
+        from magnet.backends.helm.rundiff import compare as compare_mod
+
+        core = self.core_compare(rel_tol=rel_tol, abs_tol=abs_tol, topn=topn)
+        return compare_mod.format_core_report(core)
+
+    # -----------------------
+    # Drilldowns (expensive)
+    # -----------------------
+    def drilldown_scenario_state(self):
+        """
+        Raw structural diff of scenario_state.
+        """
+        key = "scenario_state_diff"
+
+        def factory():
+            A = self.scenario_state_a()
+            B = self.scenario_state_b()
+            # ub.IndexableWalker expects indexable structures; scenario_state is dict-like
+            return ub.IndexableWalker(A).diff(ub.IndexableWalker(B))
+
+        return self._cached(key, factory)
+
+    def drilldown_per_instance_stats(self, *, key_fields=("instance_id",)):
+        """
+        Diff per-instance stats keyed by one or more fields.
+        """
+        key = ("per_instance_stats_diff", tuple(key_fields))
+
+        def factory():
+            from magnet.backends.helm.rundiff import drilldown as drill_mod
+            A = self.per_instance_stats_a()
+            B = self.per_instance_stats_b()
+            return drill_mod.diff_per_instance_stats(A, B, key_fields=key_fields)
+
+        return self._cached(key, factory)
+
+    # -----------------------
+    # Convenience
+    # -----------------------
+    def clear_cache(self):
+        """
+        Clear computed comparisons (keeps per-run read caches by default).
+        Useful if you change tolerances / definitions in code while iterating.
+        """
+        self._cache.clear()
+
+    def clear_all(self):
+        """
+        Clear everything (including run-local read caches).
+        """
+        self._cache.clear()
+        self._a_cache.clear()
+        self._b_cache.clear()
