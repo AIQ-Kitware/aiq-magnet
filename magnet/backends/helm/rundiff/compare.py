@@ -937,3 +937,175 @@ class RunDiff:
         self._cache.clear()
         self._a_cache.clear()
         self._b_cache.clear()
+
+    # --------- small helpers ----------
+    def _mark(self, ok: bool) -> str:
+        return "✅" if ok else "❌"
+
+    def _safe_get(self, d, key, default=None):
+        try:
+            return d.get(key, default)
+        except Exception:
+            return default
+
+    def _get_run_spec(self, run):
+        """
+        Best effort: prefer run.json.run_spec() if available; fall back to other attrs.
+        """
+        if hasattr(run, "json") and hasattr(run.json, "run_spec"):
+            try:
+                return run.json.run_spec()
+            except Exception:
+                pass
+        # fallback: sometimes run spec name is in metadata; caller may also store it elsewhere
+        return getattr(run, "run_spec", None)
+
+    def _get_scenario_class(self, run):
+        """
+        Best effort: prefer scenario class from run_spec (if present), else from scenario_state.
+        """
+        rs = self._get_run_spec(run)
+        if isinstance(rs, dict):
+            # common keys you might see
+            for k in ["scenario_class", "scenario", "scenarioClass", "scenario_name"]:
+                if k in rs:
+                    return rs[k]
+        # fallback: scenario_state often includes it
+        if hasattr(run, "json") and hasattr(run.json, "scenario_state"):
+            try:
+                st = run.json.scenario_state()
+                if isinstance(st, dict):
+                    for k in ["scenario_class", "scenario", "scenarioClass", "scenario_name"]:
+                        if k in st:
+                            return st[k]
+            except Exception:
+                pass
+        return None
+
+    def _namekey(self, stat, *, include_count: bool) -> str:
+        """
+        Defines a stable 'identity' for a stat for coverage (not values).
+        By default: use stat['name'] (dict) only.
+        If include_count: add stat['count'] as part of identity.
+
+        Note: we intentionally DO NOT canonicalize ordering here; ub.hash_data handles dict order.
+        """
+        name_obj = stat.get("name", None)
+        if include_count:
+            key_obj = {"name": name_obj, "count": stat.get("count", None)}
+        else:
+            key_obj = {"name": name_obj}
+        return ub.hash_data(key_obj, base=36)
+
+    def _coverage_counts(self, keys_a, keys_b):
+        set_a = set(keys_a)
+        set_b = set(keys_b)
+        isect = set_a & set_b
+        union = set_a | set_b
+        return {
+            "nA": len(set_a),
+            "nB": len(set_b),
+            "isect": len(isect),
+            "union": len(union),
+            "onlyA": len(set_a - set_b),
+            "onlyB": len(set_b - set_a),
+        }
+
+    def _extract_instance_ids(self, per_instance_stats):
+        """
+        Best effort: pick a stable-ish id key.
+        Many HELM per-instance rows include 'instance_id'. If not, fallback to hashing row.
+        """
+        ids = []
+        for row in per_instance_stats:
+            if isinstance(row, dict):
+                if "instance_id" in row:
+                    ids.append(("instance_id", row["instance_id"]))
+                elif "id" in row:
+                    ids.append(("id", row["id"]))
+                else:
+                    # fallback: hash the whole row (not great, but provides overlap signal)
+                    ids.append(("hash", ub.hash_data(row, base=36)))
+            else:
+                ids.append(("hash", ub.hash_data(row, base=36)))
+        return ids
+
+    # --------- the requested first-level summary ----------
+    def summary_level1(self, *, max_show: int = 160) -> str:
+        """
+        Level-1 summary (coverage / identity only; no value comparison):
+
+        1) Run spec equality check
+        2) Scenario equality check
+        3) Stats coverage by name (ignoring count/value)
+        4) Stats coverage by (name + count) (still ignoring value)
+        5) Instance coverage (using per_instance_stats overlap)
+        """
+        lines = []
+        lines.append("=" * 80)
+        lines.append("RUNDIFF SUMMARY (L1)")
+        lines.append("")
+
+        # 1) run spec check
+        run_spec_a = self._get_run_spec(self.run_a)
+        run_spec_b = self._get_run_spec(self.run_b)
+        same_spec = ub.hash_data(run_spec_a, base=36) == ub.hash_data(run_spec_b, base=36)
+        lines.append(f"1) Run spec: {self._mark(same_spec)}")
+        # compact repr
+        lines.append(f"   A: {ub.urepr(run_spec_a, compact=1, nl=0, nobr=1)[:max_show]}")
+        lines.append(f"   B: {ub.urepr(run_spec_b, compact=1, nl=0, nobr=1)[:max_show]}")
+        lines.append("")
+
+        # 2) scenario check
+        scen_a = self._get_scenario_class(self.run_a)
+        scen_b = self._get_scenario_class(self.run_b)
+        same_scen = (scen_a == scen_b) and (scen_a is not None)
+        # if both None, treat as "unknown" rather than mismatch
+        if scen_a is None and scen_b is None:
+            lines.append("2) Scenario: ⚠️ (unknown)")
+        else:
+            lines.append(f"2) Scenario: {self._mark(same_scen)}")
+        lines.append(f"   A: {scen_a}")
+        lines.append(f"   B: {scen_b}")
+        lines.append("")
+
+        # 3) stats coverage (names only)
+        stats_a = self.stats_a()
+        stats_b = self.stats_b()
+        keys_a = [self._namekey(s, include_count=False) for s in stats_a if isinstance(s, dict)]
+        keys_b = [self._namekey(s, include_count=False) for s in stats_b if isinstance(s, dict)]
+        cov = self._coverage_counts(keys_a, keys_b)
+        lines.append("3) Stats coverage by name (ignoring count/value):")
+        lines.append(
+            f"   nA={cov['nA']} nB={cov['nB']}  isect={cov['isect']} union={cov['union']}  onlyA={cov['onlyA']} onlyB={cov['onlyB']}"
+        )
+        lines.append("")
+
+        # 4) stats coverage (name + count)
+        keys_a2 = [self._namekey(s, include_count=True) for s in stats_a if isinstance(s, dict)]
+        keys_b2 = [self._namekey(s, include_count=True) for s in stats_b if isinstance(s, dict)]
+        cov2 = self._coverage_counts(keys_a2, keys_b2)
+        lines.append("4) Stats coverage by (name + count) (ignoring value):")
+        lines.append(
+            f"   nA={cov2['nA']} nB={cov2['nB']}  isect={cov2['isect']} union={cov2['union']}  onlyA={cov2['onlyA']} onlyB={cov2['onlyB']}"
+        )
+        lines.append("")
+
+        # 5) instance coverage
+        try:
+            pia = self.per_instance_stats_a()
+            pib = self.per_instance_stats_b()
+            ids_a = self._extract_instance_ids(pia)
+            ids_b = self._extract_instance_ids(pib)
+            # treat ids as set of tuples
+            covi = self._coverage_counts(ids_a, ids_b)
+            lines.append("5) Instance coverage (per_instance_stats overlap):")
+            lines.append(
+                f"   nA={covi['nA']} nB={covi['nB']}  isect={covi['isect']} union={covi['union']}  onlyA={covi['onlyA']} onlyB={covi['onlyB']}"
+            )
+        except Exception as ex:
+            lines.append("5) Instance coverage: ⚠️ (could not compute)")
+            lines.append(f"   reason: {type(ex).__name__}: {ex}")
+
+        lines.append("=" * 80)
+        return "\n".join(lines)
