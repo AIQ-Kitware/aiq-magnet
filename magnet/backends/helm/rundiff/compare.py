@@ -9,16 +9,12 @@ from __future__ import annotations
 
 import math
 from typing import Any, Dict, List
-
+import typing
 import ubelt as ub
-
 from .run_analysis import build_bucket_index
 
-try:
-    # for type checking; avoid hard import costs in some contexts
+if typing.TYPE_CHECKING:
     from magnet.helm_outputs import HelmRun
-except Exception:  # pragma: no cover
-    HelmRun = Any  # type: ignore
 
 # --- Core metric matching ---
 CORE_PREFIXES = (
@@ -301,6 +297,389 @@ def diff_per_instance_stats(
     }
 
 
+from __future__ import annotations
+
+from collections import Counter
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+import math
+
+import ubelt as ub
+
+
+def _fmt_float(x, nd=3):
+    if x is None:
+        return "None"
+    try:
+        if isinstance(x, (int,)):
+            return str(x)
+        if math.isnan(x):
+            return "nan"
+    except Exception:
+        ...
+    return f"{float(x):.{nd}g}"
+
+
+def _safe_div(a: float, b: float) -> float:
+    if b == 0:
+        return float("inf") if a != 0 else 0.0
+    return a / b
+
+
+def _topk(counter: Counter, k: int) -> List[Tuple[Any, int]]:
+    return sorted(counter.items(), key=lambda kv: (-kv[1], str(kv[0])))[:k]
+
+
+def _get_any(d: Dict[str, Any], keys: Iterable[str], default=None):
+    for k in keys:
+        if k in d:
+            return d[k]
+    return default
+
+
+def _stat_label_from_key(key: Any) -> str:
+    """
+    Try to make a readable label out of a metric-key / name object.
+    Works for:
+      - dict keys like {'name': 'exact_match', 'split': 'test', ...}
+      - tuples
+      - strings
+    """
+    if isinstance(key, str):
+        return key
+    if isinstance(key, dict):
+        name = key.get("name", key.get("metric", None))
+        split = key.get("split", None)
+        if split is not None and name is not None:
+            return f"{name} split={split}"
+        if name is not None:
+            return str(name)
+        return ub.urepr(key, compact=1, nl=0, nobr=1)
+    if isinstance(key, tuple):
+        return " | ".join(map(str, key))
+    return str(key)
+
+
+def _delta_rows_from_core(core: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Normalize "top mismatch rows" from whatever compare_core_stats produced.
+    Expected to find one of:
+      core['top'] / core['top_rows'] / core['core_top_mismatches']
+    Each row should ideally have: key, mean_a, mean_b, abs, rel
+    """
+    rows = _get_any(core, ["core_top_mismatches", "top_rows", "top", "rows"], default=[])
+    if rows is None:
+        rows = []
+    normed = []
+    for r in rows:
+        if isinstance(r, dict):
+            normed.append(r)
+        else:
+            # sometimes it might be a tuple like (key, mean_a, mean_b, abs, rel)
+            try:
+                key, mean_a, mean_b, absd, reld = r
+                normed.append({"key": key, "mean_a": mean_a, "mean_b": mean_b, "abs": absd, "rel": reld})
+            except Exception:
+                normed.append({"key": r})
+    return normed
+
+
+def format_core_report(core: Dict[str, Any], *, title: str = "CORE METRIC DIFF", topn: int = 8) -> str:
+    """
+    Pretty print core metric comparison dict.
+
+    The dict is expected (but not required) to have:
+      nA, nB, isect, union, core_coverage, core_agreement, core_mismatches
+      and optionally: core_top_mismatches (list of rows)
+    """
+    nA = _get_any(core, ["nA", "core_nA"], None)
+    nB = _get_any(core, ["nB", "core_nB"], None)
+    isect = _get_any(core, ["isect", "core_isect"], None)
+    union = _get_any(core, ["union", "core_union"], None)
+
+    cov = _get_any(core, ["core_coverage", "coverage"], None)
+    agree = _get_any(core, ["core_agreement", "agreement"], None)
+    mism = _get_any(core, ["core_mismatches", "mismatches"], None)
+
+    lines = []
+    lines.append("=" * 80)
+    lines.append(title)
+    if any(v is not None for v in [nA, nB, isect, union]):
+        lines.append(
+            f"nA={nA} nB={nB}  isect={isect} union={union}"
+        )
+    lines.append(
+        f"coverage={_fmt_float(cov, 4)}  agreement(isclose)={_fmt_float(agree, 4)}  mismatches={mism}"
+    )
+
+    rows = _delta_rows_from_core(core)
+    if rows:
+        # sort by abs if available
+        def sort_key(r):
+            return -(r.get("abs", float("-inf")) if r.get("abs", None) is not None else float("-inf"))
+        rows_sorted = sorted(rows, key=sort_key)[:topn]
+        lines.append("")
+        lines.append(f"Top {min(topn, len(rows_sorted))} mean deltas:")
+        for r in rows_sorted:
+            key = r.get("key", r.get("name", None))
+            mean_a = _get_any(r, ["mean_a", "A", "a", "value_a", "valueA"], None)
+            mean_b = _get_any(r, ["mean_b", "B", "b", "value_b", "valueB"], None)
+            absd = _get_any(r, ["abs", "abs_delta", "absd"], None)
+            reld = _get_any(r, ["rel", "rel_delta", "reld"], None)
+
+            # if abs/rel missing, compute if possible
+            try:
+                if absd is None and mean_a is not None and mean_b is not None:
+                    absd = abs(float(mean_a) - float(mean_b))
+                if reld is None and mean_a is not None and mean_b is not None:
+                    reld = _safe_div(abs(float(mean_a) - float(mean_b)), abs(float(mean_b)) + 1e-12)
+            except Exception:
+                ...
+
+            label = _stat_label_from_key(key)
+            lines.append(
+                f"  abs={_fmt_float(absd, 3)} rel={_fmt_float(reld, 3)} | {label} | A={_fmt_float(mean_a, 6)} B={_fmt_float(mean_b, 6)}"
+            )
+    lines.append("=" * 80)
+    return "\n".join(lines)
+
+
+def _summarize_namekeys(namekeys: Iterable[Any]) -> Dict[str, Counter]:
+    """
+    Given an iterable of 'name keys' (dict-ish), summarize counts by a few facets
+    similar to your earlier printouts: is_pert, kind, split, family, pert_name.
+
+    If keys are dicts that include fields like:
+      name, split, kind, is_perturbed, perturbation_name, family
+    we use them; otherwise we do best-effort inference.
+    """
+    summ = {
+        "is_pert": Counter(),
+        "kind": Counter(),
+        "split": Counter(),
+        "family": Counter(),
+        "pert_name": Counter(),
+        "metric": Counter(),
+    }
+
+    for k in namekeys:
+        if isinstance(k, dict):
+            metric = k.get("name", k.get("metric", None))
+            split = k.get("split", None)
+            kind = k.get("kind", None)
+            fam = k.get("family", None)
+
+            # pert presence
+            is_pert = k.get("is_perturbed", None)
+            pert = k.get("pert_name", k.get("perturbation_name", None))
+
+            if is_pert is None:
+                is_pert = pert is not None
+
+            summ["is_pert"][bool(is_pert)] += 1
+            if kind is not None:
+                summ["kind"][kind] += 1
+            if split is not None:
+                summ["split"][split] += 1
+            if fam is not None:
+                summ["family"][fam] += 1
+            if pert is not None:
+                summ["pert_name"][pert] += 1
+            if metric is not None:
+                summ["metric"][metric] += 1
+        else:
+            # if it's a string, at least count it as "metric"
+            summ["metric"][str(k)] += 1
+
+    return summ
+
+
+def _format_counter_block(title: str, counter: Counter, topk: int = 6) -> List[str]:
+    items = _topk(counter, topk)
+    return [f"  {title}: {items}"]
+
+
+def format_bucket_report(comp: Dict[str, Any], *, title: str = "RUN DIFF", topn: int = 3) -> str:
+    """
+    Pretty print the richer bucket comparison output.
+
+    This is designed to support your earlier text output like:
+
+      coverage(isect/union)=37/41=0.902
+      onlyA=4 onlyB=0 value_mismatches=26
+
+      [Coverage] Present only in A summary:
+        is_pert: ...
+        kind: ...
+        split: ...
+        family: ...
+        pert_name: ...
+
+      [Value] Mismatch breakdown:
+        is_perturbed: ...
+        top families: ...
+
+      [Value] Top 3 absolute mean deltas:
+        abs=... rel=... | fam=... kind=... split=... pert=... | metric=...
+
+    It will do best-effort extraction depending on what comp contains.
+    """
+    lines = []
+    lines.append("=" * 80)
+
+    # If caller wants to prepend run name, do it outside (the script already prints run_spec_name)
+    lines.append(title)
+
+    # expected fields (best effort)
+    cov_isect = _get_any(comp, ["isect", "coverage_isect", "n_isect"], None)
+    cov_union = _get_any(comp, ["union", "coverage_union", "n_union"], None)
+    onlyA = _get_any(comp, ["onlyA", "n_onlyA"], None)
+    onlyB = _get_any(comp, ["onlyB", "n_onlyB"], None)
+    value_mismatches = _get_any(comp, ["value_mismatches", "n_value_mismatches", "mismatches"], None)
+
+    # coverage ratio
+    cov_ratio = _get_any(comp, ["coverage", "coverage_ratio"], None)
+    if cov_ratio is None and cov_isect is not None and cov_union is not None:
+        try:
+            cov_ratio = float(cov_isect) / float(cov_union)
+        except Exception:
+            cov_ratio = None
+
+    if cov_isect is not None and cov_union is not None:
+        lines.append(
+            f"coverage(isect/union) = {cov_isect}/{cov_union} = {_fmt_float(cov_ratio, 4)}"
+        )
+    else:
+        lines.append(f"coverage = {_fmt_float(cov_ratio, 4)}")
+
+    # mismatch counts
+    if any(v is not None for v in [onlyA, onlyB, value_mismatches]):
+        lines.append(f"onlyA={onlyA}  onlyB={onlyB}  value_mismatches={value_mismatches}")
+
+    # ---- Coverage-only summaries (present only in A / only in B) ----
+    onlyA_keys = _get_any(comp, ["onlyA_keys", "onlyA_namekeys", "unique_a", "uniqueA", "onlyA"], default=None)
+    onlyB_keys = _get_any(comp, ["onlyB_keys", "onlyB_namekeys", "unique_b", "uniqueB", "onlyB"], default=None)
+
+    # Some compare implementations store sets/lists directly in onlyA/onlyB; if it's small-int in onlyA, ignore.
+    if isinstance(onlyA_keys, (int, float)):
+        onlyA_keys = None
+    if isinstance(onlyB_keys, (int, float)):
+        onlyB_keys = None
+
+    if onlyA_keys:
+        lines.append("")
+        lines.append("[Coverage] Present only in A summary:")
+        summ = _summarize_namekeys(onlyA_keys)
+        lines.extend(_format_counter_block("is_pert", summ["is_pert"]))
+        lines.extend(_format_counter_block("kind", summ["kind"]))
+        lines.extend(_format_counter_block("split", summ["split"]))
+        lines.extend(_format_counter_block("family", summ["family"]))
+        lines.extend(_format_counter_block("pert_name", summ["pert_name"]))
+
+    if onlyB_keys:
+        lines.append("")
+        lines.append("[Coverage] Present only in B summary:")
+        summ = _summarize_namekeys(onlyB_keys)
+        lines.extend(_format_counter_block("is_pert", summ["is_pert"]))
+        lines.extend(_format_counter_block("kind", summ["kind"]))
+        lines.extend(_format_counter_block("split", summ["split"]))
+        lines.extend(_format_counter_block("family", summ["family"]))
+        lines.extend(_format_counter_block("pert_name", summ["pert_name"]))
+
+    # ---- Value mismatch summaries ----
+    mism_rows = _get_any(comp, ["mismatch_rows", "value_mismatch_rows", "mismatches_rows", "value_mismatches_rows"], default=None)
+    if mism_rows is None:
+        mism_rows = _get_any(comp, ["top_mismatches", "mismatch_list"], default=[])
+
+    # If comp includes a “mismatch_summary” already, prefer it
+    mismatch_summary = _get_any(comp, ["mismatch_summary", "value_mismatch_summary"], default=None)
+
+    if mismatch_summary is not None:
+        lines.append("")
+        lines.append("[Value] Mismatch breakdown:")
+        # Expect dict-like: {is_perturbed: Counter, families: Counter}
+        if isinstance(mismatch_summary, dict):
+            if "is_perturbed" in mismatch_summary:
+                lines.append(f"  is_perturbed: {dict(mismatch_summary['is_perturbed'])}")
+            if "families" in mismatch_summary:
+                fams = mismatch_summary["families"]
+                if isinstance(fams, Counter):
+                    lines.append(f"  top families: {_topk(fams, 10)}")
+                else:
+                    lines.append(f"  top families: {fams}")
+        else:
+            lines.append(f"  {mismatch_summary}")
+    elif mism_rows:
+        # Build our own summary if rows have 'key' dicts
+        is_pert = Counter()
+        fams = Counter()
+        for r in mism_rows:
+            key = r.get("key", r.get("name_key", None)) if isinstance(r, dict) else None
+            if isinstance(key, dict):
+                is_pert[bool(key.get("is_perturbed", key.get("is_pert", False)))] += 1
+                fam = key.get("family", None)
+                if fam is not None:
+                    fams[fam] += 1
+        if is_pert or fams:
+            lines.append("")
+            lines.append("[Value] Mismatch breakdown:")
+            if is_pert:
+                lines.append(f"  is_perturbed: {dict(is_pert)}")
+            if fams:
+                lines.append(f"  top families: {_topk(fams, 10)}")
+
+    # ---- Top absolute mean deltas ----
+    top_rows = _get_any(comp, ["top_abs_deltas", "top_mean_deltas", "top_deltas", "top_rows"], default=None)
+    if top_rows is None:
+        # fall back: sort mism_rows by abs if present
+        if isinstance(mism_rows, list) and mism_rows:
+            def key_abs(r):
+                if isinstance(r, dict):
+                    return r.get("abs", r.get("abs_delta", -1))
+                return -1
+            top_rows = sorted([r for r in mism_rows if isinstance(r, dict)], key=key_abs, reverse=True)
+        else:
+            top_rows = []
+
+    if top_rows:
+        lines.append("")
+        lines.append(f"[Value] Top {min(topn, len(top_rows))} absolute mean deltas:")
+        for r in list(top_rows)[:topn]:
+            key = _get_any(r, ["key", "name_key"], None)
+            absd = _get_any(r, ["abs", "abs_delta"], None)
+            reld = _get_any(r, ["rel", "rel_delta"], None)
+            mean_a = _get_any(r, ["mean_a", "A", "a"], None)
+            mean_b = _get_any(r, ["mean_b", "B", "b"], None)
+
+            fam = kind = split = pert = metric = None
+            if isinstance(key, dict):
+                fam = key.get("family", None)
+                kind = key.get("kind", None)
+                split = key.get("split", None)
+                pert = key.get("pert_name", key.get("perturbation_name", None))
+                metric = key.get("name", None)
+
+            pert_disp = pert if pert is not None else "-"
+
+            # If abs/rel missing, compute
+            try:
+                if absd is None and mean_a is not None and mean_b is not None:
+                    absd = abs(float(mean_a) - float(mean_b))
+                if reld is None and mean_a is not None and mean_b is not None:
+                    reld = _safe_div(abs(float(mean_a) - float(mean_b)), abs(float(mean_b)) + 1e-12)
+            except Exception:
+                ...
+
+            left = f"abs={_fmt_float(absd, 4)} rel={_fmt_float(reld, 4)}"
+            mid = f"fam={fam} kind={kind} split={split} pert={pert_disp}"
+            right = f"metric={metric}"
+            if mean_a is not None or mean_b is not None:
+                right += f" | A={_fmt_float(mean_a, 6)} B={_fmt_float(mean_b, 6)}"
+            lines.append(f"  {left} | {mid} | {right}")
+
+    lines.append("=" * 80)
+    return "\n".join(lines)
+
+
 class RunDiff:
     """
     Lazy run-vs-run comparator with caching.
@@ -400,13 +779,11 @@ class RunDiff:
         """
         Compare bucket indices and cache result.
         """
-        from magnet.backends.helm.rundiff import compare as compare_mod
-
         key = ('bucket_compare', float(rel_tol), float(abs_tol))
 
         def factory():
             idx_a, idx_b = self.bucket_indices()
-            return compare_mod.compare_bucket_indices(
+            return compare_bucket_indices(
                 idx_a, idx_b, rel_tol=rel_tol, abs_tol=abs_tol
             )
 
@@ -419,10 +796,8 @@ class RunDiff:
         Assumes your compare module has a summarizer that produces:
             base_task_coverage, base_task_agreement, agreement_bucket_base_task
         """
-        from magnet.backends.helm.rundiff import compare as compare_mod
-
         comp = self.bucket_compare(rel_tol=rel_tol, abs_tol=abs_tol)
-        feats = compare_mod.summarize_for_sankey(comp)
+        feats = summarize_for_sankey(comp)
         return {
             'base_task_cov': feats.get('base_task_coverage'),
             'base_task_agree': feats.get('base_task_agreement'),
@@ -434,19 +809,16 @@ class RunDiff:
         Human-readable report (families, coverage deltas, top mean deltas).
         Keep this deterministic and compact for notebook scanning.
         """
-        from magnet.backends.helm.rundiff import compare as compare_mod
 
         comp = self.bucket_compare(rel_tol=rel_tol, abs_tol=abs_tol)
-        return compare_mod.format_bucket_report(comp, topn=topn)
+        return format_bucket_report(comp, topn=topn)
 
     # ---- “Core” metric comparisons ----
     def core_compare(self, *, rel_tol=1e-4, abs_tol=1e-8, topn=10):
-        from magnet.backends.helm.rundiff import compare as compare_mod
-
         key = ('core_compare', float(rel_tol), float(abs_tol), int(topn))
 
         def factory():
-            return compare_mod.compare_core_stats(
+            return compare_core_stats(
                 self.stats_a(),
                 self.stats_b(),
                 rel_tol=rel_tol,
@@ -467,10 +839,8 @@ class RunDiff:
         }
 
     def report_core(self, *, rel_tol=1e-4, abs_tol=1e-8, topn=10) -> str:
-        from magnet.backends.helm.rundiff import compare as compare_mod
-
         core = self.core_compare(rel_tol=rel_tol, abs_tol=abs_tol, topn=topn)
-        return compare_mod.format_core_report(core)
+        return format_core_report(core)
 
     # -----------------------
     # Drilldowns (expensive)
