@@ -269,27 +269,33 @@ class SankeyDiGraph(nx.DiGraph):
         Demodata for tests
         """
         import random
+
         r = random.Random(seed)
 
         rows = [
             dict(
-                dataset=r.choice(["coco", "openimages", "cityscapes"]),
-                backend=r.choice(["cuda", "cpu"]),
-                status=("fail" if r.random() < 0.15 else "ok"),
+                dataset=r.choice(['coco', 'openimages', 'cityscapes']),
+                backend=r.choice(['cuda', 'cpu']),
+                status=('fail' if r.random() < 0.15 else 'ok'),
             )
             for _ in range(n)
         ]
         for row in rows:
-            row["reason"] = (r.choice(["oom", "timeout"]) if row["status"] == "fail" else None)
+            row['reason'] = (
+                r.choice(['oom', 'timeout']) if row['status'] == 'fail' else None
+            )
 
         plan = Plan(
-            Root("All Runs"),
-            Group("dataset", "dataset"),
+            Root('All Runs'),
+            Group('dataset', 'dataset'),
             Split(
-                "status", "status",
+                'status',
+                'status',
                 branches={
-                    "ok": Plan(Group("backend", "backend")),
-                    "fail": Plan(Bucket("reason", "reason"), Group("backend", "backend")),
+                    'ok': Plan(Group('backend', 'backend')),
+                    'fail': Plan(
+                        Bucket('reason', 'reason'), Group('backend', 'backend')
+                    ),
                 },
             ),
         )
@@ -424,6 +430,7 @@ class SankeyDiGraph(nx.DiGraph):
             ...     kwplot.imshow(fpath)
         """
         import plotly.graph_objects as go
+
         nodes, source, target, value = self._to_sankey_data()
         fig = go.Figure(
             go.Sankey(

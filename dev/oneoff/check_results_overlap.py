@@ -8,7 +8,6 @@ import kwutil
 from magnet.helm_outputs import HelmRun
 from magnet.helm_outputs import HelmOutputs
 from magnet.backends.helm.rundiff import compare, sankey
-from magnet.backends.helm.rundiff.compare import attempt_status, agreement_label
 
 """
 !python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_details.yaml
@@ -38,6 +37,7 @@ print(f"len(helm_rows)={len(helm_rows)}")
 print(f"len(kwdagger_rows)={len(kwdagger_rows)}")
 
 
+rundiff_lut = {}
 for helm_row in ub.ProgIter(helm_rows, desc="compare runs"):
     run_dir = ub.Path(helm_row["run_dir"])
     suite_name = run_dir.parent.name
@@ -59,6 +59,11 @@ for helm_row in ub.ProgIter(helm_rows, desc="compare runs"):
     helm_run = HelmRun.coerce(run_dir)
     kwdg_run = kwrow["run"]
 
+    rd = compare.RunDiff(run_a=helm_run, run_b=kwdg_run)
+    helm_row.update(rd.summary_base_task())
+    helm_row.update(rd.summary_core())
+    rundiff_lut[run_spec_name] = rd   # save for later drilldown
+
     helm_stats = helm_run.json.stats()
     kwdg_stats = kwdg_run.json.stats()
 
@@ -71,8 +76,8 @@ print(df.value_counts(["benchmark_name", "reproduced_step1"]))
 plan = sankey.Plan(
     sankey.Root("Initial Set"),
     sankey.Group("benchmark", by="benchmark_name"),
-    sankey.Bucket("attempt", by=attempt_status),
-    sankey.Bucket("agreement", by=agreement_label),
+    sankey.Bucket("attempt", by=compare.attempt_status),
+    sankey.Bucket("agreement", by=compare.agreement_label),
 )
 print(plan.to_text())
 
