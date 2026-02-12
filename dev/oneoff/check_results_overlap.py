@@ -60,6 +60,11 @@ for helm_row in ub.ProgIter(helm_rows, desc="compare runs"):
     helm_run = HelmRun.coerce(run_dir)
     kwdg_run = kwrow["run"]
 
+    a = HelmRunAnalysis(helm_run)
+    b = HelmRunAnalysis(kwdg_run)
+    joined_instance_stat_table(a)
+    joined_instance_stat_table(b)
+
     rd = RunDiff(run_a=helm_run, run_b=kwdg_run, a_name="HELM", b_name="KWDG")
     self = rd  # NOQA
     print(rd.summary_l1())          # run spec + scenario + coverage + instances
