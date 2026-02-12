@@ -21,17 +21,6 @@ Notes
   robustness across HELM versions.
 * We do **conservative** canonicalization for hashing: only strip known
   environment-specific fields like path strings.
-
-Doctest
--------
-The doctest uses ``HelmRun.demo()`` (a small bundled run).
-
-    >>> from magnet.helm_outputs import HelmRun
-    >>> from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
-    >>> run = HelmRun.demo()
-    >>> ana = HelmRunAnalysis(run)
-    >>> info = ana.summary_dict(level='lite')
-    >>> assert 'run_spec_name' in info
 """
 
 from __future__ import annotations
@@ -56,6 +45,16 @@ class HelmRunAnalysis(ub.NiceRepr):
         The underlying run reader.
     name:
         Optional human-friendly label used in summaries.
+
+    Example:
+        >>> from magnet.backends.helm.helm_outputs import HelmRun
+        >>> from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
+        >>> run = HelmRun.demo()
+        >>> ana = HelmRunAnalysis(run)
+        >>> info = ana.summary_dict(level='lite')
+        >>> assert 'run_spec_name' in info
+        >>> print(f'info = {ub.urepr(info, nl=1)}')
+        >>> print(ana.summary_text(level='page'))
     """
 
     def __init__(self, run, *, name: str | None = None):
