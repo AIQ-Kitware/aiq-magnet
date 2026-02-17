@@ -219,7 +219,20 @@ def build_parser():
                         type=str,
                         help="Path to evaluation card YAML file")
 
+    parser.add_argument('--set', nargs='*', metavar='KEY=VALUE', default=[],
+                        help="Override symbol values (e.g. --set dataset=legalbench num_replicates=5)")
+
     return parser
+
+
+def _parse_overrides(override_strs):
+    overrides = {}
+    for s in override_strs:
+        if '=' not in s:
+            raise ValueError(f"Invalid override '{s}', expected KEY=VALUE")
+        key, value = s.split('=', 1)
+        overrides[key] = value
+    return overrides
 
 
 def main():
@@ -227,6 +240,16 @@ def main():
     args = parser.parse_args()
 
     card = EvaluationCard(args.path)
+
+    for key, value in _parse_overrides(args.set).items():
+        if key not in card.symbols.symbols:
+            raise ValueError(f"Unknown symbol '{key}' -- available: {list(card.symbols.symbols.keys())}")
+        sym = card.symbols.symbols[key]
+        # Cast to the symbol's declared type
+        type_map = {'int': int, 'float': float, 'str': str, 'bool': lambda v: v.lower() in ('true', '1', 'yes')}
+        caster = type_map.get(sym.type, str)
+        sym.value = caster(value)
+
     card.evaluate()
     card.summarize()
 

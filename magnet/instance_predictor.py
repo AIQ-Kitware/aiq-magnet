@@ -89,6 +89,8 @@ class InstancePredictor(Predictor):
 
         rich.print(escape(human_table.to_string()))
 
+        return human_table
+
     def predict(self,
                 train_split,
                 sequestered_test_split) -> list[InstancePrediction]:
