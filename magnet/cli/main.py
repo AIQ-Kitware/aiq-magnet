@@ -7,11 +7,13 @@ Example:
     >>> MagnetCLI.main(argv=['--help'], _noexit=True)
     >>> MagnetCLI.main(argv=['download', '--help'], _noexit=True)
     >>> MagnetCLI.main(argv=['download', 'helm', '--help'], _noexit=True)
+    >>> MagnetCLI.main(argv=['evaluate', '--help'], _noexit=True)
     >>> # Test version works
     >>> MagnetCLI.main(argv=['--version'])
 """
 import scriptconfig as scfg
 from magnet.cli.download_cli import DownloadModalCLI
+from magnet.evaluation import EvaluationConfig
 from magnet import __version__
 
 
@@ -23,6 +25,7 @@ class MagnetCLI(scfg.ModalCLI):
 
 
 MagnetCLI.register(DownloadModalCLI, command='download')
+MagnetCLI.register(EvaluationConfig, command='evaluate')
 
 
 __cli__ = MagnetCLI

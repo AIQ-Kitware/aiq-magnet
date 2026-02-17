@@ -23,6 +23,7 @@ class HelmInferenceEngine:
     dataset runs (as would typically be done through `helm-run`)
 
     Example:
+        >>> # xdoctest: +REQUIRES(--slow)
         >>> import magnet
         >>> from dataclasses import replace
         >>> self = magnet.HelmInferenceEngine()

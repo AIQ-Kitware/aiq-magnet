@@ -20,7 +20,7 @@ authors = [
     {name = "MAGNET Kitware", email = "aiq-ta2@kitware.com"}
 ]
 urls = { "Repository" = "https://github.com/AIQ-Kitware/aiq-magnet/" }
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 dependencies = [
     "crfm-helm>=0.5.8",
     "pandas>=2.2.3",
@@ -38,7 +38,10 @@ dependencies = [
     "msgspec>=0.19.0",
     "rich>=14.1.0",
     "fsspec>=2024.9.0",
-    "pyyaml>=6.0.2", "dkps @ git+https://github.com/jataware/dkps",
+    "pyyaml>=6.0.2",
+    "typing-extensions>=4.0.0",
+    "ruamel.yaml>=0.17.22",
+    "loguru>=0.7.3",
 ]
 
 [project.optional-dependencies]
@@ -74,9 +77,12 @@ docs = [
 magnet = "magnet.__main__:main"
 magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
 
+[project.entry-points.helm]
+run_specs = "magnet.backends.helm.run_specs"
+
 [tool.pytest.ini_options]
 addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
-norecursedirs = ".git build __pycache__ dev docs"
+norecursedirs = ".git build __pycache__ dev docs dockerfiles"
 
 [tool.mypy]
 disable_error_code = ["import-untyped"]
@@ -105,3 +111,11 @@ skip-magic-trailing-comma = false
 line-ending = "auto"
 docstring-code-format = false
 docstring-code-line-length = "dynamic"
+
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    ".*  # pragma: no cover",
+    ".*  # nocover",
+]

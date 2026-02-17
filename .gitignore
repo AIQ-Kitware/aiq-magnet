@@ -7,6 +7,10 @@ build
 docs/build/
 
 .ipynb_checkpoints/
+<<<<<<< HEAD
 # pixi environments
 .pixi/*
 !.pixi/config.toml
+=======
+.coverage
+>>>>>>> main

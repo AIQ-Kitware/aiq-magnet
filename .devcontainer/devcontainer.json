@@ -1,0 +1,40 @@
+{
+  "name": "local/magnet-dev",
+  "dockerComposeFile": ["compose.yml"],
+  "service": "magnet",
+
+  "workspaceFolder": "/workspaces/aiq-magnet",
+
+  "remoteUser": "vscode",
+  "updateRemoteUserUID": true,
+
+  "overrideCommand": false,
+
+  "containerEnv": {
+    "DEBIAN_FRONTEND": "noninteractive",
+    "UV_CACHE_DIR": "/workspaces/aiq-magnet/.devcontainer-state/uv-cache",
+    "PIP_DISABLE_PIP_VERSION_CHECK": "1",
+    "PYTHONDONTWRITEBYTECODE": "1"
+  },
+
+  "postCreateCommand": "bash -lc 'bash .devcontainer/scripts/post-create.sh'",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "redhat.vscode-yaml",
+        "editorconfig.editorconfig",
+        "charliermarsh.ruff",
+        "GitHub.vscode-pull-request-github",
+        "github.vscode-github-actions",
+        "GitHub.copilot",
+        "GitHub.copilot-chat"
+      ]
+    }
+  }
+}

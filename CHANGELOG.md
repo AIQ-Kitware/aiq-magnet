@@ -8,11 +8,17 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 * Added per-instance predictor base class (`InstancePredictor`) and random example
+* User can now specify patterns to helm runs, suites, or all outputs as predictor input
+* Added symbol sweeping capability to evaluation card evaluator
+* Added modal CLI for `evaluation.py` script
 
 ### Changed
 
 * Switched to single argument path input for example predictors
 * Cleaned up predicted vs. actual code for predictors
+* HelmRuns.coerce can now accept a more expressive set of inputs
+* BREAKING: You must how specify `helm_runs` when calling the predictor.
+* `magnet download helm` can now download multiple benchmarks
 
 ### Fixed
 

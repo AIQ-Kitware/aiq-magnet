@@ -6,14 +6,46 @@ description: |
 
 claim:
   python: |
-    for base_model, base_score in exact_match_scores:
-      for comp_model, comp_score in exact_match_scores:
-        assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
+    assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
 
 symbols:
   threshold:
     type: float
     value: 0.1
+
+  base_model:
+    sweep:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
+
+  base_score:
+    type: float
+    depends_on:
+      - base_model
+      - exact_match_scores
+    python: |
+      base_score = [(name, score) for name, score in exact_match_scores if name == base_model][0][1]
+
+  comp_model:
+    sweep:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
+
+  comp_score:
+    type: float
+    depends_on:
+      - comp_model
+      - exact_match_scores
+    python: |
+      comp_score = [(name, score) for name, score in exact_match_scores if name == comp_model][0][1]
 
   helm_runs_path:
     type: str
@@ -21,7 +53,8 @@ symbols:
 
   run_specs:
     type: object
-    depends_on: ['helm_runs_path']
+    depends_on:
+      - helm_runs_path
     python: |
       import ubelt as ub
       from magnet import HelmOutputs
@@ -41,7 +74,8 @@ symbols:
 
   exact_match_scores:
     type: List[Tuple[str, float]]
-    depends_on: ['run_specs']
+    depends_on:
+      - run_specs
     python: |
       # Get dataframe of results from runs
       run_stats = run_specs.stats()
@@ -55,10 +89,15 @@ symbols:
       # extract HELM model common names
       helm_models = run_specs.run_spec().set_index('run_spec.name')['run_spec.adapter_spec.model'].to_dict()
       run_stats['model'] = run_stats['run_spec.name'].map(helm_models)
-      
+
+      # only specific models
+      run_stats = run_stats[(run_stats['model'] == base_model) | (run_stats['model'] == comp_model)]
+
       # average exact_match scores across subjects
       exact_match_scores_df = run_stats.groupby('model')['stats.mean'].mean()
 
       exact_match_scores = list(exact_match_scores_df.items())
+
+
 
 

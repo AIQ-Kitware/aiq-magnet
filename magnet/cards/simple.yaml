@@ -18,6 +18,7 @@ symbols:
   
   int_range_odd:
     type: List[int]
-    depends_on: ['int_range_even']
+    depends_on:
+      - int_range_even
     python: |
       int_range_odd = [n + 1 for n in int_range_even]
