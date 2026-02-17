@@ -11,8 +11,8 @@ This refactor has two goals:
 
 The public API is intentionally small:
 
-* :class:`RunDiff` - wrap two runs, cache expensive computations
-* :meth:`RunDiff.summary_dict` / :meth:`RunDiff.summary_text`
+* :class:`HelmRunDiff` - wrap two runs, cache expensive computations
+* :meth:`HelmRunDiff.summary_dict` / :meth:`HelmRunDiff.summary_text`
 
 Everything else is an implementation detail and can be promoted later.
 """
@@ -83,7 +83,7 @@ class Coverage:
         )
 
 
-class RunDiff(ub.NiceRepr):
+class HelmRunDiff(ub.NiceRepr):
     """Compare two HELM runs.
 
     Parameters
@@ -97,7 +97,7 @@ class RunDiff(ub.NiceRepr):
         >>> import ubelt as ub
         >>> import kwutil
         >>> from magnet.backends.helm.helm_outputs import HelmRun
-        >>> from magnet.backends.helm.helm_run_diff import RunDiff
+        >>> from magnet.backends.helm.helm_run_diff import HelmRunDiff
         >>> run_a = HelmRun.demo()
         >>> dpath = ub.Path.appdir('magnet/tests/helm/rundiff').delete().ensuredir()
 
@@ -105,7 +105,7 @@ class RunDiff(ub.NiceRepr):
         >>> same_path = dpath / (run_a.path.name + '_same')
         >>> run_a.path.copy(same_path)
         >>> run_b = HelmRun(same_path)
-        >>> rd = RunDiff(run_a, run_b, a_name='orig', b_name='same')
+        >>> rd = HelmRunDiff(run_a, run_b, a_name='orig', b_name='same')
         >>> info = rd.summary_dict(level='l1')
         >>> assert info['run_spec_dict_ok'] is True
         >>> assert info['scenario_ok'] in {True, None}
@@ -123,7 +123,7 @@ class RunDiff(ub.NiceRepr):
         >>> stats[0]['mean'] = old_mean + 1.23
         >>> stat_fpath.write_text(kwutil.Json.dumps(stats))
         >>> run_b2 = HelmRun(stats_path)
-        >>> rd2 = RunDiff(run_a, run_b2, a_name='orig', b_name='stats+1.23')
+        >>> rd2 = HelmRunDiff(run_a, run_b2, a_name='orig', b_name='stats+1.23')
         >>> info2 = rd2.summary_dict(level='l1')
         >>> assert info2['value_agreement']['overall']['mismatched'] >= 1
         >>> top = info2['value_agreement']['top_mismatches'][0]
@@ -151,8 +151,8 @@ class RunDiff(ub.NiceRepr):
         >>> pi_fpath.write_text(kwutil.Json.dumps(perinst))
         >>> run_bi = HelmRun(inst_path)
 
-        >>> # RunDiff should own the keying + join logic and produce a report.
-        >>> rd_i = RunDiff(run_a, run_bi, a_name='orig', b_name='perinst+9')
+        >>> # HelmRunDiff should own the keying + join logic and produce a report.
+        >>> rd_i = HelmRunDiff(run_a, run_bi, a_name='orig', b_name='perinst+9')
 
         >>> inst_info = rd_i.instance_summary_dict(top_n=5)
         >>> assert inst_info['means']['mismatched'] >= 1
@@ -278,13 +278,18 @@ class RunDiff(ub.NiceRepr):
         self._cache[cache_key] = out
         return out
 
-    def summary_text(self, *, level: str = 'line') -> str:
+    def summary_text(self, *, level: str = 'line', writer=None) -> str:
         """Human-readable report.
 
         level='line' is intended for tables.
         level='page' is a compact multi-line report.
         """
         info = self.summary_dict(level='l1')
+
+        if writer is None:
+            from rich.console import Console
+            _console = Console()
+            writer = _console.print
 
         if level == 'line':
             ok = info['run_spec_dict_ok'] and (info['scenario_ok'] in {True, None})
@@ -299,49 +304,49 @@ class RunDiff(ub.NiceRepr):
 
         if level == 'page':
             lines: list[str] = []
-            lines.append(f"RunDiff: {self.a_name} vs {self.b_name}")
-            lines.append(f"  {self.a_name}: {self.a.summary_text(level='line')}")
-            lines.append(f"  {self.b_name}: {self.b.summary_text(level='line')}")
+            writer(f"HelmRunDiff: {self.a_name} vs {self.b_name}")
+            writer(f"  {self.a_name}: {self.a.summary_text(level='line')}")
+            writer(f"  {self.b_name}: {self.b.summary_text(level='line')}")
 
-            lines.append("")
-            lines.append(f"Run spec name: {_format_bool(info['run_spec_name_ok'])}  {info['run_spec_name_a']}  vs  {info['run_spec_name_b']}")
-            lines.append(f"Run spec dict: {_format_bool(info['run_spec_dict_ok'])}  hashA={info['run_spec_hash_a'][:10]}  hashB={info['run_spec_hash_b'][:10]}")
+            writer("")
+            writer(f"Run spec name: {_format_bool(info['run_spec_name_ok'])}  {info['run_spec_name_a']}  vs  {info['run_spec_name_b']}")
+            writer(f"Run spec dict: {_format_bool(info['run_spec_dict_ok'])}  hashA={info['run_spec_hash_a'][:10]}  hashB={info['run_spec_hash_b'][:10]}")
             if not info['run_spec_dict_ok'] and info['run_spec_diff_paths']:
-                lines.append(f"  diff paths: {', '.join(info['run_spec_diff_paths'])}")
+                writer(f"  diff paths: {', '.join(info['run_spec_diff_paths'])}")
 
             if info['scenario_ok'] is None:
-                lines.append("Scenario: ⚠️  unknown (missing scenario.json in one or both runs)")
+                writer("Scenario: ⚠️  unknown (missing scenario.json in one or both runs)")
             else:
-                lines.append(f"Scenario: {_format_bool(bool(info['scenario_ok']))}")
+                writer(f"Scenario: {_format_bool(bool(info['scenario_ok']))}")
                 if info['scenario_ok'] is False and info['scenario_diff_paths']:
-                    lines.append(f"  diff paths: {', '.join(info['scenario_diff_paths'])}")
+                    writer(f"  diff paths: {', '.join(info['scenario_diff_paths'])}")
 
             cov = info['stats_coverage_by_name']
             cov2 = info['stats_coverage_by_name_count']
-            lines.append("")
-            lines.append("Stats coverage:")
-            lines.append(
+            writer("")
+            writer("Stats coverage:")
+            writer(
                 f"  by name:       A={cov['n_a']} B={cov['n_b']} isect={cov['n_isect']} union={cov['n_union']} onlyA={cov['only_a']} onlyB={cov['only_b']}"
             )
-            lines.append(
+            writer(
                 f"  by name+count: A={cov2['n_a']} B={cov2['n_b']} isect={cov2['n_isect']} union={cov2['n_union']} onlyA={cov2['only_a']} onlyB={cov2['only_b']}"
             )
 
-            lines.append("")
-            lines.append("Value agreement (mean on intersecting stats):")
+            writer("")
+            writer("Value agreement (mean on intersecting stats):")
             ov = info['value_agreement']['overall']
-            lines.append(f"  overall: comparable={ov['comparable']} mismatched={ov['mismatched']} agree_ratio={ov['agree_ratio']:.3f}")
+            writer(f"  overall: comparable={ov['comparable']} mismatched={ov['mismatched']} agree_ratio={ov['agree_ratio']:.3f}")
             for cls in ('core', 'bookkeeping', 'untracked'):
                 s = info['value_agreement']['by_class'][cls]
-                lines.append(
+                writer(
                     f"  {cls:11s}: comparable={s['comparable']} mismatched={s['mismatched']} agree_ratio={s['agree_ratio']:.3f}"
                 )
 
             top = info['value_agreement'].get('top_mismatches', [])
             if top:
-                lines.append("  top mismatches:")
+                writer("  top mismatches:")
                 for r in top:
-                    lines.append(
+                    writer(
                         f"    {r['key']}  A={_fmt(r['a'])}  B={_fmt(r['b'])}  Δ={_fmt(r['abs_delta'])}"
                     )
             return "\n".join(lines)
@@ -358,283 +363,18 @@ class RunDiff(ub.NiceRepr):
           - top mismatches by abs delta
           - perturbed vs unperturbed breakdown
         """
-        A = self.a
-        B = self.b
+        return instance_summary_dict(self, top_n=top_n)
 
-        jt_a = A.joined_instance_stat_table(assert_assumptions=True)
-        jt_b = B.joined_instance_stat_table(assert_assumptions=True)
-
-        def row_key(r):
-            n = (r['stat'].get('name') or {})
-            pert = n.get('perturbation', None)
-            pert_name = pert.get('name', None) if isinstance(pert, dict) else None
-            # Include stat perturbation name (if present) because those are distinct metrics.
-            return (
-                r['instance_id'],
-                r['train_trial_index'],
-                # request/instance perturbation id (variant selector)
-                r.get('perturbation_id', None),
-                # stat identity
-                n.get('name', None),
-                n.get('split', None),
-                n.get('sub_split', None),
-                pert_name,
-            )
-
-        def mean_map(jt):
-            out = {}
-            for r in jt:
-                s = r['stat']
-                if s.get('count', 0) and ('mean' in s):
-                    out[row_key(r)] = float(s['mean'])
-            return out
-
-        map_a = mean_map(jt_a)
-        map_b = mean_map(jt_b)
-
-        ka, kb = set(map_a), set(map_b)
-        isect = ka & kb
-        only_a = ka - kb
-        only_b = kb - ka
-
-        mism = []
-        for k in isect:
-            a = map_a[k]
-            b = map_b[k]
-            if a != b:
-                mism.append((abs(a - b), k, a, b))
-        mism.sort(reverse=True)
-
-        comparable = len(isect)
-        mismatched = len(mism)
-        agree_ratio = 1.0 if comparable == 0 else (comparable - mismatched) / comparable
-
-        # Perturbed/unperturbed breakdown using *variant* perturbation_id
-        def is_perturbed_key(k):
-            # k[2] is request/instance perturbation_id (None for base)
-            return (k[2] is not None)
-
-        isect_pert = [k for k in isect if is_perturbed_key(k)]
-        isect_base = [k for k in isect if not is_perturbed_key(k)]
-
-        def agree_ratio_subset(keys):
-            if not keys:
-                return 1.0
-            mm = 0
-            for k in keys:
-                if map_a[k] != map_b[k]:
-                    mm += 1
-            return (len(keys) - mm) / len(keys)
-
-        out = {
-            'coverage': {
-                'n_a': len(ka),
-                'n_b': len(kb),
-                'n_isect': len(isect),
-                'n_union': len(ka | kb),
-                'only_a': len(only_a),
-                'only_b': len(only_b),
-            },
-            'means': {
-                'comparable': comparable,
-                'mismatched': mismatched,
-                'agree_ratio': agree_ratio,
-                'agree_ratio_unperturbed': agree_ratio_subset(isect_base),
-                'agree_ratio_perturbed': agree_ratio_subset(isect_pert),
-            },
-            'top_mismatches': [
-                {
-                    'abs_delta': d,
-                    'key': k,
-                    'a': a,
-                    'b': b,
-                }
-                for (d, k, a, b) in mism[:top_n]
-            ],
-        }
-        return out
-
-
-    def instance_summary_text(
-        self,
-        *,
-        level: str = 'page',
-        top_n: int = 10,
-        show_details: int = 3,
-        prompt_chars: int = 220,
-        completion_chars: int = 120,
-        input_chars: int = 200,
-    ):
+    def instance_summary_text(self, *args, **kwargs) -> None:
         """
-        Human-readable instance-level summary.
+        Write a line-oriented instance-level diff report.
 
-        - level='line': compact one-liner
-        - level='page': multi-line report with top mismatches and drilldown details.
+        Uses `writer` for immediate output. If writer is None, defaults to rich.print.
 
-        For the top `show_details` mismatches, includes:
-          * metric label + signed delta (B - A)
-          * whether prompts differ (and prints both excerpts if they do)
-          * input + completion excerpts from A and B
+        Keeps long prompt / completion / input excerpts readable via kwutil smart_truncate.
+        Request-state diffs are summarized as a small set of highlighted lines.
         """
-        info = self.instance_summary_dict(top_n=top_n)
-        cov = info['coverage']
-        means = info['means']
-
-        a_name = getattr(self, 'a_name', 'A')
-        b_name = getattr(self, 'b_name', 'B')
-
-        if level == 'line':
-            return (
-                f"InstanceDiff {a_name} vs {b_name}: "
-                f"isect={cov['n_isect']}/{cov['n_union']} "
-                f"agree={means['agree_ratio']:.3f} "
-                f"base={means['agree_ratio_unperturbed']:.3f} "
-                f"pert={means['agree_ratio_perturbed']:.3f}"
-            )
-
-        # --- get analysis wrappers ---
-        def _analysis(run_or_analysis, name=None):
-            try:
-                if hasattr(run_or_analysis, 'joined_instance_stat_table'):
-                    return run_or_analysis
-            except Exception:
-                pass
-            from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
-            return HelmRunAnalysis(run_or_analysis, name=name)
-
-        A = _analysis(getattr(self, 'run_a', getattr(self, 'a', None)), name=a_name)
-        B = _analysis(getattr(self, 'run_b', getattr(self, 'b', None)), name=b_name)
-
-        jt_a = A.joined_instance_stat_table(assert_assumptions=True)
-        jt_b = B.joined_instance_stat_table(assert_assumptions=True)
-
-        # Must match instance_summary_dict()'s internal keying
-        def _row_key(r):
-            n = (r['stat'].get('name') or {})
-            pert = n.get('perturbation', None)
-            pert_name = pert.get('name', None) if isinstance(pert, dict) else None
-            return (
-                r['instance_id'],
-                r['train_trial_index'],
-                r.get('perturbation_id', None),
-                n.get('name', None),
-                n.get('split', None),
-                n.get('sub_split', None),
-                pert_name,
-            )
-
-        lut_a = {_row_key(r): r for r in jt_a}
-        lut_b = {_row_key(r): r for r in jt_b}
-
-        def _clip(text, n):
-            if text is None:
-                return None
-            text = str(text).replace('\r\n', '\n')
-            return (text[:n] + '…') if len(text) > n else text
-
-        def _prompt(rs):
-            return _clip(((rs.get('request') or {}).get('prompt', None)), prompt_chars)
-
-        def _completion(rs):
-            comps = ((rs.get('result') or {}).get('completions', None)) or []
-            txt = comps[0].get('text', None) if comps else None
-            return _clip(txt, completion_chars)
-
-        def _instance_input(rs):
-            inst = rs.get('instance') or {}
-            inp = inst.get('input') or {}
-            if isinstance(inp, dict) and 'text' in inp:
-                return _clip(inp.get('text', None), input_chars)
-            return _clip(inp, input_chars)
-
-        def _metric_label_from_key(k):
-            # k layout:
-            # (instance_id, tti, variant_pert_id, metric_name, split, sub_split, stat_pert_name)
-            metric = k[3]
-            split = k[4]
-            sub = k[5]
-            stat_pert = k[6]
-            parts = [str(metric)]
-            if split is not None:
-                parts.append(f"split={split}")
-            if sub is not None:
-                parts.append(f"sub={sub}")
-            if stat_pert is not None:
-                parts.append(f"statPert={stat_pert}")
-            return ", ".join(parts)
-
-        lines = []
-        lines.append(f"Instance-level diff: {a_name} vs {b_name}")
-        lines.append(
-            f"  coverage: A={cov['n_a']} B={cov['n_b']} "
-            f"isect={cov['n_isect']} union={cov['n_union']} onlyA={cov['only_a']} onlyB={cov['only_b']}"
-        )
-        lines.append(
-            f"  means: comparable={means['comparable']} mismatched={means['mismatched']} "
-            f"agree_ratio={means['agree_ratio']:.3f}"
-        )
-        lines.append(
-            f"        unperturbed={means['agree_ratio_unperturbed']:.3f} "
-            f"perturbed={means['agree_ratio_perturbed']:.3f}"
-        )
-
-        tops = info.get('top_mismatches', []) or []
-        if tops:
-            lines.append("  top mismatches:")
-            for idx, item in enumerate(tops[:top_n]):
-                k = item['key']
-                a = float(item['a'])
-                b = float(item['b'])
-                abs_d = float(item['abs_delta'])
-                signed_d = b - a  # signed delta, B - A
-
-                metric_label = _metric_label_from_key(k)
-                lines.append(f"    metric: {metric_label}")
-                lines.append(f"    key: {k}")
-                lines.append(f"    A={a:.4g}  B={b:.4g}  Δ(B-A)={signed_d:.4g}  |Δ|={abs_d:.4g}")
-
-                if show_details and idx < show_details:
-                    ra = lut_a.get(k, None)
-                    rb = lut_b.get(k, None)
-
-                    rs_a = ra['request_state'] if ra is not None else None
-                    rs_b = rb['request_state'] if rb is not None else None
-
-                    pa = _prompt(rs_a) if rs_a is not None else None
-                    pb = _prompt(rs_b) if rs_b is not None else None
-                    prompts_equal = (pa == pb)
-
-                    lines.append(f"    prompts_equal={prompts_equal}")
-
-                    # Inputs & completions
-                    if rs_a is not None:
-                        lines.append(f"      [{a_name}] input: {_instance_input(rs_a)}")
-                        lines.append(f"      [{a_name}] completion: {_completion(rs_a)}")
-                    if rs_b is not None:
-                        lines.append(f"      [{b_name}] input: {_instance_input(rs_b)}")
-                        lines.append(f"      [{b_name}] completion: {_completion(rs_b)}")
-
-                    # Prompt(s)
-                    if prompts_equal:
-                        if pa is not None:
-                            lines.append("      prompt:")
-                            for pline in pa.splitlines():
-                                lines.append(f"        {pline}")
-                    else:
-                        if pa is not None:
-                            lines.append(f"      prompt [{a_name}]:")
-                            for pline in pa.splitlines():
-                                lines.append(f"        {pline}")
-                        if pb is not None:
-                            lines.append(f"      prompt [{b_name}]:")
-                            for pline in pb.splitlines():
-                                lines.append(f"        {pline}")
-
-                # spacer between entries
-                lines.append("")
-
-        return "\n".join(lines).rstrip()
-
+        return summarize_instances(self, *args, **kwargs)
 
     # --- Implementation helpers ---------------------------------------
 
@@ -717,3 +457,594 @@ def _fmt(x: Any) -> str:
     if isinstance(x, float):
         return f"{x:.4g}"
     return str(x)
+
+
+def _diff_request_states(
+    rs_a: dict,
+    rs_b: dict,
+    *,
+    max_diffs: int = 40,
+    context_chars: int = 180,
+):
+    """
+    Compute a compact walker diff between two request_state dicts.
+
+    This strips high-churn fields (timestamps, runtimes, full token logprobs, etc.)
+    so the diff focuses on prompt/instance/references/completions.
+
+    Returns
+    -------
+    dict with:
+        - ok: bool
+        - n_diffs: int
+        - diffs: List[dict(path=..., a=..., b=...)]
+    """
+    import ubelt as ub
+
+    def _clip(v):
+        # Keep output readable
+        if isinstance(v, str):
+            v2 = v.replace('\r\n', '\n')
+            return (v2[:context_chars] + '…') if len(v2) > context_chars else v2
+        return v
+
+    # Shallow recursive prune helper
+    def _prune(obj, path=()):
+        # Remove/normalize high-churn keys
+        if isinstance(obj, dict):
+            drop = {
+                # result churn
+                'request_time', 'request_datetime', 'cached',
+                # huge / noisy
+                'tokens', 'logprob', 'top_k_per_token',
+                # sometimes noisy (depends on run)
+                'embedding',
+            }
+            out = {}
+            for k, v in obj.items():
+                if k in drop:
+                    continue
+                # also drop deep token lists if present
+                if k == 'completions' and isinstance(v, list):
+                    # Keep only completion texts (and maybe finish reason if present)
+                    v2 = []
+                    for c in v:
+                        if isinstance(c, dict):
+                            v2.append({kk: vv for kk, vv in c.items() if kk in {'text', 'finish_reason'}})
+                        else:
+                            v2.append(c)
+                    out[k] = _prune(v2, path + (k,))
+                else:
+                    out[k] = _prune(v, path + (k,))
+            return out
+        elif isinstance(obj, list):
+            return [_prune(v, path + (i,)) for i, v in enumerate(obj)]
+        else:
+            return obj
+
+    A = _prune(rs_a)
+    B = _prune(rs_b)
+
+    wa = ub.IndexableWalker(A, list_cls=(list,))
+    wb = ub.IndexableWalker(B, list_cls=(list,))
+
+    # ubelt returns a structured diff object; we just need changed paths
+    diff = wa.diff(wb)
+
+    # Try to be robust to ubelt version differences
+    changes = []
+    for item in getattr(diff, 'changed', []) or []:
+        # item usually has .path, .value1, .value2
+        path = getattr(item, 'path', None)
+        a_val = getattr(item, 'value1', None)
+        b_val = getattr(item, 'value2', None)
+        changes.append((path, a_val, b_val))
+
+    # Added/removed can also be useful
+    for item in getattr(diff, 'added', []) or []:
+        path = getattr(item, 'path', None)
+        a_val = None
+        b_val = getattr(item, 'value', None)
+        changes.append((path, a_val, b_val))
+    for item in getattr(diff, 'removed', []) or []:
+        path = getattr(item, 'path', None)
+        a_val = getattr(item, 'value', None)
+        b_val = None
+        changes.append((path, a_val, b_val))
+
+    # If ubelt diff API differs, fall back to brute path compare
+    if not changes:
+        # conservative fallback: compare leaf reprs
+        leaves_a = {tuple(p): v for p, v in wa}
+        leaves_b = {tuple(p): v for p, v in wb}
+        all_paths = set(leaves_a) | set(leaves_b)
+        for p in all_paths:
+            if leaves_a.get(p) != leaves_b.get(p):
+                changes.append((p, leaves_a.get(p), leaves_b.get(p)))
+
+    # Sort by path for deterministic output
+    changes = sorted(changes, key=lambda t: (t[0] is None, t[0]))
+
+    diffs = []
+    for path, av, bv in changes[:max_diffs]:
+        diffs.append({
+            'path': path,
+            'a': _clip(av),
+            'b': _clip(bv),
+        })
+
+    return {
+        'ok': len(changes) == 0,
+        'n_diffs': len(changes),
+        'diffs': diffs,
+    }
+
+
+def _slug(text, max_len: int, *, hash_len: int = 8, trunc_loc: float = 0.5, word_boundary: bool = True):
+    """
+    Smart-truncate long text into a readable slug with a short hash so different
+    long strings don't collapse to the same preview.
+
+    Notes:
+    - Converts newlines/tabs to spaces to keep tables readable.
+    - Uses smart_truncate's internal hashing (hash_len) for stability.
+    """
+    if text is None:
+        return None
+    import kwutil
+    s = str(text)
+    # normalize whitespace for table-friendly display
+    s = s.replace('\r\n', '\n').replace('\r', '\n')
+    s = " ".join(s.split())
+    if max_len and len(s) > max_len:
+        return kwutil.slugify_ext.smart_truncate(
+            s,
+            max_length=max_len,
+            word_boundary=word_boundary,
+            separator=' ',
+            trunc_loc=trunc_loc,
+            hash_len=hash_len,
+            head='~',
+            tail='~',
+        )
+    return s
+
+
+def instance_summary_dict(self, *, top_n: int = 10):
+    """
+    Programmatic summary of per-instance stat agreement.
+
+    Adds:
+      * means_by_class: agreement stats per metric class
+      * top_mismatches_by_class: top-N mismatches per class (core/bookkeeping/untracked/...)
+      * top_mismatches_all: global top-N mismatches (for quick triage)
+    """
+    from magnet.backends.helm.helm_metrics import classify_metric
+
+    def _analysis(run_or_analysis, name: str | None = None):
+        try:
+            if hasattr(run_or_analysis, "joined_instance_stat_table"):
+                return run_or_analysis
+        except Exception:
+            pass
+        from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
+        return HelmRunAnalysis(run_or_analysis, name=name)
+
+    a_name = getattr(self, "a_name", "A")
+    b_name = getattr(self, "b_name", "B")
+    A = _analysis(getattr(self, "run_a", getattr(self, "a", None)), name=a_name)
+    B = _analysis(getattr(self, "run_b", getattr(self, "b", None)), name=b_name)
+
+    jt_a = A.joined_instance_stat_table(assert_assumptions=True)
+    jt_b = B.joined_instance_stat_table(assert_assumptions=True)
+
+    def _row_key(r):
+        n = (r["stat"].get("name") or {})
+        stat_pert = n.get("perturbation", None)
+        stat_pert_name = stat_pert.get("name", None) if isinstance(stat_pert, dict) else None
+        return (
+            r["instance_id"],
+            r["train_trial_index"],
+            r.get("perturbation_id", None),
+            n.get("name", None),
+            n.get("split", None),
+            n.get("sub_split", None),
+            stat_pert_name,
+        )
+
+    def _mean_map(joined):
+        out = {}
+        for r in joined:
+            s = r["stat"]
+            if s.get("count", 0) and ("mean" in s):
+                out[_row_key(r)] = float(s["mean"])
+        return out
+
+    map_a = _mean_map(jt_a)
+    map_b = _mean_map(jt_b)
+
+    ka, kb = set(map_a), set(map_b)
+    isect = ka & kb
+    only_a = ka - kb
+    only_b = kb - ka
+
+    mism = []
+    for k in isect:
+        a = map_a[k]
+        b = map_b[k]
+        if a != b:
+            mism.append((abs(a - b), k, a, b))
+    mism.sort(reverse=True)
+
+    comparable = len(isect)
+    mismatched = len(mism)
+    agree_ratio = 1.0 if comparable == 0 else (comparable - mismatched) / comparable
+
+    def _is_perturbed_key(k):
+        return (k[2] is not None)
+
+    isect_pert = [k for k in isect if _is_perturbed_key(k)]
+    isect_base = [k for k in isect if not _is_perturbed_key(k)]
+
+    def _agree_ratio_subset(keys):
+        if not keys:
+            return 1.0
+        mm = 0
+        for k in keys:
+            if map_a[k] != map_b[k]:
+                mm += 1
+        return (len(keys) - mm) / len(keys)
+
+    # by metric class
+    by_class = {}
+    for k in isect:
+        metric = k[3] or ""
+        cls = classify_metric(metric)
+        d = by_class.setdefault(cls, {"comparable": 0, "mismatched": 0})
+        d["comparable"] += 1
+        if map_a[k] != map_b[k]:
+            d["mismatched"] += 1
+    for cls, d in by_class.items():
+        comp = d["comparable"]
+        mm = d["mismatched"]
+        d["agree_ratio"] = 1.0 if comp == 0 else (comp - mm) / comp
+
+    # top mismatches by class
+    top_by_class = {}
+    for abs_d, k, a, b in mism:
+        cls = classify_metric(k[3] or "")
+        top_by_class.setdefault(cls, []).append((abs_d, k, a, b))
+
+    top_mismatches_by_class = {}
+    for cls, items in top_by_class.items():
+        items.sort(reverse=True)
+        top_mismatches_by_class[cls] = [
+            {
+                "abs_delta": abs_d,
+                "signed_delta": (b - a),
+                "key": k,
+                "a": a,
+                "b": b,
+                "metric_class": cls,
+            }
+            for (abs_d, k, a, b) in items[:top_n]
+        ]
+
+    out = {
+        "coverage": {
+            "n_a": len(ka),
+            "n_b": len(kb),
+            "n_isect": len(isect),
+            "n_union": len(ka | kb),
+            "only_a": len(only_a),
+            "only_b": len(only_b),
+        },
+        "means": {
+            "comparable": comparable,
+            "mismatched": mismatched,
+            "agree_ratio": agree_ratio,
+            "agree_ratio_unperturbed": _agree_ratio_subset(isect_base),
+            "agree_ratio_perturbed": _agree_ratio_subset(isect_pert),
+        },
+        "means_by_class": by_class,
+        "top_mismatches_all": [
+            {
+                "abs_delta": abs_d,
+                "signed_delta": (b - a),
+                "key": k,
+                "a": a,
+                "b": b,
+                "metric_class": classify_metric(k[3] or ""),
+            }
+            for (abs_d, k, a, b) in mism[:top_n]
+        ],
+        "top_mismatches_by_class": top_mismatches_by_class,
+    }
+    return out
+
+
+def summarize_instances(
+    self,
+    *,
+    level: str = "page",
+    top_n: int = 10,
+    show_details: int = 3,
+    prompt_chars: int = 220,
+    completion_chars: int = 120,
+    input_chars: int = 200,
+    diff_max: int = 80,
+    diff_show: int = 12,
+    writer=None,
+) -> None:
+    """
+    Write a line-oriented instance-level diff report.
+
+    - Uses `writer` for output. If None, defaults to `rich.print`.
+    - Uses kwutil smart_truncate to shorten prompts/completions/inputs.
+    - Prints top mismatches for BOTH core and bookkeeping (and untracked if present).
+    - Avoids early returns except at the start for level='line' (OK for ipython copy/paste).
+    """
+    # from magnet.backends.helm.helm_metrics import classify_metric
+    import kwutil
+
+    if writer is None:
+        try:
+            from rich import print as rich_print
+            writer = rich_print
+        except Exception:
+            writer = print
+
+    # --- safe rich text helpers ---
+    def _safe_rich(s: str | None) -> str | None:
+        if s is None:
+            return None
+        s = str(s)
+        s = "".join(ch for ch in s if ord(ch) >= 32)
+        try:
+            from rich.markup import escape
+            s = escape(s)
+        except Exception:
+            s = s.replace("[", r"\[").replace("]", r"\]")
+        return s
+
+    def _slug(text, max_len: int, *, hash_len: int = 8, trunc_loc: float = 0.6):
+        if text is None:
+            return None
+        s = str(text)
+        s = s.replace("\r\n", "\n").replace("\r", "\n")
+        s = " ".join(s.split())
+        if max_len and len(s) > max_len:
+            s = kwutil.slugify_ext.smart_truncate(
+                s,
+                max_length=max_len,
+                word_boundary=True,
+                separator=" ",
+                trunc_loc=trunc_loc,
+                hash_len=hash_len,
+                head="~",
+                tail="~",
+            )
+        return _safe_rich(s)
+
+    info = instance_summary_dict(self, top_n=top_n)
+    cov = info["coverage"]
+    means = info["means"]
+    by_class = info.get("means_by_class") or {}
+    top_by_class = info.get("top_mismatches_by_class") or {}
+
+    a_name = getattr(self, "a_name", "A")
+    b_name = getattr(self, "b_name", "B")
+
+    if level == "line":
+        writer(
+            f"[bold]InstanceDiff[/bold] {a_name} vs {b_name}: "
+            f"isect={cov['n_isect']}/{cov['n_union']} "
+            f"agree={means['agree_ratio']:.3f} "
+            f"base={means['agree_ratio_unperturbed']:.3f} "
+            f"pert={means['agree_ratio_perturbed']:.3f}"
+        )
+        return None
+
+    # --- analysis adapters ---
+    def _analysis(run_or_analysis, name: str | None = None):
+        try:
+            if hasattr(run_or_analysis, "joined_instance_stat_table"):
+                return run_or_analysis
+        except Exception:
+            pass
+        from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
+        return HelmRunAnalysis(run_or_analysis, name=name)
+
+    A = _analysis(getattr(self, "run_a", getattr(self, "a", None)), name=a_name)
+    B = _analysis(getattr(self, "run_b", getattr(self, "b", None)), name=b_name)
+
+    jt_a = A.joined_instance_stat_table(assert_assumptions=True)
+    jt_b = B.joined_instance_stat_table(assert_assumptions=True)
+
+    # Must match instance_summary_dict() keying
+    def _row_key(r):
+        n = (r["stat"].get("name") or {})
+        stat_pert = n.get("perturbation", None)
+        stat_pert_name = stat_pert.get("name", None) if isinstance(stat_pert, dict) else None
+        return (
+            r["instance_id"],
+            r["train_trial_index"],
+            r.get("perturbation_id", None),
+            n.get("name", None),
+            n.get("split", None),
+            n.get("sub_split", None),
+            stat_pert_name,
+        )
+
+    lut_a = {_row_key(r): r for r in jt_a}
+    lut_b = {_row_key(r): r for r in jt_b}
+
+    def _prompt(rs):
+        if rs is None:
+            return None
+        return _slug(((rs.get("request") or {}).get("prompt", None)), prompt_chars, hash_len=10, trunc_loc=0.65)
+
+    def _completion(rs):
+        if rs is None:
+            return None
+        comps = ((rs.get("result") or {}).get("completions", None)) or []
+        txt = comps[0].get("text", None) if comps else None
+        return _slug(txt, completion_chars, hash_len=8, trunc_loc=0.5)
+
+    def _instance_input(rs):
+        if rs is None:
+            return None
+        inst = rs.get("instance") or {}
+        inp = inst.get("input") or {}
+        if isinstance(inp, dict) and "text" in inp:
+            return _slug(inp.get("text", None), input_chars, hash_len=8, trunc_loc=0.5)
+        return _slug(inp, input_chars, hash_len=8, trunc_loc=0.5)
+
+    def _metric_label_from_key(k):
+        metric = k[3]
+        split = k[4]
+        sub = k[5]
+        stat_pert = k[6]
+        parts = [str(metric)]
+        if split is not None:
+            parts.append(f"split={split}")
+        if sub is not None:
+            parts.append(f"sub={sub}")
+        if stat_pert is not None:
+            parts.append(f"statPert={stat_pert}")
+        return ", ".join(parts)
+
+    # --- header ---
+    writer(f"[bold]Instance-level diff[/bold]: {a_name} vs {b_name}")
+    writer(
+        f"  coverage: A={cov['n_a']} B={cov['n_b']} "
+        f"isect={cov['n_isect']} union={cov['n_union']} onlyA={cov['only_a']} onlyB={cov['only_b']}"
+    )
+    writer(
+        f"  means: comparable={means['comparable']} mismatched={means['mismatched']} "
+        f"agree_ratio={means['agree_ratio']:.3f} "
+        f"(unpert={means['agree_ratio_unperturbed']:.3f}, pert={means['agree_ratio_perturbed']:.3f})"
+    )
+    if by_class:
+        order = ["core", "bookkeeping", "untracked"]
+        keys = [k for k in order if k in by_class] + [k for k in sorted(by_class) if k not in order]
+        parts = []
+        for cls in keys:
+            d = by_class[cls]
+            parts.append(f"{cls}={d['agree_ratio']:.3f}({d['mismatched']}/{d['comparable']})")
+        writer("  by_class: ")
+        for p in parts:
+            writer("   ", p)
+
+    # We want to show both core and bookkeeping (and untracked if present)
+    show_classes = []
+    for cls in ["core", "bookkeeping", "untracked"]:
+        if cls in top_by_class and top_by_class[cls]:
+            show_classes.append(cls)
+    for cls in sorted(top_by_class):
+        if cls not in show_classes and top_by_class[cls]:
+            show_classes.append(cls)
+
+    if not show_classes:
+        writer("  [green]No instance-level mismatches detected.[/green]")
+    else:
+        for cls in show_classes:
+            tops = top_by_class.get(cls, [])[:top_n]
+            writer(f"  [bold]top mismatches ({cls}):[/bold]")
+            for idx, item in enumerate(tops, start=1):
+                k = item["key"]
+                a = float(item["a"])
+                b = float(item["b"])
+                abs_d = float(item["abs_delta"])
+                signed_d = float(item.get("signed_delta", b - a))
+                writer(f"    {idx:>2}. metric: {_metric_label_from_key(k)}")
+                writer(f"        key: {k}")
+                writer(f"        A={a:.4g}  B={b:.4g}  Δ(B-A)={signed_d:.4g}  |Δ|={abs_d:.4g}")
+
+                if idx <= show_details:
+                    ra = lut_a.get(k, None)
+                    rb = lut_b.get(k, None)
+                    rs_a = ra["request_state"] if ra is not None else None
+                    rs_b = rb["request_state"] if rb is not None else None
+
+                    pa = _prompt(rs_a)
+                    pb = _prompt(rs_b)
+                    prompts_equal = (pa == pb)
+                    writer(f"        prompts_equal={prompts_equal}")
+
+                    if rs_a is not None:
+                        writer(f"        [{a_name}] input: {_instance_input(rs_a)}")
+                        writer(f"        [{a_name}] completion: {_completion(rs_a)}")
+                    if rs_b is not None:
+                        writer(f"        [{b_name}] input: {_instance_input(rs_b)}")
+                        writer(f"        [{b_name}] completion: {_completion(rs_b)}")
+
+                    if prompts_equal:
+                        if pb is not None:
+                            writer(f"        prompt: {pb}")
+                    else:
+                        if pa is not None:
+                            writer(f"        prompt[{a_name}]: {pa}")
+                        if pb is not None:
+                            writer(f"        prompt[{b_name}]: {pb}")
+
+                    if rs_a is not None and rs_b is not None and hasattr(self, "_diff_request_states"):
+                        rd = self._diff_request_states(rs_a, rs_b, max_diffs=diff_max)
+                        diffs = list(rd.get("diffs", []) or [])
+
+                        def _path_tuple(p):
+                            if isinstance(p, (list, tuple)):
+                                return tuple(p)
+                            return (p,)
+
+                        # Dedup redundant prefix diffs
+                        paths = [_path_tuple(d.get("path")) for d in diffs]
+                        path_set = set(paths)
+                        keep = []
+                        for d in diffs:
+                            p = _path_tuple(d.get("path"))
+                            is_prefix = any((q != p and len(q) > len(p) and q[: len(p)] == p) for q in path_set)
+                            if not is_prefix:
+                                keep.append(d)
+                        diffs = keep
+
+                        IMPORTANT_PREFIXES = (
+                            ("request", "prompt"),
+                            ("result", "completions"),
+                            ("instance", "input"),
+                            ("instance", "references"),
+                            ("instance", "perturbation"),
+                            ("request", "max_tokens"),
+                            ("request", "model_deployment"),
+                            ("request", "model"),
+                        )
+
+                        def _priority(path):
+                            path = _path_tuple(path)
+                            for rank, pref in enumerate(IMPORTANT_PREFIXES):
+                                if path[: len(pref)] == pref:
+                                    return rank
+                            return 999
+
+                        diffs.sort(key=lambda d: (_priority(d.get("path")), str(d.get("path"))))
+                        n_diffs = rd.get("n_diffs", len(diffs))
+                        show = min(diff_show, len(diffs))
+                        writer(f"        request_state_diff: n_diffs={n_diffs} (showing {show})")
+
+                        for d in diffs[:show]:
+                            p = _path_tuple(d.get("path"))
+                            path_s = "/".join(map(str, p))
+                            av = d.get("a")
+                            bv = d.get("b")
+                            if p == ("request", "prompt") or (p[:3] == ("result", "completions", 0) and p[-1] == "text"):
+                                avs = _slug(av, 120, hash_len=10)
+                                bvs = _slug(bv, 120, hash_len=10)
+                            else:
+                                avs = _slug(av, 70, hash_len=6)
+                                bvs = _slug(bv, 70, hash_len=6)
+                            writer(f"          - {path_s}: {avs}  ->  {bvs}")
+
+                writer("")
+            writer("")
+    return None
+

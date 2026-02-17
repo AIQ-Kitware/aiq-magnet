@@ -5,15 +5,36 @@
 import pandas as pd
 import ubelt as ub
 import kwutil
-from magnet.helm_outputs import HelmRun
-from magnet.helm_outputs import HelmOutputs
+from magnet.backends.helm.helm_outputs import HelmRun
+from magnet.backends.helm.helm_outputs import HelmOutputs
 from magnet.backends.helm.rundiff import sankey
-from magnet.backends.helm.rundiff.compare import RunDiff
+from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
+from magnet.backends.helm.helm_run_diff import HelmRunDiff
 
 """
 !python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_details.yaml
 """
 helm_rows = kwutil.Yaml.load('run_details.yaml')
+
+if 0:
+    # Debug HelmRunAnalysis
+    run_dir = '/data/crfm-helm-public/classic/benchmark_output/runs/v0.3.0/wikifact:k=5,subject=symptoms_and_signs,model=lmsys_vicuna-7b-v1.3'
+    helm_run = HelmRun.coerce(run_dir)
+    self = HelmRunAnalysis(helm_run)
+    self.summary(level=10)
+    run_dir = '/data/crfm-helm-public/classic/benchmark_output/runs/v0.2.4/boolq:model=eleutherai_pythia-2.8b-v0,data_augmentation=canonical/'
+    helm_run = HelmRun.coerce(run_dir)
+    self = HelmRunAnalysis(helm_run)
+    self.summary(level=10)
+    run_dir = '/data/crfm-helm-public/capabilities/benchmark_output/runs/v1.12.0/ifeval:model=openai_gpt-oss-20b/'
+    helm_run = HelmRun.coerce(run_dir)
+    self = HelmRunAnalysis(helm_run)
+    self.summary(level=10)
+
+    for helm_row in helm_rows:
+        run_dir = ub.Path(helm_row["run_dir"])
+        helm_run = HelmRun.coerce(run_dir)
+        self = HelmRunAnalysis(helm_run)
 
 finished_jobs = list(
     ub.Path('/home/local/KHQ/jon.crall/code/aiq-magnet/results/helm').glob('*/DONE')
@@ -57,19 +78,18 @@ for helm_row in ub.ProgIter(helm_rows, desc="compare runs"):
         helm_row["agreement_bucket_base_task"] = "not attempted"
         continue
 
+    raise Exception
+
     helm_run = HelmRun.coerce(run_dir)
     kwdg_run = kwrow["run"]
 
     a = HelmRunAnalysis(helm_run)
     b = HelmRunAnalysis(kwdg_run)
-    joined_instance_stat_table(a)
-    joined_instance_stat_table(b)
 
-    rd = RunDiff(run_a=helm_run, run_b=kwdg_run, a_name="HELM", b_name="KWDG")
+    rd = HelmRunDiff(run_a=helm_run, run_b=kwdg_run, a_name="HELM", b_name="KWDG")
     self = rd  # NOQA
-    print(rd.summary_l1())          # run spec + scenario + coverage + instances
-    print(rd.summary_values())      # value differences grouped core/bookkeeping/untracked
-    print(rd.report_core())         # existing core metric report
+    print(rd.summary_text(level='page'))
+    print(rd.instance_summary_text(level='page'))
 
     if 0:
         print(rd.drilldown_core_metric_instances())

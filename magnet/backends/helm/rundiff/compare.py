@@ -6,7 +6,7 @@ Design goals (aligned with notebook-style usage):
 
 * Keep the small functional API for pipelines (e.g. ``compare_run_pair``
   producing row fields for Sankey bucketing).
-* Provide an ergonomic, stateful object (``RunDiff``) for interactive
+* Provide an ergonomic, stateful object (``HelmRunDiff``) for interactive
   investigation. Call methods to incrementally compute / format deeper
   diagnostics without constantly recomputing inputs.
 * Prefer ``ub.IndexableWalker`` for generic structure diffs, but keep
@@ -579,14 +579,14 @@ def compare_run_pair(
     return out
 
 
-# --- RunDiff: stateful comparison for HelmRun objects -----------------------
+# --- HelmRunDiff: stateful comparison for HelmRun objects -----------------------
 
 
-class RunDiff:
+class HelmRunDiff:
     """Stateful comparison of two ``HelmRun`` objects.
 
     This class is intended to be used interactively:
-        rd = RunDiff(run_a, run_b, a_name='HELM', b_name='kwdagger')
+        rd = HelmRunDiff(run_a, run_b, a_name='HELM', b_name='kwdagger')
         print(rd.summary_l1())
         print(rd.summary_values())
 
