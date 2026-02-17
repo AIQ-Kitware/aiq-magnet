@@ -42,7 +42,8 @@ class __module_properties__:
             name='magnet.HelmOutputs',
             type='top level attribute',
             migration='use magnet.backends.helm.HelmOutputs instead',
-            deprecate='now'
+            deprecate='now',
+            stacklevel=3,
         )
         return HelmOutputs
 
