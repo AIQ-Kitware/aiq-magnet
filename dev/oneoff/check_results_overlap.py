@@ -266,7 +266,11 @@ for helm_row in ub.ProgIter(helm_rows, desc='compare runs'):
 
 
 for rd in rundiff_lut.values():
+    rd.summary(level=0)
     rd.summary()
+    a = rd.a
+    b = rd.b
+    rd = HelmRunDiff(run_a=a, run_b=b, a_name="HELM", b_name="KWDG")
     spec_a = rd.a.run_spec()
     spec_b = rd.b.run_spec()
     print(f'spec_a = {ub.urepr(spec_a, nl=3)}')

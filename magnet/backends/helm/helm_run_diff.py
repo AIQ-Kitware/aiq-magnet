@@ -101,7 +101,7 @@ from dataclasses import dataclass
 from magnet.backends.helm import helm_hashers
 from magnet.backends.helm.helm_metrics import classify_metric
 from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any, Callable, Iterable
 
 
 def _format_bool(ok: bool) -> str:
@@ -173,10 +173,10 @@ def _walker_diff(a: Any, b: Any, *, max_paths: int = 12) -> list[str]:
     faillist = sorted(info.get("faillist", []), key=lambda d: d.path)
 
     out = info | {
-        "unique1": _truncate([_format_path(p) + ': ' + repr(walker_a[p]) for p in unique1], max_paths),
-        "unique2": _truncate([_format_path(p) + ': ' + repr(walker_b[p]) for p in unique2], max_paths),
+        "unique1": _truncate([_format_path(p) + ': ' + _smart_truncate(repr(walker_a[p]), 80) for p in unique1], max_paths),
+        "unique2": _truncate([_format_path(p) + ': ' + _smart_truncate(repr(walker_b[p]), 80) for p in unique2], max_paths),
         "faillist": _truncate(
-            [f"{_format_path(d.path)}: {d.value1!r} != {d.value2!r}" for d in faillist],
+            [f"{_format_path(d.path)}: {_smart_truncate(repr(d.value1), 80)} != {_smart_truncate(repr(d.value2), 80)}" for d in faillist],
             max_paths,
         ),
     }
@@ -375,9 +375,12 @@ class HelmRunDiff(ub.NiceRepr):
             helm_hashers.canonicalize_for_hashing(b_spec)
         )
         run_spec_dict_ok = spec_hash_a == spec_hash_b
-        spec_diff_paths = (
-            {} if run_spec_dict_ok else _walker_diff(a_spec, b_spec)
-        )
+        if level == 0:
+            spec_diff_paths = None
+        else:
+            spec_diff_paths = (
+                {} if run_spec_dict_ok else _walker_diff(a_spec, b_spec)
+            )
 
         # 3) scenario check with unknown semantics
         scen_known = bool(a_scen) and bool(b_scen)
@@ -394,9 +397,12 @@ class HelmRunDiff(ub.NiceRepr):
                 helm_hashers.canonicalize_for_hashing(b_scen)
             )
             scenario_ok = scenario_hash_a == scenario_hash_b
-            scen_diff_paths = (
-                {} if scenario_ok else _walker_diff(a_scen, b_scen)
-            )
+            if level == 0:
+                scen_diff_paths = None
+            else:
+                scen_diff_paths = (
+                    {} if scenario_ok else _walker_diff(a_scen, b_scen)
+                )
 
         # 4/5) stats coverage
         a_stats = self.a.stats() or []
@@ -493,8 +499,14 @@ class HelmRunDiff(ub.NiceRepr):
         agree = info['value_agreement']['overall']['agree_ratio']
 
         if level <= 0:
+            spec_name_a = info["run_spec_name_a"]
+            spec_name_b = info["run_spec_name_b"]
+            if spec_name_a == spec_name_b:
+                line_name = spec_name_a
+            else:
+                line_name = '{spec_name_a} // {spec_name_b}'
             writer(
-                f'{_format_bool(ok)} {self.a_name} vs {self.b_name} '
+                f'{_format_bool(ok)} {self.a_name} vs {self.b_name} {line_name} '
                 f'spec={_format_bool(info["run_spec_dict_ok"])} '
                 f'stats={cov["n_isect"]}/{cov["n_union"]} '
                 f'agree={agree:.3f}'
@@ -520,21 +532,24 @@ class HelmRunDiff(ub.NiceRepr):
                 f'Run spec dict: {_format_bool(info["run_spec_dict_ok"])}  '
                 f'hashA={str(info["run_spec_hash_a"])[:10]}  hashB={str(info["run_spec_hash_b"])[:10]}'
             )
-            if (not info['run_spec_dict_ok']):
-                writer(
-                    f'  diff: {ub.urepr(info["run_spec_diff_paths"])}'
-                )
+
+            if level >= 15:
+                if (not info['run_spec_dict_ok']):
+                    writer(
+                        f'  diff: {ub.urepr(info["run_spec_diff_paths"])}'
+                    )
 
             if info['scenario_ok'] is None:
                 writer(
                     'Scenario: ⚠️  unknown (missing scenario.json in one or both runs)'
                 )
             else:
-                writer(f'Scenario: {_format_bool(bool(info["scenario_ok"]))}')
-                if (info['scenario_ok'] is False):
-                    writer(
-                        f'  diff: {ub.urepr(info["scenario_diff_paths"])}'
-                    )
+                if level >= 15:
+                    writer(f'Scenario: {_format_bool(bool(info["scenario_ok"]))}')
+                    if (info['scenario_ok'] is False):
+                        writer(
+                            f'  diff: {ub.urepr(info["scenario_diff_paths"])}'
+                        )
 
             writer('')
             cov2 = info['stats_coverage_by_name_count']
@@ -685,9 +700,6 @@ class HelmRunDiff(ub.NiceRepr):
 
         mismatches.sort(key=lambda r: r['abs_delta'], reverse=True)
         top = mismatches[:top_n]
-
-        def ratio(c: int, m: int) -> float:
-            return 1.0 - (m / c) if c else 1.0
 
         out = {
             'overall': {
@@ -895,9 +907,6 @@ class HelmRunDiff(ub.NiceRepr):
             items.sort(key=lambda r: r['abs_delta'], reverse=True)
             grouped[gk] = items[:top_n]
 
-        def ratio(c: int, m: int) -> float:
-            return 1.0 - (m / c) if c else 1.0
-
         means = {
             'comparable': comparable,
             'mismatched': mismatched,
@@ -974,6 +983,29 @@ class HelmRunDiff(ub.NiceRepr):
             return (cls_rank, -max_abs)
 
         groups_sorted = sorted(grouped.items(), key=_group_rank)
+
+        # Decide which metric classes are eligible at this level
+        allowed_classes = {'core'}
+        if level >= 20:
+            allowed_classes |= {'untracked'}
+        if level >= 30:
+            allowed_classes |= {'bookkeeping'}
+
+        # Filter groups by allowed class
+        filtered = [g for g in groups_sorted if g[0][0] in allowed_classes]
+
+        # If we filtered everything out (e.g. no core diffs), fall back to showing *something*
+        if not filtered and groups_sorted:
+            # Prefer untracked, then bookkeeping, then whatever exists
+            pref_order = ['untracked', 'bookkeeping', 'core']
+            for cls in pref_order:
+                filtered = [g for g in groups_sorted if g[0][0] == cls]
+                if filtered:
+                    break
+            if not filtered:
+                filtered = groups_sorted
+
+        groups_sorted = filtered
 
         # If level is low, avoid dumping too many groups
         max_groups = None
@@ -1068,11 +1100,12 @@ class HelmRunDiff(ub.NiceRepr):
                     if rs_b is None and isinstance(rb, dict):
                         rs_b = rb.get('request_state', None)
 
+                    # important: use repr, to avoid rendering newline chars.
                     pa = (
                         _smart_truncate(
-                            ((rs_a or {}).get('request') or {}).get(
+                            repr(((rs_a or {}).get('request') or {}).get(
                                 'prompt', None
-                            ),
+                            )),
                             prompt_chars,
                         )
                         if isinstance(rs_a, dict)
@@ -1080,9 +1113,9 @@ class HelmRunDiff(ub.NiceRepr):
                     )
                     pb = (
                         _smart_truncate(
-                            ((rs_b or {}).get('request') or {}).get(
+                            repr(((rs_b or {}).get('request') or {}).get(
                                 'prompt', None
-                            ),
+                            )),
                             prompt_chars,
                         )
                         if isinstance(rs_b, dict)
@@ -1113,179 +1146,44 @@ class HelmRunDiff(ub.NiceRepr):
                         # important: use repr, to avoid rendering newline chars.
                         return _smart_truncate(repr(txt), completion_chars)
 
-                    if rs_a is not None:
-                        writer(
-                            f'      [{self.a_name}] input: {_inst_input(rs_a)}'
-                        )
-                        writer(
-                            f'      [{self.a_name}] completion: {_completion(rs_a)}'
-                        )
-                    if rs_b is not None:
-                        writer(
-                            f'      [{self.b_name}] input: {_inst_input(rs_b)}'
-                        )
-                        writer(
-                            f'      [{self.b_name}] completion: {_completion(rs_b)}'
-                        )
+                    # --- Inputs / completions (avoid duplicates) ---
+                    input_a = _inst_input(rs_a) if rs_a is not None else None
+                    input_b = _inst_input(rs_b) if rs_b is not None else None
+                    comp_a  = _completion(rs_a) if rs_a is not None else None
+                    comp_b  = _completion(rs_b) if rs_b is not None else None
 
-                    if prompts_equal:
-                        if pa:
-                            writer(f'      prompt: {pa}')
+                    inputs_equal = (input_a == input_b) and (input_a is not None)
+                    comps_equal  = (comp_a == comp_b) and (comp_a is not None)
+
+                    # Input
+                    if inputs_equal:
+                        writer(f'      input (same): {input_a}')
                     else:
-                        if pa:
-                            writer(f'      prompt [{self.a_name}]: {pa}')
-                        if pb:
-                            writer(f'      prompt [{self.b_name}]: {pb}')
+                        if input_a is not None:
+                            writer(f'      [{self.a_name}] input: {input_a}')
+                        if input_b is not None:
+                            writer(f'      [{self.b_name}] input: {input_b}')
 
-                    if isinstance(rs_a, dict) and isinstance(rs_b, dict):
-                        diffs = self._request_state_diffs(
-                            rs_a, rs_b, max_items=diff_max_items
-                        )
-                        writer(
-                            f'      request_state_diff: n_diffs={diffs["n_diffs"]} (showing {len(diffs["items"])})'
-                        )
-                        for d in diffs['items']:
+                    # Completion
+                    if comps_equal:
+                        writer(f'      completion (same): {comp_a}')
+                    else:
+                        if comp_a is not None:
+                            writer(f'      [{self.a_name}] completion: {comp_a}')
+                        if comp_b is not None:
+                            writer(f'      [{self.b_name}] completion: {comp_b}')
+
+                    if level >= 20:
+                        if isinstance(rs_a, dict) and isinstance(rs_b, dict):
+                            diffs = _walker_diff(
+                                rs_a, rs_b, max_paths=diff_max_items
+                            )
                             writer(
-                                f'        - {d["path"]}: {d["a"]}  ->  {d["b"]}'
+                                f'      request_state_diff: {ub.urepr(diffs)}'
                             )
 
                 writer('')
 
-    def _request_state_diffs(
-        self,
-        rs_a: Mapping[str, Any],
-        rs_b: Mapping[str, Any],
-        *,
-        max_items: int = 7,
-    ) -> dict[str, Any]:
-        """Compact request_state diff for interactive debugging."""
-        paths = _walker_diff(rs_a, rs_b, max_paths=max_items)
-        items: list[dict[str, Any]] = []
-        for p in paths:
-            # resolve the path to values (best-effort)
-            keys = p.split('/') if p else []
-            va: Any = rs_a
-            vb: Any = rs_b
-            ok = True
-            for k in keys:
-                if isinstance(va, dict) and k in va:
-                    va = va[k]
-                else:
-                    ok = False
-                if isinstance(vb, dict) and k in vb:
-                    vb = vb[k]
-                else:
-                    ok = False
-            if not ok:
-                # fallback to a short repr of the entire structures
-                va = rs_a
-                vb = rs_b
-            items.append(
-                {'path': p, 'a': _short_urepr(va), 'b': _short_urepr(vb)}
-            )
-        return {'n_diffs': len(paths), 'items': items}
 
-
-def _format_indexable_diff(
-    a: Any,
-    b: Any,
-    *,
-    label_a: str = 'A',
-    label_b: str = 'B',
-    max_items: int = 25,
-    indent: str = '  ',
-) -> list[str]:
-    """
-    Pretty-print structure diffs using ub.IndexableWalker.diff(), but in a way that
-    stays readable in a console report.
-
-    This tries to be robust to ubelt version differences:
-    - Some versions return a list of DiffItem objects (with .path/.value1/.value2)
-    - Others return a mapping/dict with keys like 'faillist', 'unique1', 'unique2'
-    """
-    lines: list[str] = []
-    try:
-        w = ub.IndexableWalker(a, list_cls=tuple)
-        diff = w.diff(b)
-    except Exception as ex:
-        return [f"{indent}⚠️ diff failed: {ex!r}"]
-
-    def _pp_path(path: Any) -> str:
-        if isinstance(path, (list, tuple)):
-            return '/'.join(map(str, path))
-        return str(path)
-
-    # --- Case 1: dict-style diff (older style) ---
-    if isinstance(diff, Mapping):
-        faillist = list(diff.get('faillist', []) or [])
-        unique_b = list(diff.get('unique1', []) or [])
-        unique_a = list(diff.get('unique2', []) or [])
-
-        if faillist:
-            lines.append(f"{indent}Value mismatches ({len(faillist)}):")
-            for item in faillist[:max_items]:
-                try:
-                    path, vb, va = item[0], item[1], item[2]
-                    lines.append(
-                        f"{indent}  {_pp_path(path)}: "
-                        f"{label_a}={_short_urepr(va)}  {label_b}={_short_urepr(vb)}"
-                    )
-                except Exception:
-                    lines.append(f"{indent}  {_short_urepr(item)}")
-            if len(faillist) > max_items:
-                lines.append(f"{indent}  ... +{len(faillist) - max_items} more")
-
-        if unique_a:
-            lines.append(f"{indent}Only in {label_a} ({len(unique_a)}):")
-            for item in unique_a[:max_items]:
-                path = item[0] if isinstance(item, (list, tuple)) else item
-                lines.append(f"{indent}  {_pp_path(path)}")
-            if len(unique_a) > max_items:
-                lines.append(f"{indent}  ... +{len(unique_a) - max_items} more")
-
-        if unique_b:
-            lines.append(f"{indent}Only in {label_b} ({len(unique_b)}):")
-            for item in unique_b[:max_items]:
-                path = item[0] if isinstance(item, (list, tuple)) else item
-                lines.append(f"{indent}  {_pp_path(path)}")
-            if len(unique_b) > max_items:
-                lines.append(f"{indent}  ... +{len(unique_b) - max_items} more")
-
-        return lines
-
-    # --- Case 2: list-of-DiffItem style (newer ubelt style) ---
-    try:
-        n = len(diff)  # type: ignore[arg-type]
-    except Exception:
-        n = None
-
-    if n is None:
-        # unknown iterable type
-        try:
-            diff_list = list(diff)  # type: ignore[arg-type]
-        except Exception:
-            return [f"{indent}⚠️ diff is not iterable"]
-    else:
-        diff_list = diff  # type: ignore[assignment]
-
-    lines.append(f"{indent}Diff items ({len(diff_list)}):")
-    for d in list(diff_list)[:max_items]:
-        path = getattr(d, 'path', None)
-        if path is None and isinstance(d, (tuple, list)) and d:
-            path = d[0]
-        va = getattr(d, 'value1', None)
-        vb = getattr(d, 'value2', None)
-        # Fallback names some versions use
-        if va is None and hasattr(d, 'a'):
-            va = getattr(d, 'a')
-        if vb is None and hasattr(d, 'b'):
-            vb = getattr(d, 'b')
-
-        lines.append(
-            f"{indent}  {_pp_path(path)}: "
-            f"{label_a}={_short_urepr(va)}  {label_b}={_short_urepr(vb)}"
-        )
-
-    if len(diff_list) > max_items:
-        lines.append(f"{indent}  ... +{len(diff_list) - max_items} more")
-    return lines
+def ratio(c: int, m: int) -> float:
+    return 1.0 - (m / c) if c else float('nan')
