@@ -42,14 +42,6 @@ Ignore:
       --backend=tmux \
       --skip_existing=1 \
       --run=1
-
-
-2026-02-04T15:56:09 INFO       Done.                                                                                                                                    [3104/19060]
-2026-02-04T15:56:09 INFO     } [22m24.096s]
-└─── END CMD ───
-2026-02-04 15:56:11.463 | INFO     | __main__:main:434 - Wrote manifest: /home/local/KHQ/jon.crall/code/aiq-magnet/results/helm/helm_id_122cc4nm308f/adapter_manifest.json
-2026-02-04 15:56:11.463 | SUCCESS  | __main__:main:438 - Wrote DONE sentinel: /home/local/KHQ/jon.crall/code/aiq-magnet/results/helm/helm_id_122cc4nm308f/DONE
-
 """
 
 from __future__ import annotations
