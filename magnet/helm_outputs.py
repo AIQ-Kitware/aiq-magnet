@@ -36,7 +36,7 @@ StatStruct = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
 PerInstanceStatsStruct = util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
 
 # monkey patch until kwutil 0.3.7
-MONKEYPATCH_KWUTIL = True
+MONKEYPATCH_KWUTIL = False  # remove if stable
 if MONKEYPATCH_KWUTIL:
     from kwutil import util_dotdict
     kwutil.DotDict = util_dotdict.DotDict
@@ -295,7 +295,7 @@ class HelmSuite(ub.NiceRepr):
         self.name = self.path.name
 
     def __nice__(self):
-        return self.name
+        return self.path.name
 
     @classmethod
     def demo(cls) -> Self:
@@ -1173,7 +1173,16 @@ class HelmRun(ub.NiceRepr):
     """
     def __init__(self, path):
         self.path = ub.Path(path)
-        self.name = self.path.name
+
+    @property
+    def name(self):
+        ub.schedule_deprecation(
+            modname='magnet', name='.name', type='property',
+            migration='use .run.name to get the old behavior, or .json.run_spec().name to get the real name',
+            deprecate='now', error='1.0.0', remove='1.0.0')
+        # NOTE: the real run spec name is often different.
+        # Should we rework this property?
+        return self.path.name
 
     @classmethod
     def coerce(cls, input) -> Self:
@@ -1234,7 +1243,7 @@ class HelmRun(ub.NiceRepr):
         return _HelmRunJsonView(self, backend='ujson')
 
     def __nice__(self):
-        return self.name
+        return self.path.name
 
     def exists(self) -> bool:
         """
