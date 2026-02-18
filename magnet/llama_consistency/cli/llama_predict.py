@@ -1,26 +1,13 @@
-# This takes the place of raw python right?
-# What would an empty stub look like in the cookie cutter?
-# This is what the user is on the hook to implement?
-
-# TODO:
-# TODO: confirm correct ordering of imports
-# STEP 1: Define code logic
-# STEP X: Create empty stub 
-# TODO: write TODOs in the PR including CHANGELOG entry
-# FIXME: be smarter about using existing YAML
-# PLAN: 2 stage pipeline: fan out llamaendpoint(model=x) -> claim/run evaluation, then we can use aggregator in evaluation.py?
-"""
-# XXX: could I just extend yaml? or use yaml here: enabling a print style like original json writing
-"""
+import json
 
 import ubelt as ub
-from magnet import HelmOutputs
-from magnet.helm_outputs import HelmSuiteRuns
-import scriptconfig as scfg
+import kwutil
 import rich
 from rich.markup import escape
-import kwutil
-import json
+import scriptconfig as scfg
+
+from magnet import HelmOutputs
+from magnet.helm_outputs import HelmSuiteRuns
 
 class ExampleLlamaEndpointCLI(scfg.DataConfig):
     """

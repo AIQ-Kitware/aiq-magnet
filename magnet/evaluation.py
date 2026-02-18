@@ -84,9 +84,7 @@ class EvaluationCard:
         2. Evaluate claim under symbol values
         3. Summarize general finding
         """
-
-        #import llama_consistency.pipelines.llama_pipeline
-
+        
         # kwdagger dispatch TODO: encapsulate into own handler
         if self.pipeline:
             print(self.pipeline)

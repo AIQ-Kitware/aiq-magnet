@@ -1,6 +1,5 @@
 """
-One node pipeline for llama-consistency example card
-
+Two node pipeline for llama-consistency example card
 """
 
 import kwdagger
@@ -23,7 +22,8 @@ class ExampleLlamaEndpoint(kwdagger.ProcessNode):
     executable = f'python {MODULE_DPATH}/cli/llama_predict.py'
     params = ExampleLlamaEndpointCLI
     
-    '''out_paths = {
+    # FIXME: added manual tags to fix issue finding paths
+    out_paths = {
         'results_fpath': 'results.json',
     }
 
@@ -32,7 +32,7 @@ class ExampleLlamaEndpoint(kwdagger.ProcessNode):
     algo_params = {
         'base_model',
         'comp_model',
-    }'''
+    }
 
     def load_result(self, node_dpath):
         pass
@@ -55,9 +55,6 @@ class ConsistencyClaim(kwdagger.ProcessNode):
 
     primary_out_key = 'verdict_fpath'
 
-    algo_params = {}
-
-    # perf_params 
     def load_result(self, node_dpath):
         pass
 
@@ -69,9 +66,6 @@ def llama_pipeline():
         'claim_eval': ConsistencyClaim(),
     }
 
-    print(nodes['llama_predict'].outputs)
-    #import code
-    #code.interact(local=dict(locals(), **globals()))
     nodes['llama_predict'].outputs['results_fpath'].connect(
         nodes['claim_eval'].inputs['symbols_fpath']
     )

@@ -1,9 +1,9 @@
+import json
+
 import ubelt as ub
 import scriptconfig as scfg
 import rich
 from rich.markup import escape
-import kwutil
-import json
 
 class ConsistencyClaimCLI(scfg.DataConfig):
     """
