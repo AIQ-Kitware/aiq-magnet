@@ -1,0 +1,27 @@
+# Preliminary Working Evaluation Card Example
+
+title: "In-domain Model Consistency for Llama Family"
+description: |
+  Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family
+
+claim:
+  python: |
+    assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
+
+kwdagger: 
+  pipeline: 'llama_consistency.pipelines.llama_pipeline()'
+  matrix:
+      llama_predict.base_model:
+          - meta/llama-2-13b
+          - meta/llama-2-70b
+          - meta/llama-2-7b
+          - meta/llama-3-70b
+          - meta/llama-3-8b
+          - meta/llama-65b
+      llama_predict.comp_model:
+          - meta/llama-2-13b
+          - meta/llama-2-70b
+          - meta/llama-2-7b
+          - meta/llama-3-70b
+          - meta/llama-3-8b
+          - meta/llama-65b

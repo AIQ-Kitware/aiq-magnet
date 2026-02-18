@@ -1,13 +1,16 @@
+import argparse
 import builtins
 from graphlib import TopologicalSorter
 from itertools import product
-from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
-import yaml
-import argparse
+import json
 import sys
+from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
 
-import scriptconfig as scfg
+from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from rich import print
+import scriptconfig as scfg
+import ubelt as ub
+import yaml
 
 
 class EvaluationConfig(scfg.DataConfig):
@@ -54,6 +57,8 @@ class EvaluationCard:
         self.claim = Claim(cfg.get("claim"))
         self.symbols = cfg.get("symbols", {})
 
+        self.pipeline = cfg.get("kwdagger", {})
+
         self.evaluations = []
 
     def status(self) -> str:
@@ -79,14 +84,42 @@ class EvaluationCard:
         2. Evaluate claim under symbol values
         3. Summarize general finding
         """
-        self.evaluations = self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
 
-        results = []
-        for evaluation in self.evaluations:
-            status, _ = evaluation.execute()
-            results.append(status)
+        #import llama_consistency.pipelines.llama_pipeline
 
-        total = len(self.evaluations)
+        # kwdagger dispatch TODO: encapsulate into own handler
+        if self.pipeline:
+            print(self.pipeline)
+            kwd_config = ScheduleEvaluationConfig(
+                params=self.pipeline, #includes pipeline and additional params
+                root_dpath=ub.Path('./results'),
+                backend='serial',
+                skip_existing=True,
+                run=True,
+            )
+
+            dag, queue = build_schedule(kwd_config)
+
+            # TODO: self.evaluations = load 'symbols'?
+            results = []
+
+            # Glob all Claim node json files recursively FIXME: hardcoded
+            paths = kwd_config.root_dpath.glob('**/verdict.json')
+
+            for claim_json in paths:
+                claim_result = json.load(open(claim_json, 'r'))
+                if 'result' in claim_result and 'status' in claim_result['result']:
+                    results.append(claim_result['result']['status'])
+
+        else:
+            self.evaluations = self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
+
+            results = []
+            for evaluation in self.evaluations:
+                status, _ = evaluation.execute()
+                results.append(status)
+
+        total = len(results)
         percentage = lambda count: count / total
 
         verified_count = results.count('VERIFIED')
@@ -110,6 +143,7 @@ class EvaluationCard:
             card_result = 'VERIFIED'
 
         self.claim.status = card_result
+        print(card_result)
         return card_result
 
     def dispatch(self, flattened_sweep): #: List[Symbols]) -> List[EvaluationTask]:
