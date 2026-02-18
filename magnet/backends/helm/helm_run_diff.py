@@ -2,31 +2,106 @@
 
 Run-to-run comparison built on :class:`~magnet.backends.helm.helm_run_analysis.HelmRunAnalysis`.
 
-This refactor has two goals:
+Design goals
+------------
+* Keep the public API tight.
+* Cache expensive computations.
+* Provide both machine-friendly summaries (dict) and human-friendly reports
+  (writer-style output using rich by default).
 
-1) Make comparisons easier to write by reusing the same cached indices /
-   canonicalization logic.
-2) Support multiple report granularities (one-line, one-page, deeper dives)
-   without a config system.
+The diff intentionally leans on :class:`HelmRunAnalysis` for canonicalization
+and indexing so both single-run and diff views agree on what a "stat" or
+"instance" identity means.
 
-The public API is intentionally small:
+CommandLine:
+    xdoctest -m magnet.backends.helm.helm_run_diff __doc__
 
-* :class:`HelmRunDiff` - wrap two runs, cache expensive computations
-* :meth:`HelmRunDiff.summary_dict` / :meth:`HelmRunDiff.summary_text`
+Example:
+    >>> import ubelt as ub
+    >>> import kwutil
+    >>> from magnet.backends.helm.helm_outputs import HelmRun
+    >>> from magnet.backends.helm.helm_run_diff import HelmRunDiff
 
-Everything else is an implementation detail and can be promoted later.
+    >>> run_a = HelmRun.demo()
+    >>> dpath = ub.Path.appdir('magnet/tests/helm/helm_run_diff').delete().ensuredir()
+
+    >>> # --- Case 1: identical copy -> perfect agreement -----------------
+    >>> same_path = dpath / (run_a.path.name + '_same')
+    >>> run_a.path.copy(same_path)
+    >>> run_b = HelmRun(same_path)
+
+    >>> rd = HelmRunDiff(run_a, run_b, a_name='orig', b_name='same')
+    >>> info = rd.summary_dict(level=10)
+    >>> assert info['run_spec_dict_ok'] is True
+    >>> assert info['scenario_ok'] in {True, None}
+    >>> assert info['value_agreement']['overall']['mismatched'] == 0
+    >>> assert info['value_agreement']['overall']['agree_ratio'] == 1.0
+
+    >>> line = rd.summary_text(level=0)
+    >>> assert 'orig' in line and 'same' in line
+    >>> rd.summary(level=1000)
+
+    >>> # --- Case 2: perturb a single RUN-level stat mean ----------------
+    >>> stats_path = dpath / (run_a.path.name + '_statsmod')
+    >>> run_a.path.copy(stats_path)
+    >>> stat_fpath = stats_path / 'stats.json'
+    >>> stats = kwutil.Json.loads(stat_fpath.read_text())
+    >>> old_mean = float(stats[0].get('mean', 0.0))
+    >>> stats[0]['mean'] = old_mean + 1.23
+    >>> stat_fpath.write_text(kwutil.Json.dumps(stats))
+
+    >>> run_b2 = HelmRun(stats_path)
+    >>> rd2 = HelmRunDiff(run_a, run_b2, a_name='orig', b_name='stats+1.23')
+    >>> info2 = rd2.summary_dict(level=10)
+    >>> assert info2['value_agreement']['overall']['mismatched'] >= 1
+    >>> rd.summary(level=1000)
+
+    >>> # --- Case 3: perturb ONE per-instance stat mean ------------------
+    >>> inst_path = dpath / (run_a.path.name + '_perinstmod')
+    >>> run_a.path.copy(inst_path)
+    >>> pi_fpath = inst_path / 'per_instance_stats.json'
+    >>> if pi_fpath.exists():
+    ...     perinst = kwutil.Json.loads(pi_fpath.read_text())
+    ...     # deterministically modify the first mean-bearing stat for the first entry
+    ...     ei, sj = 0, None
+    ...     for j, s in enumerate(perinst[ei]['stats']):
+    ...         if int(s.get('count', 0) or 0) and ('mean' in s):
+    ...             sj = j
+    ...             break
+    ...     assert sj is not None
+    ...     old = float(perinst[ei]['stats'][sj]['mean'])
+    ...     perinst[ei]['stats'][sj]['mean'] = old + 9.0
+    ...     pi_fpath.write_text(kwutil.Json.dumps(perinst))
+    ...     run_bi = HelmRun(inst_path)
+    ...     rd_i = HelmRunDiff(run_a, run_bi, a_name='orig', b_name='perinst+9')
+    ...     inst_info = rd_i.instance_summary_dict(top_n=5)
+    ...     assert inst_info['means']['mismatched'] >= 1
+    ...     rd_i.summary(level=1000)
+
+    >>> # --- Case 4: run spec diff  ----------------
+    >>> new_dpath = dpath / (run_a.path.name + '_runspec_mod')
+    >>> run_a.path.copy(new_dpath)
+    >>> spec_fpath = new_dpath / 'run_spec.json'
+    >>> run_spec = kwutil.Json.loads(spec_fpath.read_text())
+    >>> run_spec['adapter_spec']['model_deployment'] = 'someotherdeploy/gpt2'
+    >>> spec_fpath.write_text(kwutil.Json.dumps(run_spec))
+    >>> run_b4 = HelmRun(new_dpath)
+    >>> rd = HelmRunDiff(run_a, run_b4, a_name='orig', b_name='runspec_mod')
+    >>> rd.summary(level=1000)
+    >>> info = rd.summary_dict(level=10)
+    >>> assert not info['run_spec_dict_ok']
+
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
-
 import ubelt as ub
 
-# (metric classification happens inside HelmRunAnalysis.stat_index)
-from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
+from dataclasses import dataclass
 from magnet.backends.helm import helm_hashers
+from magnet.backends.helm.helm_metrics import classify_metric
+from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
+from typing import Any, Callable, Iterable, Mapping
 
 
 def _format_bool(ok: bool) -> str:
@@ -43,19 +118,133 @@ def _safe_float(x: Any) -> float | None:
 
 
 def _walker_diff(a: Any, b: Any, *, max_paths: int = 12) -> list[str]:
-    """Return a compact list of changed paths using ubelt's walker."""
+    """
+
+    Return a dict with formatted lines for:
+      - unique1: paths only in a
+      - unique2: paths only in b
+      - faillist: differing values at same path
+
+    Each list is independently truncated to `max_paths`, with a final
+    "<N more not shown>" line if needed.
+
+    Example:
+        >>> a = {'foo': {'bar': [1], 'baz': 1}}
+        >>> b = {'foo': {'bar': [2], 'biz': 2}}
+        >>> _walker_diff(a, b)
+
+        >>> a = {
+        >>>     "shared": {"same": 0, "chg": 1, "deep": {"x": 1}},
+        >>>     "only_a_top": True,
+        >>>     "only_a": {"k0": 0, "k1": 1, "k2": 2},
+        >>>     "arr": [0, 1],
+        >>> }
+        >>> b = {
+        >>>     "shared": {"same": 0, "chg": 2, "deep": {"x": 9, "y": 10}},
+        >>>     "only_b_top": True,
+        >>>     "only_b": {"j0": 0, "j1": 1, "j2": 2},
+        >>>     "arr": [0, 2, 3],
+        >>> }
+        >>> _walker_diff(a, b)
+    """
+    walker_a = ub.IndexableWalker(a)
+    walker_b = ub.IndexableWalker(b)
+    info = walker_a.diff(walker_b)
+    info.pop("passlist", None)
+
+    def _format_path(path: Iterable[Any]) -> str:
+        return ".".join(map(str, path))
+
+    def _truncate(lines: list[str], max_items: int) -> list[str]:
+        """
+        If truncation happens, append ONE final line: "<N more not shown>"
+        where N is the correct remainder.
+        """
+        if max_items is None or max_items <= 0:
+            return lines
+        n = len(lines)
+        if n <= max_items:
+            return lines
+        remain = n - max_items
+        return lines[:max_items] + [f"<{remain} more not shown>"]
+
+    unique1 = sorted(info.get("unique1", []))
+    unique2 = sorted(info.get("unique2", []))
+    faillist = sorted(info.get("faillist", []), key=lambda d: d.path)
+
+    out = info | {
+        "unique1": _truncate([_format_path(p) + ': ' + repr(walker_a[p]) for p in unique1], max_paths),
+        "unique2": _truncate([_format_path(p) + ': ' + repr(walker_b[p]) for p in unique2], max_paths),
+        "faillist": _truncate(
+            [f"{_format_path(d.path)}: {d.value1!r} != {d.value2!r}" for d in faillist],
+            max_paths,
+        ),
+    }
+    return out
+
+
+def _default_writer(writer=None) -> Callable[[str], Any]:
+    if writer is not None:
+        return writer
     try:
-        w = ub.IndexableWalker(a, list_cls=tuple)
-        diff = w.diff(b)
+        from rich import print as rich_print  # type: ignore
+    except Exception:  # nocover
+        return print
+    else:
+        return rich_print
+
+
+def _escape_rich(text: str) -> str:
+    """Escape rich markup (mainly brackets) without losing readability."""
+    try:
+        from rich.markup import escape  # type: ignore
+    except Exception:  # nocover
+        return text
+    else:
+        return escape(text)
+
+
+def _sanitize_text(text: Any) -> str:
+    if text is None:
+        return ''
+    s = str(text)
+    # Drop most control chars except newlines/tabs.
+    s = ''.join(
+        (ch if (ch == '\n' or ch == '\t' or ord(ch) >= 32) else ' ') for ch in s
+    )
+    return s
+
+
+def _smart_truncate(text: Any, max_chars: int) -> str:
+    """Truncate long prompts/completions with a stable hash tail."""
+    s = _sanitize_text(text)
+    if max_chars <= 0:
+        return _escape_rich(s)
+    try:
+        from kwutil.slugify_ext import smart_truncate  # type: ignore
+    except Exception:  # nocover
+        # fallback: hard truncate
+        s2 = (s[:max_chars] + '…') if len(s) > max_chars else s
+        return _escape_rich(s2)
+    else:
+        s2 = smart_truncate(
+            s,
+            max_length=max_chars,
+            trunc_loc=0.5,
+            hash_len=8,
+            head='~',
+            tail='~',
+        )
+        return _escape_rich(s2)
+
+
+def _short_urepr(obj: Any, max_chars: int = 140) -> str:
+    """Compact repr for diffs; keeps it readable and bounded."""
+    try:
+        s = ub.urepr(obj, nl=0, sv=1)
     except Exception:
-        return []
-    paths = []
-    for d in diff:
-        # d.path is a tuple of keys
-        paths.append('/'.join(map(str, d.path)))
-        if len(paths) >= max_paths:
-            break
-    return paths
+        s = repr(obj)
+    return _smart_truncate(s, max_chars)
 
 
 @dataclass(frozen=True)
@@ -83,6 +272,14 @@ class Coverage:
         )
 
 
+def _fmt(x: Any) -> str:
+    if x is None:
+        return 'None'
+    if isinstance(x, float):
+        return f'{x:.4g}'
+    return str(x)
+
+
 class HelmRunDiff(ub.NiceRepr):
     """Compare two HELM runs.
 
@@ -91,80 +288,9 @@ class HelmRunDiff(ub.NiceRepr):
     run_a, run_b:
         Either :class:`HelmRunAnalysis` or a ``HelmRun`` reader (coerced).
     a_name, b_name:
-        Human-friendly labels for display.
-
-    Example:
-        >>> import ubelt as ub
-        >>> import kwutil
-        >>> from magnet.backends.helm.helm_outputs import HelmRun
-        >>> from magnet.backends.helm.helm_run_diff import HelmRunDiff
-        >>> run_a = HelmRun.demo()
-        >>> dpath = ub.Path.appdir('magnet/tests/helm/rundiff').delete().ensuredir()
-
-        >>> # --- Case 1: identical copy -> perfect agreement -----------------
-        >>> same_path = dpath / (run_a.path.name + '_same')
-        >>> run_a.path.copy(same_path)
-        >>> run_b = HelmRun(same_path)
-        >>> rd = HelmRunDiff(run_a, run_b, a_name='orig', b_name='same')
-        >>> info = rd.summary_dict(level='l1')
-        >>> assert info['run_spec_dict_ok'] is True
-        >>> assert info['scenario_ok'] in {True, None}
-        >>> assert info['value_agreement']['overall']['mismatched'] == 0
-        >>> assert info['value_agreement']['overall']['agree_ratio'] == 1.0
-        >>> print(rd.summary_text(level='line'))  # xdoctest: +ELLIPSIS
-        ✅ orig vs same ...
-
-        >>> # --- Case 2: perturb a single RUN-level stat mean ----------------
-        >>> stats_path = dpath / (run_a.path.name + '_statsmod')
-        >>> run_a.path.copy(stats_path)
-        >>> stat_fpath = stats_path / 'stats.json'
-        >>> stats = kwutil.Json.load(stat_fpath)
-        >>> old_mean = float(stats[0].get('mean', 0.0))
-        >>> stats[0]['mean'] = old_mean + 1.23
-        >>> stat_fpath.write_text(kwutil.Json.dumps(stats))
-        >>> run_b2 = HelmRun(stats_path)
-        >>> rd2 = HelmRunDiff(run_a, run_b2, a_name='orig', b_name='stats+1.23')
-        >>> info2 = rd2.summary_dict(level='l1')
-        >>> assert info2['value_agreement']['overall']['mismatched'] >= 1
-        >>> top = info2['value_agreement']['top_mismatches'][0]
-        >>> assert abs(float(top['abs_delta']) - 1.23) < 1e-9
-        >>> print(rd2.summary_text(level='line'))  # xdoctest: +ELLIPSIS
-        ✅ orig vs stats+1.23 ...
-
-        >>> # --- Dive into instance-level diffs (per_instance_stats) ------------
-        >>> # Make a copy and perturb ONE per-instance stat mean.
-        >>> inst_path = dpath / (run_a.path.name + '_perinstmod')
-        >>> run_a.path.copy(inst_path)
-        >>> pi_fpath = inst_path / 'per_instance_stats.json'
-        >>> perinst = kwutil.Json.load(pi_fpath)
-
-        >>> # Deterministically modify the first mean-bearing stat for the first entry.
-        >>> ei = 0
-        >>> sj = None
-        >>> for j, s in enumerate(perinst[ei]['stats']):
-        ...     if s.get('count', 0) and ('mean' in s):
-        ...         sj = j
-        ...         break
-        >>> assert sj is not None
-        >>> old_mean = float(perinst[ei]['stats'][sj]['mean'])
-        >>> perinst[ei]['stats'][sj]['mean'] = old_mean + 9.0
-        >>> pi_fpath.write_text(kwutil.Json.dumps(perinst))
-        >>> run_bi = HelmRun(inst_path)
-
-        >>> # HelmRunDiff should own the keying + join logic and produce a report.
-        >>> rd_i = HelmRunDiff(run_a, run_bi, a_name='orig', b_name='perinst+9')
-
-        >>> inst_info = rd_i.instance_summary_dict(top_n=5)
-        >>> assert inst_info['means']['mismatched'] >= 1
-        >>> assert inst_info['means']['agree_ratio'] < 1.0
-        >>> top = inst_info['top_mismatches'][0]
-        >>> assert abs(float(top['abs_delta']) - 9.0) < 1e-9
-
-        >>> # Human-readable one-liner + page report
-        >>> print(rd_i.instance_summary_text(level='line'))  # xdoctest: +ELLIPSIS
-        InstanceDiff orig vs perinst+9: isect=... agree=...
-        >>> print(rd_i.instance_summary_text(level='page'))  # xdoctest: +IGNORE_WANT
-        ...
+        Human-friendly labels for reports.
+    short_hash:
+        Controls readability of hashed ids used in stat keys.
     """
 
     def __init__(
@@ -176,36 +302,58 @@ class HelmRunDiff(ub.NiceRepr):
         b_name: str = 'B',
         short_hash: int = 16,
     ):
-        self.a = run_a if isinstance(run_a, HelmRunAnalysis) else HelmRunAnalysis(run_a, name=a_name)
-        self.b = run_b if isinstance(run_b, HelmRunAnalysis) else HelmRunAnalysis(run_b, name=b_name)
+        self.a = (
+            run_a
+            if isinstance(run_a, HelmRunAnalysis)
+            else HelmRunAnalysis(run_a, name=a_name)
+        )
+        self.b = (
+            run_b
+            if isinstance(run_b, HelmRunAnalysis)
+            else HelmRunAnalysis(run_b, name=b_name)
+        )
         self.a_name = a_name
         self.b_name = b_name
         self.short_hash = short_hash
         self._cache: dict[Any, Any] = {}
 
     def __nice__(self):
-        return f"{self.a_name} vs {self.b_name}"
+        return f'{self.a_name} vs {self.b_name}'
 
-    # --- Core summary -------------------------------------------------
+    # ---------------------------------------------------------------------
+    # Base summaries
 
-    def summary_dict(self, *, level: str = 'l1') -> dict[str, Any]:
-        """Programmatic comparison summary.
+    def summary_dict(self, *, level: int = 10) -> dict[str, Any]:
+        """Programmatic run-to-run summary.
 
-        level='l1' corresponds to the original "base-level" checks:
+        This is meant to be stable enough to power Sankey bucketing and
+        higher-level dashboards.
 
-        1. run_spec_name equality
-        2. run_spec dict hash equality + diff paths
-        3. scenario dict hash equality (with "unknown" semantics)
-        4. stats coverage by name (ignore count/value)
-        5. stats coverage by (name+count)
-        6. value agreement on intersecting keys (split by core/bookkeeping/untracked)
+        Key fields
+        ----------
+        run_spec_name_ok:
+            Whether ``run_spec['name']`` matches.
+        run_spec_dict_ok:
+            Whether the entire run_spec.json matches (hash equality).
+        scenario_ok:
+            True/False if both scenario.json exist and match (hash equality),
+            None if scenario is missing in one/both runs.
+        stats_coverage_by_name:
+            Coverage of stat names only (ignores count/values).
+        stats_coverage_by_name_count:
+            Coverage of stat name + count (still ignores values).
+        value_agreement:
+            Mean agreement on intersecting run-level stats, split by
+            metric class (core/bookkeeping/untracked).
+
+        Notes
+        -----
+        ``level`` mainly controls optional extras. For now, the dict always
+        includes the L1 checks above.
         """
         cache_key = ('summary_dict', level)
         if cache_key in self._cache:
             return self._cache[cache_key]
-
-        if level != 'l1':
-            raise KeyError(level)
 
         a_spec = self.a.run_spec() or {}
         b_spec = self.b.run_spec() or {}
@@ -213,60 +361,94 @@ class HelmRunDiff(ub.NiceRepr):
         b_scen = self.b.scenario() or {}
 
         # 1) run spec name
-        a_name = a_spec.get('name', None)
-        b_name = b_spec.get('name', None)
-        run_spec_name_ok = (a_name == b_name) and (a_name is not None)
+        a_run_name = a_spec.get('name', None)
+        b_run_name = b_spec.get('name', None)
+        run_spec_name_ok = (a_run_name == b_run_name) and (
+            a_run_name is not None
+        )
 
-        # 2) run spec dict check
-        spec_hash_a = helm_hashers.stable_hash36(helm_hashers.canonicalize_for_hashing(a_spec))
-        spec_hash_b = helm_hashers.stable_hash36(helm_hashers.canonicalize_for_hashing(b_spec))
+        # 2) run spec dict hash
+        spec_hash_a = helm_hashers.stable_hash36(
+            helm_hashers.canonicalize_for_hashing(a_spec)
+        )
+        spec_hash_b = helm_hashers.stable_hash36(
+            helm_hashers.canonicalize_for_hashing(b_spec)
+        )
         run_spec_dict_ok = spec_hash_a == spec_hash_b
-        spec_diff_paths = [] if run_spec_dict_ok else _walker_diff(a_spec, b_spec)
+        spec_diff_paths = (
+            {} if run_spec_dict_ok else _walker_diff(a_spec, b_spec)
+        )
 
-        # 3) scenario check (treat both None/missing as unknown)
+        # 3) scenario check with unknown semantics
         scen_known = bool(a_scen) and bool(b_scen)
         if not scen_known:
-            scenario_ok = None
+            scenario_ok: bool | None = None
             scenario_hash_a = None
             scenario_hash_b = None
-            scen_diff_paths = []
+            scen_diff_paths: list[str] = []
         else:
-            scenario_hash_a = helm_hashers.stable_hash36(helm_hashers.canonicalize_for_hashing(a_scen))
-            scenario_hash_b = helm_hashers.stable_hash36(helm_hashers.canonicalize_for_hashing(b_scen))
+            scenario_hash_a = helm_hashers.stable_hash36(
+                helm_hashers.canonicalize_for_hashing(a_scen)
+            )
+            scenario_hash_b = helm_hashers.stable_hash36(
+                helm_hashers.canonicalize_for_hashing(b_scen)
+            )
             scenario_ok = scenario_hash_a == scenario_hash_b
-            scen_diff_paths = [] if scenario_ok else _walker_diff(a_scen, b_scen)
+            scen_diff_paths = (
+                {} if scenario_ok else _walker_diff(a_scen, b_scen)
+            )
 
         # 4/5) stats coverage
         a_stats = self.a.stats() or []
         b_stats = self.b.stats() or []
-        a_name_keys = {helm_hashers.stat_key(s.get('name', None), short_hash=self.short_hash) for s in a_stats}
-        b_name_keys = {helm_hashers.stat_key(s.get('name', None), short_hash=self.short_hash) for s in b_stats}
+        a_name_keys = {
+            helm_hashers.stat_key(
+                s.get('name', None), short_hash=self.short_hash
+            )
+            for s in a_stats
+        }
+        b_name_keys = {
+            helm_hashers.stat_key(
+                s.get('name', None), short_hash=self.short_hash
+            )
+            for s in b_stats
+        }
         cov_name = Coverage.from_sets(a_name_keys, b_name_keys)
 
         a_name_count_keys = {
-            helm_hashers.stat_key(s.get('name', None), count=s.get('count', None), short_hash=self.short_hash)
+            helm_hashers.stat_key(
+                s.get('name', None),
+                count=s.get('count', None),
+                short_hash=self.short_hash,
+            )
             for s in a_stats
         }
         b_name_count_keys = {
-            helm_hashers.stat_key(s.get('name', None), count=s.get('count', None), short_hash=self.short_hash)
+            helm_hashers.stat_key(
+                s.get('name', None),
+                count=s.get('count', None),
+                short_hash=self.short_hash,
+            )
             for s in b_stats
         }
-        cov_name_count = Coverage.from_sets(a_name_count_keys, b_name_count_keys)
+        cov_name_count = Coverage.from_sets(
+            a_name_count_keys, b_name_count_keys
+        )
 
         # 6) value agreement (means) on intersecting keys
         value_summary = self._value_agreement_summary()
 
-        out = {
-            'a': self.a.summary_dict(level='lite'),
-            'b': self.b.summary_dict(level='lite'),
+        out: dict[str, Any] = {
+            'a': self._lite_run_dict(self.a),
+            'b': self._lite_run_dict(self.b),
             'run_spec_name_ok': run_spec_name_ok,
-            'run_spec_name_a': a_name,
-            'run_spec_name_b': b_name,
+            'run_spec_name_a': a_run_name,
+            'run_spec_name_b': b_run_name,
             'run_spec_dict_ok': run_spec_dict_ok,
             'run_spec_hash_a': spec_hash_a,
             'run_spec_hash_b': spec_hash_b,
             'run_spec_diff_paths': spec_diff_paths,
-            'scenario_ok': scenario_ok,  # None => unknown
+            'scenario_ok': scenario_ok,
             'scenario_hash_a': scenario_hash_a,
             'scenario_hash_b': scenario_hash_b,
             'scenario_diff_paths': scen_diff_paths,
@@ -275,108 +457,171 @@ class HelmRunDiff(ub.NiceRepr):
             'value_agreement': value_summary,
         }
 
+        if level >= 20:
+            # Optional: include instance-level summary in the dict.
+            try:
+                out['instance_value_agreement'] = self.instance_summary_dict(
+                    top_n=10
+                )
+            except Exception as ex:  # nocover
+                out['instance_value_agreement'] = {'error': repr(ex)}
+
         self._cache[cache_key] = out
         return out
 
-    def summary_text(self, *, level: str = 'line', writer=None) -> str:
-        """Human-readable report.
+    def summary_text(self, *, level: int = 0) -> str:
+        """Return a text summary (built by calling :meth:`summary`)."""
+        lines: list[str] = []
+        self.summary(level=level, writer=lines.append)
+        return '\n'.join(lines).rstrip()
 
-        level='line' is intended for tables.
-        level='page' is a compact multi-line report.
+    def summary(self, *, level: int = 10, writer=None) -> None:
+        """Writer-style diff report.
+
+        Levels
+        ------
+        * level <= 0: single line
+        * level >= 10: one page
+        * level >= 20: include top mismatches
+        * level >= 30: include instance-level summary headline
         """
-        info = self.summary_dict(level='l1')
+        writer = _default_writer(writer)
+        info = self.summary_dict(level=level)
 
-        if writer is None:
-            from rich.console import Console
-            _console = Console()
-            writer = _console.print
+        ok = info['run_spec_dict_ok'] and (info['scenario_ok'] in {True, None})
+        cov = info['stats_coverage_by_name']
+        agree = info['value_agreement']['overall']['agree_ratio']
 
-        if level == 'line':
-            ok = info['run_spec_dict_ok'] and (info['scenario_ok'] in {True, None})
-            cov = info['stats_coverage_by_name']
-            agree = info['value_agreement']['overall']['agree_ratio']
-            return (
-                f"{_format_bool(ok)} {self.a_name} vs {self.b_name} "
-                f"spec={_format_bool(info['run_spec_dict_ok'])} "
-                f"stats={cov['n_isect']}/{cov['n_union']} "
-                f"agree={agree:.3f}"
+        if level <= 0:
+            writer(
+                f'{_format_bool(ok)} {self.a_name} vs {self.b_name} '
+                f'spec={_format_bool(info["run_spec_dict_ok"])} '
+                f'stats={cov["n_isect"]}/{cov["n_union"]} '
+                f'agree={agree:.3f}'
             )
 
-        if level == 'page':
-            lines: list[str] = []
-            writer(f"HelmRunDiff: {self.a_name} vs {self.b_name}")
-            writer(f"  {self.a_name}: {self.a.summary_text(level='line')}")
-            writer(f"  {self.b_name}: {self.b.summary_text(level='line')}")
+        if level > 0:
+            writer(f'HelmRunDiff: {self.a_name} vs {self.b_name}')
 
-            writer("")
-            writer(f"Run spec name: {_format_bool(info['run_spec_name_ok'])}  {info['run_spec_name_a']}  vs  {info['run_spec_name_b']}")
-            writer(f"Run spec dict: {_format_bool(info['run_spec_dict_ok'])}  hashA={info['run_spec_hash_a'][:10]}  hashB={info['run_spec_hash_b'][:10]}")
-            if not info['run_spec_dict_ok'] and info['run_spec_diff_paths']:
-                writer(f"  diff paths: {', '.join(info['run_spec_diff_paths'])}")
+            # Side-by-side lite
+            writer(
+                f'  {self.a_name}: {self._analysis_summary_line(self.a, level=0)}'
+            )
+            writer(
+                f'  {self.b_name}: {self._analysis_summary_line(self.b, level=0)}'
+            )
+
+            writer('')
+            writer(
+                f'Run spec name: {_format_bool(info["run_spec_name_ok"])}  '
+                f'{info["run_spec_name_a"]}  vs  {info["run_spec_name_b"]}'
+            )
+            writer(
+                f'Run spec dict: {_format_bool(info["run_spec_dict_ok"])}  '
+                f'hashA={str(info["run_spec_hash_a"])[:10]}  hashB={str(info["run_spec_hash_b"])[:10]}'
+            )
+            if (not info['run_spec_dict_ok']):
+                writer(
+                    f'  diff: {ub.urepr(info["run_spec_diff_paths"])}'
+                )
 
             if info['scenario_ok'] is None:
-                writer("Scenario: ⚠️  unknown (missing scenario.json in one or both runs)")
+                writer(
+                    'Scenario: ⚠️  unknown (missing scenario.json in one or both runs)'
+                )
             else:
-                writer(f"Scenario: {_format_bool(bool(info['scenario_ok']))}")
-                if info['scenario_ok'] is False and info['scenario_diff_paths']:
-                    writer(f"  diff paths: {', '.join(info['scenario_diff_paths'])}")
+                writer(f'Scenario: {_format_bool(bool(info["scenario_ok"]))}')
+                if (info['scenario_ok'] is False):
+                    writer(
+                        f'  diff: {ub.urepr(info["scenario_diff_paths"])}'
+                    )
 
-            cov = info['stats_coverage_by_name']
+            writer('')
             cov2 = info['stats_coverage_by_name_count']
-            writer("")
-            writer("Stats coverage:")
+            writer('Stats coverage:')
             writer(
-                f"  by name:       A={cov['n_a']} B={cov['n_b']} isect={cov['n_isect']} union={cov['n_union']} onlyA={cov['only_a']} onlyB={cov['only_b']}"
+                f'  by name:       A={cov["n_a"]} B={cov["n_b"]} '
+                f'isect={cov["n_isect"]} union={cov["n_union"]} onlyA={cov["only_a"]} onlyB={cov["only_b"]}'
             )
             writer(
-                f"  by name+count: A={cov2['n_a']} B={cov2['n_b']} isect={cov2['n_isect']} union={cov2['n_union']} onlyA={cov2['only_a']} onlyB={cov2['only_b']}"
+                f'  by name+count: A={cov2["n_a"]} B={cov2["n_b"]} '
+                f'isect={cov2["n_isect"]} union={cov2["n_union"]} onlyA={cov2["only_a"]} onlyB={cov2["only_b"]}'
             )
 
-            writer("")
-            writer("Value agreement (mean on intersecting stats):")
+            writer('')
+            writer('Value agreement (mean on intersecting run-level stats):')
             ov = info['value_agreement']['overall']
-            writer(f"  overall: comparable={ov['comparable']} mismatched={ov['mismatched']} agree_ratio={ov['agree_ratio']:.3f}")
+            writer(
+                f'  overall: comparable={ov["comparable"]} mismatched={ov["mismatched"]} '
+                f'agree_ratio={ov["agree_ratio"]:.3f}'
+            )
             for cls in ('core', 'bookkeeping', 'untracked'):
                 s = info['value_agreement']['by_class'][cls]
                 writer(
-                    f"  {cls:11s}: comparable={s['comparable']} mismatched={s['mismatched']} agree_ratio={s['agree_ratio']:.3f}"
+                    f'  {cls:11s}: comparable={s["comparable"]} mismatched={s["mismatched"]} '
+                    f'agree_ratio={s["agree_ratio"]:.3f}'
                 )
 
-            top = info['value_agreement'].get('top_mismatches', [])
-            if top:
-                writer("  top mismatches:")
-                for r in top:
+            if level >= 20:
+                top = info['value_agreement'].get('top_mismatches', [])
+                if top:
+                    writer('  top mismatches:')
+                    for r in top:
+                        writer(
+                            f'    {r["key"]}  A={_fmt(r["a"])}  B={_fmt(r["b"])}  |Δ|={_fmt(r["abs_delta"])}'
+                        )
+
+            if level >= 30:
+                writer('')
+                try:
+                    inst = self.instance_summary_dict(top_n=5)
+                except Exception as ex:
+                    writer(f'Instance-level diff: ⚠️  unable to compute: {ex!r}')
+                else:
+                    means = inst['means']
                     writer(
-                        f"    {r['key']}  A={_fmt(r['a'])}  B={_fmt(r['b'])}  Δ={_fmt(r['abs_delta'])}"
+                        f'Instance-level means: comparable={means["comparable"]} mismatched={means["mismatched"]} '
+                        f'agree={means["agree_ratio"]:.3f} (unpert={means["agree_ratio_unperturbed"]:.3f}, '
+                        f'pert={means["agree_ratio_perturbed"]:.3f})'
                     )
-            return "\n".join(lines)
 
-        raise KeyError(level)
+    def _analysis_summary_line(
+        self, ana: HelmRunAnalysis, *, level: int = 0
+    ) -> str:
+        """Best-effort one-liner per-run summary for side-by-side views."""
+        if hasattr(ana, 'summary_text'):
+            try:
+                return ana.summary_text(level=level)  # type: ignore
+            except Exception:
+                pass
+        if hasattr(ana, 'summary'):
+            try:
+                lines: list[str] = []
+                ana.summary(level=level, writer=lines.append)  # type: ignore
+                return ' '.join([ln.strip() for ln in lines if ln.strip()])
+            except Exception:
+                pass
+        d = self._lite_run_dict(ana)
+        name = d.get('run_spec_name', None)
+        return str(name)
 
-    def instance_summary_dict(self, *, top_n: int = 10):
-        """
-        Programmatic summary of per-instance stat agreement.
+    def _lite_run_dict(self, ana: HelmRunAnalysis) -> dict[str, Any]:
+        """Best-effort stable per-run dict used in diff summaries."""
+        if hasattr(ana, 'summary_dict'):
+            try:
+                return ana.summary_dict(level=0)  # type: ignore
+            except Exception:
+                pass
+        if hasattr(ana, 'summary_lite'):
+            try:
+                return ana.summary_lite()  # type: ignore
+            except Exception:
+                pass
+        spec = ana.run_spec() or {}
+        return {'run_spec_name': spec.get('name', None)}
 
-        Returns a dict with:
-          - coverage of (instance, trial, perturbation, metric) keys
-          - mean agreement stats
-          - top mismatches by abs delta
-          - perturbed vs unperturbed breakdown
-        """
-        return instance_summary_dict(self, top_n=top_n)
-
-    def instance_summary_text(self, *args, **kwargs) -> None:
-        """
-        Write a line-oriented instance-level diff report.
-
-        Uses `writer` for immediate output. If writer is None, defaults to rich.print.
-
-        Keeps long prompt / completion / input excerpts readable via kwutil smart_truncate.
-        Request-state diffs are summarized as a small set of highlighted lines.
-        """
-        return summarize_instances(self, *args, **kwargs)
-
-    # --- Implementation helpers ---------------------------------------
+    # ---------------------------------------------------------------------
+    # Run-level mean agreement
 
     def _value_agreement_summary(
         self,
@@ -385,16 +630,23 @@ class HelmRunDiff(ub.NiceRepr):
         rel_tol: float = 0.0,
         top_n: int = 12,
     ) -> dict[str, Any]:
-        """Compare mean values for intersecting stats.
-
-        Uses the readable stat keys produced by :meth:`HelmRunAnalysis.stat_index`.
-        """
-        cache_key = ('value_agreement', abs_tol, rel_tol, top_n, self.short_hash)
+        """Compare mean values for intersecting run-level stats."""
+        cache_key = (
+            'value_agreement',
+            abs_tol,
+            rel_tol,
+            top_n,
+            self.short_hash,
+        )
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        idx_a = self.a.stat_index(drop_zero_count=True, require_mean=True, short_hash=self.short_hash)
-        idx_b = self.b.stat_index(drop_zero_count=True, require_mean=True, short_hash=self.short_hash)
+        idx_a = self.a.stat_index(
+            drop_zero_count=True, require_mean=True, short_hash=self.short_hash
+        )
+        idx_b = self.b.stat_index(
+            drop_zero_count=True, require_mean=True, short_hash=self.short_hash
+        )
         keys = set(idx_a.keys()) & set(idx_b.keys())
 
         def agrees(x: float, y: float) -> bool:
@@ -417,12 +669,19 @@ class HelmRunDiff(ub.NiceRepr):
             if a.mean is None or b.mean is None:
                 continue
             comparable += 1
-            cls = a.metric_class  # should match b.metric_class for same metric name
+            cls = a.metric_class
             by_class[cls]['comparable'] += 1
             if not agrees(a.mean, b.mean):
                 mismatched += 1
                 by_class[cls]['mismatched'] += 1
-                mismatches.append({'key': k, 'a': a.mean, 'b': b.mean, 'abs_delta': abs(a.mean - b.mean)})
+                mismatches.append(
+                    {
+                        'key': k,
+                        'a': a.mean,
+                        'b': b.mean,
+                        'abs_delta': abs(a.mean - b.mean),
+                    }
+                )
 
         mismatches.sort(key=lambda r: r['abs_delta'], reverse=True)
         top = mismatches[:top_n]
@@ -450,601 +709,583 @@ class HelmRunDiff(ub.NiceRepr):
         self._cache[cache_key] = out
         return out
 
+    # ---------------------------------------------------------------------
+    # Instance-level agreement / drilldowns
 
-def _fmt(x: Any) -> str:
-    if x is None:
-        return 'None'
-    if isinstance(x, float):
-        return f"{x:.4g}"
-    return str(x)
+    def instance_summary_dict(
+        self,
+        *,
+        top_n: int = 10,
+        abs_tol: float = 0.0,
+        rel_tol: float = 0.0,
+    ) -> dict[str, Any]:
+        """Programmatic summary of per-instance stat agreement.
 
+        This summarizes agreement on *mean* for joined per-instance stats.
 
-def _diff_request_states(
-    rs_a: dict,
-    rs_b: dict,
-    *,
-    max_diffs: int = 40,
-    context_chars: int = 180,
-):
-    """
-    Compute a compact walker diff between two request_state dicts.
+        Returns
+        -------
+        dict with keys:
 
-    This strips high-churn fields (timestamps, runtimes, full token logprobs, etc.)
-    so the diff focuses on prompt/instance/references/completions.
+        * coverage: overlap on joined-row keys
+        * means:
+            - comparable: number of comparable rows (mean present in both)
+            - mismatched: number of rows failing tolerance check
+            - agree_ratio: 1 - mismatched / comparable
+            - agree_ratio_unperturbed / agree_ratio_perturbed
+        * top_mismatches_by_group:
+            Mapping from ``(metric_class, metric_name)`` to a list of mismatch
+            items (sorted by |Δ|), each containing:
+                key, a, b, abs_delta, signed_delta
 
-    Returns
-    -------
-    dict with:
-        - ok: bool
-        - n_diffs: int
-        - diffs: List[dict(path=..., a=..., b=...)]
-    """
-    import ubelt as ub
-
-    def _clip(v):
-        # Keep output readable
-        if isinstance(v, str):
-            v2 = v.replace('\r\n', '\n')
-            return (v2[:context_chars] + '…') if len(v2) > context_chars else v2
-        return v
-
-    # Shallow recursive prune helper
-    def _prune(obj, path=()):
-        # Remove/normalize high-churn keys
-        if isinstance(obj, dict):
-            drop = {
-                # result churn
-                'request_time', 'request_datetime', 'cached',
-                # huge / noisy
-                'tokens', 'logprob', 'top_k_per_token',
-                # sometimes noisy (depends on run)
-                'embedding',
-            }
-            out = {}
-            for k, v in obj.items():
-                if k in drop:
-                    continue
-                # also drop deep token lists if present
-                if k == 'completions' and isinstance(v, list):
-                    # Keep only completion texts (and maybe finish reason if present)
-                    v2 = []
-                    for c in v:
-                        if isinstance(c, dict):
-                            v2.append({kk: vv for kk, vv in c.items() if kk in {'text', 'finish_reason'}})
-                        else:
-                            v2.append(c)
-                    out[k] = _prune(v2, path + (k,))
-                else:
-                    out[k] = _prune(v, path + (k,))
-            return out
-        elif isinstance(obj, list):
-            return [_prune(v, path + (i,)) for i, v in enumerate(obj)]
-        else:
-            return obj
-
-    A = _prune(rs_a)
-    B = _prune(rs_b)
-
-    wa = ub.IndexableWalker(A, list_cls=(list,))
-    wb = ub.IndexableWalker(B, list_cls=(list,))
-
-    # ubelt returns a structured diff object; we just need changed paths
-    diff = wa.diff(wb)
-
-    # Try to be robust to ubelt version differences
-    changes = []
-    for item in getattr(diff, 'changed', []) or []:
-        # item usually has .path, .value1, .value2
-        path = getattr(item, 'path', None)
-        a_val = getattr(item, 'value1', None)
-        b_val = getattr(item, 'value2', None)
-        changes.append((path, a_val, b_val))
-
-    # Added/removed can also be useful
-    for item in getattr(diff, 'added', []) or []:
-        path = getattr(item, 'path', None)
-        a_val = None
-        b_val = getattr(item, 'value', None)
-        changes.append((path, a_val, b_val))
-    for item in getattr(diff, 'removed', []) or []:
-        path = getattr(item, 'path', None)
-        a_val = getattr(item, 'value', None)
-        b_val = None
-        changes.append((path, a_val, b_val))
-
-    # If ubelt diff API differs, fall back to brute path compare
-    if not changes:
-        # conservative fallback: compare leaf reprs
-        leaves_a = {tuple(p): v for p, v in wa}
-        leaves_b = {tuple(p): v for p, v in wb}
-        all_paths = set(leaves_a) | set(leaves_b)
-        for p in all_paths:
-            if leaves_a.get(p) != leaves_b.get(p):
-                changes.append((p, leaves_a.get(p), leaves_b.get(p)))
-
-    # Sort by path for deterministic output
-    changes = sorted(changes, key=lambda t: (t[0] is None, t[0]))
-
-    diffs = []
-    for path, av, bv in changes[:max_diffs]:
-        diffs.append({
-            'path': path,
-            'a': _clip(av),
-            'b': _clip(bv),
-        })
-
-    return {
-        'ok': len(changes) == 0,
-        'n_diffs': len(changes),
-        'diffs': diffs,
-    }
-
-
-def _slug(text, max_len: int, *, hash_len: int = 8, trunc_loc: float = 0.5, word_boundary: bool = True):
-    """
-    Smart-truncate long text into a readable slug with a short hash so different
-    long strings don't collapse to the same preview.
-
-    Notes:
-    - Converts newlines/tabs to spaces to keep tables readable.
-    - Uses smart_truncate's internal hashing (hash_len) for stability.
-    """
-    if text is None:
-        return None
-    import kwutil
-    s = str(text)
-    # normalize whitespace for table-friendly display
-    s = s.replace('\r\n', '\n').replace('\r', '\n')
-    s = " ".join(s.split())
-    if max_len and len(s) > max_len:
-        return kwutil.slugify_ext.smart_truncate(
-            s,
-            max_length=max_len,
-            word_boundary=word_boundary,
-            separator=' ',
-            trunc_loc=trunc_loc,
-            hash_len=hash_len,
-            head='~',
-            tail='~',
+        Notes
+        -----
+        * Metric class is computed via :func:`classify_metric`.
+        * "Perturbed" is determined by whether the joined key contains a
+          non-None perturbation id / perturbation descriptor.
+        """
+        cache_key = (
+            'instance_summary_dict',
+            top_n,
+            abs_tol,
+            rel_tol,
+            self.short_hash,
         )
-    return s
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
-
-def instance_summary_dict(self, *, top_n: int = 10):
-    """
-    Programmatic summary of per-instance stat agreement.
-
-    Adds:
-      * means_by_class: agreement stats per metric class
-      * top_mismatches_by_class: top-N mismatches per class (core/bookkeeping/untracked/...)
-      * top_mismatches_all: global top-N mismatches (for quick triage)
-    """
-    from magnet.backends.helm.helm_metrics import classify_metric
-
-    def _analysis(run_or_analysis, name: str | None = None):
-        try:
-            if hasattr(run_or_analysis, "joined_instance_stat_table"):
-                return run_or_analysis
-        except Exception:
-            pass
-        from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
-        return HelmRunAnalysis(run_or_analysis, name=name)
-
-    a_name = getattr(self, "a_name", "A")
-    b_name = getattr(self, "b_name", "B")
-    A = _analysis(getattr(self, "run_a", getattr(self, "a", None)), name=a_name)
-    B = _analysis(getattr(self, "run_b", getattr(self, "b", None)), name=b_name)
-
-    jt_a = A.joined_instance_stat_table(assert_assumptions=True)
-    jt_b = B.joined_instance_stat_table(assert_assumptions=True)
-
-    def _row_key(r):
-        n = (r["stat"].get("name") or {})
-        stat_pert = n.get("perturbation", None)
-        stat_pert_name = stat_pert.get("name", None) if isinstance(stat_pert, dict) else None
-        return (
-            r["instance_id"],
-            r["train_trial_index"],
-            r.get("perturbation_id", None),
-            n.get("name", None),
-            n.get("split", None),
-            n.get("sub_split", None),
-            stat_pert_name,
+        joined_a = self.a.joined_instance_stat_table(
+            assert_assumptions=False, short_hash=self.short_hash
+        )
+        joined_b = self.b.joined_instance_stat_table(
+            assert_assumptions=False, short_hash=self.short_hash
         )
 
-    def _mean_map(joined):
-        out = {}
-        for r in joined:
-            s = r["stat"]
-            if s.get("count", 0) and ("mean" in s):
-                out[_row_key(r)] = float(s["mean"])
+        # Try to use the table's own key->row mapping if present
+        map_a = getattr(joined_a, 'row_by_key', None)
+        map_b = getattr(joined_b, 'row_by_key', None)
+
+        def _iter_rows(joined) -> Iterable[Any]:
+            if map_a is not None and joined is joined_a:
+                return map_a.values()
+            if map_b is not None and joined is joined_b:
+                return map_b.values()
+            if isinstance(joined, dict):
+                return joined.values()
+            if hasattr(joined, '__iter__'):
+                return joined
+            return []
+
+        # Fallback: build row maps from iteration
+        def _row_key(row: Any) -> Any:
+            return (
+                getattr(row, 'key', None)
+                or getattr(row, 'stat_key', None)
+                or getattr(row, 'row_key', None)
+                or row
+            )
+
+        if map_a is None:
+            map_a = {_row_key(r): r for r in _iter_rows(joined_a)}
+        if map_b is None:
+            map_b = {_row_key(r): r for r in _iter_rows(joined_b)}
+
+        set_a = set(map_a)
+        set_b = set(map_b)
+        cov = Coverage.from_sets(set_a, set_b)
+
+        def agrees(x: float, y: float) -> bool:
+            if abs_tol == 0.0 and rel_tol == 0.0:
+                return x == y
+            return abs(x - y) <= max(abs_tol, rel_tol * max(abs(x), abs(y)))
+
+        comparable = 0
+        mismatched = 0
+        # overall perturbed/unperturbed bookkeeping
+        var_stats = {
+            'unperturbed': {'comparable': 0, 'mismatched': 0},
+            'perturbed': {'comparable': 0, 'mismatched': 0},
+        }
+
+        grouped: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
+
+        for k in set_a & set_b:
+            ra = map_a[k]
+            rb = map_b[k]
+            sa = (
+                getattr(ra, 'stat', None)
+                if hasattr(ra, 'stat')
+                else (ra.get('stat', None) if isinstance(ra, dict) else None)
+            )
+            sb = (
+                getattr(rb, 'stat', None)
+                if hasattr(rb, 'stat')
+                else (rb.get('stat', None) if isinstance(rb, dict) else None)
+            )
+
+            ma = _safe_float(
+                (sa or {}).get('mean', None)
+                if isinstance(sa, dict)
+                else getattr(sa, 'mean', None)
+            )
+            mb = _safe_float(
+                (sb or {}).get('mean', None)
+                if isinstance(sb, dict)
+                else getattr(sb, 'mean', None)
+            )
+            ca = (
+                int((sa or {}).get('count', 0) or 0)
+                if isinstance(sa, dict)
+                else int(getattr(sa, 'count', 0) or 0)
+            )
+            cb = (
+                int((sb or {}).get('count', 0) or 0)
+                if isinstance(sb, dict)
+                else int(getattr(sb, 'count', 0) or 0)
+            )
+
+            # Only compare mean-bearing rows with support
+            if ma is None or mb is None:
+                continue
+            if ca == 0 or cb == 0:
+                continue
+
+            comparable += 1
+
+            # Determine metric name
+            name_obj = (
+                (sa or {}).get('name', None)
+                if isinstance(sa, dict)
+                else getattr(sa, 'name_obj', None)
+            )
+            metric = (
+                name_obj.get('name', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
+            if metric is None and sa is not None and not isinstance(sa, dict):
+                metric = getattr(sa, 'metric', None)
+            metric_class, _ = classify_metric(metric)
+            gkey = (metric_class, metric)
+
+            # Determine perturbed vs unperturbed (best-effort)
+            perturbed = False
+            if hasattr(k, 'perturbation_id'):
+                perturbed = getattr(k, 'perturbation_id', None) is not None
+            elif isinstance(k, tuple) and len(k) >= 3:
+                # historical tuple layout: (instance_id, tti, perturbation_id, ...)
+                perturbed = k[2] is not None
+            variant = 'perturbed' if perturbed else 'unperturbed'
+            var_stats[variant]['comparable'] += 1
+
+            if not agrees(ma, mb):
+                mismatched += 1
+                var_stats[variant]['mismatched'] += 1
+                item = {
+                    'key': k,
+                    'a': ma,
+                    'b': mb,
+                    'abs_delta': abs(ma - mb),
+                    'signed_delta': (mb - ma),
+                }
+                grouped.setdefault(gkey, []).append(item)
+
+        # Sort each group and cap
+        for gk, items in grouped.items():
+            items.sort(key=lambda r: r['abs_delta'], reverse=True)
+            grouped[gk] = items[:top_n]
+
+        def ratio(c: int, m: int) -> float:
+            return 1.0 - (m / c) if c else 1.0
+
+        means = {
+            'comparable': comparable,
+            'mismatched': mismatched,
+            'agree_ratio': ratio(comparable, mismatched),
+            'agree_ratio_unperturbed': ratio(
+                var_stats['unperturbed']['comparable'],
+                var_stats['unperturbed']['mismatched'],
+            ),
+            'agree_ratio_perturbed': ratio(
+                var_stats['perturbed']['comparable'],
+                var_stats['perturbed']['mismatched'],
+            ),
+        }
+
+        out = {
+            'coverage': cov.__dict__,
+            'means': means,
+            'top_mismatches_by_group': grouped,
+        }
+
+        self._cache[cache_key] = out
         return out
 
-    map_a = _mean_map(jt_a)
-    map_b = _mean_map(jt_b)
+    def summarize_instances(
+        self,
+        *,
+        level: int = 10,
+        top_n: int = 5,
+        show_details: int = 5,
+        prompt_chars: int = 220,
+        completion_chars: int = 140,
+        input_chars: int = 200,
+        diff_max_items: int = 7,
+        writer=None,
+    ) -> None:
+        """Writer-style instance-level report.
 
-    ka, kb = set(map_a), set(map_b)
-    isect = ka & kb
-    only_a = ka - kb
-    only_b = kb - ka
+        This prints:
+        * coverage + agreement ratios
+        * top mismatches for core metrics and for bookkeeping metrics
+        * for the first `show_details` mismatches per (metric_class, metric)
+          group: prompt/input/completion excerpts and a compact request_state diff.
 
-    mism = []
-    for k in isect:
-        a = map_a[k]
-        b = map_b[k]
-        if a != b:
-            mism.append((abs(a - b), k, a, b))
-    mism.sort(reverse=True)
+        The large texts are smart-truncated (hash preserved) and escaped so
+        rich doesn't interpret markup.
+        """
+        writer = _default_writer(writer)
+        info = self.instance_summary_dict(top_n=top_n)
+        cov = info['coverage']
+        means = info['means']
 
-    comparable = len(isect)
-    mismatched = len(mism)
-    agree_ratio = 1.0 if comparable == 0 else (comparable - mismatched) / comparable
-
-    def _is_perturbed_key(k):
-        return (k[2] is not None)
-
-    isect_pert = [k for k in isect if _is_perturbed_key(k)]
-    isect_base = [k for k in isect if not _is_perturbed_key(k)]
-
-    def _agree_ratio_subset(keys):
-        if not keys:
-            return 1.0
-        mm = 0
-        for k in keys:
-            if map_a[k] != map_b[k]:
-                mm += 1
-        return (len(keys) - mm) / len(keys)
-
-    # by metric class
-    by_class = {}
-    for k in isect:
-        metric = k[3] or ""
-        cls = classify_metric(metric)
-        d = by_class.setdefault(cls, {"comparable": 0, "mismatched": 0})
-        d["comparable"] += 1
-        if map_a[k] != map_b[k]:
-            d["mismatched"] += 1
-    for cls, d in by_class.items():
-        comp = d["comparable"]
-        mm = d["mismatched"]
-        d["agree_ratio"] = 1.0 if comp == 0 else (comp - mm) / comp
-
-    # top mismatches by class
-    top_by_class = {}
-    for abs_d, k, a, b in mism:
-        cls = classify_metric(k[3] or "")
-        top_by_class.setdefault(cls, []).append((abs_d, k, a, b))
-
-    top_mismatches_by_class = {}
-    for cls, items in top_by_class.items():
-        items.sort(reverse=True)
-        top_mismatches_by_class[cls] = [
-            {
-                "abs_delta": abs_d,
-                "signed_delta": (b - a),
-                "key": k,
-                "a": a,
-                "b": b,
-                "metric_class": cls,
-            }
-            for (abs_d, k, a, b) in items[:top_n]
-        ]
-
-    out = {
-        "coverage": {
-            "n_a": len(ka),
-            "n_b": len(kb),
-            "n_isect": len(isect),
-            "n_union": len(ka | kb),
-            "only_a": len(only_a),
-            "only_b": len(only_b),
-        },
-        "means": {
-            "comparable": comparable,
-            "mismatched": mismatched,
-            "agree_ratio": agree_ratio,
-            "agree_ratio_unperturbed": _agree_ratio_subset(isect_base),
-            "agree_ratio_perturbed": _agree_ratio_subset(isect_pert),
-        },
-        "means_by_class": by_class,
-        "top_mismatches_all": [
-            {
-                "abs_delta": abs_d,
-                "signed_delta": (b - a),
-                "key": k,
-                "a": a,
-                "b": b,
-                "metric_class": classify_metric(k[3] or ""),
-            }
-            for (abs_d, k, a, b) in mism[:top_n]
-        ],
-        "top_mismatches_by_class": top_mismatches_by_class,
-    }
-    return out
-
-
-def summarize_instances(
-    self,
-    *,
-    level: str = "page",
-    top_n: int = 10,
-    show_details: int = 3,
-    prompt_chars: int = 220,
-    completion_chars: int = 120,
-    input_chars: int = 200,
-    diff_max: int = 80,
-    diff_show: int = 12,
-    writer=None,
-) -> None:
-    """
-    Write a line-oriented instance-level diff report.
-
-    - Uses `writer` for output. If None, defaults to `rich.print`.
-    - Uses kwutil smart_truncate to shorten prompts/completions/inputs.
-    - Prints top mismatches for BOTH core and bookkeeping (and untracked if present).
-    - Avoids early returns except at the start for level='line' (OK for ipython copy/paste).
-    """
-    # from magnet.backends.helm.helm_metrics import classify_metric
-    import kwutil
-
-    if writer is None:
-        try:
-            from rich import print as rich_print
-            writer = rich_print
-        except Exception:
-            writer = print
-
-    # --- safe rich text helpers ---
-    def _safe_rich(s: str | None) -> str | None:
-        if s is None:
-            return None
-        s = str(s)
-        s = "".join(ch for ch in s if ord(ch) >= 32)
-        try:
-            from rich.markup import escape
-            s = escape(s)
-        except Exception:
-            s = s.replace("[", r"\[").replace("]", r"\]")
-        return s
-
-    def _slug(text, max_len: int, *, hash_len: int = 8, trunc_loc: float = 0.6):
-        if text is None:
-            return None
-        s = str(text)
-        s = s.replace("\r\n", "\n").replace("\r", "\n")
-        s = " ".join(s.split())
-        if max_len and len(s) > max_len:
-            s = kwutil.slugify_ext.smart_truncate(
-                s,
-                max_length=max_len,
-                word_boundary=True,
-                separator=" ",
-                trunc_loc=trunc_loc,
-                hash_len=hash_len,
-                head="~",
-                tail="~",
-            )
-        return _safe_rich(s)
-
-    info = instance_summary_dict(self, top_n=top_n)
-    cov = info["coverage"]
-    means = info["means"]
-    by_class = info.get("means_by_class") or {}
-    top_by_class = info.get("top_mismatches_by_class") or {}
-
-    a_name = getattr(self, "a_name", "A")
-    b_name = getattr(self, "b_name", "B")
-
-    if level == "line":
+        writer(f'Instance-level diff: {self.a_name} vs {self.b_name}')
         writer(
-            f"[bold]InstanceDiff[/bold] {a_name} vs {b_name}: "
-            f"isect={cov['n_isect']}/{cov['n_union']} "
-            f"agree={means['agree_ratio']:.3f} "
-            f"base={means['agree_ratio_unperturbed']:.3f} "
-            f"pert={means['agree_ratio_perturbed']:.3f}"
+            f'  coverage: A={cov["n_a"]} B={cov["n_b"]} isect={cov["n_isect"]} '
+            f'union={cov["n_union"]} onlyA={cov["only_a"]} onlyB={cov["only_b"]}'
         )
-        return None
-
-    # --- analysis adapters ---
-    def _analysis(run_or_analysis, name: str | None = None):
-        try:
-            if hasattr(run_or_analysis, "joined_instance_stat_table"):
-                return run_or_analysis
-        except Exception:
-            pass
-        from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
-        return HelmRunAnalysis(run_or_analysis, name=name)
-
-    A = _analysis(getattr(self, "run_a", getattr(self, "a", None)), name=a_name)
-    B = _analysis(getattr(self, "run_b", getattr(self, "b", None)), name=b_name)
-
-    jt_a = A.joined_instance_stat_table(assert_assumptions=True)
-    jt_b = B.joined_instance_stat_table(assert_assumptions=True)
-
-    # Must match instance_summary_dict() keying
-    def _row_key(r):
-        n = (r["stat"].get("name") or {})
-        stat_pert = n.get("perturbation", None)
-        stat_pert_name = stat_pert.get("name", None) if isinstance(stat_pert, dict) else None
-        return (
-            r["instance_id"],
-            r["train_trial_index"],
-            r.get("perturbation_id", None),
-            n.get("name", None),
-            n.get("split", None),
-            n.get("sub_split", None),
-            stat_pert_name,
+        writer(
+            f'  means: comparable={means["comparable"]} mismatched={means["mismatched"]} '
+            f'agree_ratio={means["agree_ratio"]:.3f} (unpert={means["agree_ratio_unperturbed"]:.3f}, '
+            f'pert={means["agree_ratio_perturbed"]:.3f})'
         )
 
-    lut_a = {_row_key(r): r for r in jt_a}
-    lut_b = {_row_key(r): r for r in jt_b}
+        grouped: dict[tuple[str, str | None], list[dict[str, Any]]] = (
+            info.get('top_mismatches_by_group', {}) or {}
+        )
 
-    def _prompt(rs):
-        if rs is None:
-            return None
-        return _slug(((rs.get("request") or {}).get("prompt", None)), prompt_chars, hash_len=10, trunc_loc=0.65)
+        # Choose groups to show: core first, bookkeeping second
+        def _group_rank(
+            item: tuple[tuple[str, str | None], list[dict[str, Any]]],
+        ) -> tuple[int, float]:
+            (cls, _metric), items = item
+            cls_rank = {'core': 0, 'bookkeeping': 1, 'untracked': 2}.get(cls, 9)
+            max_abs = items[0]['abs_delta'] if items else 0.0
+            return (cls_rank, -max_abs)
 
-    def _completion(rs):
-        if rs is None:
-            return None
-        comps = ((rs.get("result") or {}).get("completions", None)) or []
-        txt = comps[0].get("text", None) if comps else None
-        return _slug(txt, completion_chars, hash_len=8, trunc_loc=0.5)
+        groups_sorted = sorted(grouped.items(), key=_group_rank)
 
-    def _instance_input(rs):
-        if rs is None:
-            return None
-        inst = rs.get("instance") or {}
-        inp = inst.get("input") or {}
-        if isinstance(inp, dict) and "text" in inp:
-            return _slug(inp.get("text", None), input_chars, hash_len=8, trunc_loc=0.5)
-        return _slug(inp, input_chars, hash_len=8, trunc_loc=0.5)
+        # If level is low, avoid dumping too many groups
+        max_groups = None
+        if level < 20:
+            max_groups = 6
+        if max_groups is not None:
+            # Ensure we show at least some core and some bookkeeping groups when possible.
+            core = [g for g in groups_sorted if g[0][0] == 'core']
+            book = [g for g in groups_sorted if g[0][0] == 'bookkeeping']
+            other = [
+                g
+                for g in groups_sorted
+                if g[0][0] not in {'core', 'bookkeeping'}
+            ]
+            keep = []
+            keep.extend(core[: max_groups // 2])
+            keep.extend(book[: max_groups - len(keep)])
+            if len(keep) < max_groups:
+                keep.extend(other[: max_groups - len(keep)])
+            # Preserve original ordering among kept groups
+            keep_set = {id(x) for x in keep}
+            groups_sorted = [g for g in groups_sorted if id(g) in keep_set]
 
-    def _metric_label_from_key(k):
-        metric = k[3]
-        split = k[4]
-        sub = k[5]
-        stat_pert = k[6]
-        parts = [str(metric)]
-        if split is not None:
-            parts.append(f"split={split}")
-        if sub is not None:
-            parts.append(f"sub={sub}")
-        if stat_pert is not None:
-            parts.append(f"statPert={stat_pert}")
-        return ", ".join(parts)
+        if groups_sorted:
+            writer('  top mismatches:')
 
-    # --- header ---
-    writer(f"[bold]Instance-level diff[/bold]: {a_name} vs {b_name}")
-    writer(
-        f"  coverage: A={cov['n_a']} B={cov['n_b']} "
-        f"isect={cov['n_isect']} union={cov['n_union']} onlyA={cov['only_a']} onlyB={cov['only_b']}"
-    )
-    writer(
-        f"  means: comparable={means['comparable']} mismatched={means['mismatched']} "
-        f"agree_ratio={means['agree_ratio']:.3f} "
-        f"(unpert={means['agree_ratio_unperturbed']:.3f}, pert={means['agree_ratio_perturbed']:.3f})"
-    )
-    if by_class:
-        order = ["core", "bookkeeping", "untracked"]
-        keys = [k for k in order if k in by_class] + [k for k in sorted(by_class) if k not in order]
-        parts = []
-        for cls in keys:
-            d = by_class[cls]
-            parts.append(f"{cls}={d['agree_ratio']:.3f}({d['mismatched']}/{d['comparable']})")
-        writer("  by_class: ")
-        for p in parts:
-            writer("   ", p)
+        # Build joined lookup tables for details
+        A_join = None
+        B_join = None
+        A_map = None
+        B_map = None
 
-    # We want to show both core and bookkeeping (and untracked if present)
-    show_classes = []
-    for cls in ["core", "bookkeeping", "untracked"]:
-        if cls in top_by_class and top_by_class[cls]:
-            show_classes.append(cls)
-    for cls in sorted(top_by_class):
-        if cls not in show_classes and top_by_class[cls]:
-            show_classes.append(cls)
+        if show_details and level >= 10:
+            A_join = self.a.joined_instance_stat_table(
+                assert_assumptions=False, short_hash=self.short_hash
+            )
+            B_join = self.b.joined_instance_stat_table(
+                assert_assumptions=False, short_hash=self.short_hash
+            )
+            A_map = getattr(A_join, 'row_by_key', None)
+            B_map = getattr(B_join, 'row_by_key', None)
 
-    if not show_classes:
-        writer("  [green]No instance-level mismatches detected.[/green]")
-    else:
-        for cls in show_classes:
-            tops = top_by_class.get(cls, [])[:top_n]
-            writer(f"  [bold]top mismatches ({cls}):[/bold]")
-            for idx, item in enumerate(tops, start=1):
-                k = item["key"]
-                a = float(item["a"])
-                b = float(item["b"])
-                abs_d = float(item["abs_delta"])
-                signed_d = float(item.get("signed_delta", b - a))
-                writer(f"    {idx:>2}. metric: {_metric_label_from_key(k)}")
-                writer(f"        key: {k}")
-                writer(f"        A={a:.4g}  B={b:.4g}  Δ(B-A)={signed_d:.4g}  |Δ|={abs_d:.4g}")
+        for (cls, metric), items in groups_sorted:
+            writer(f'  [bold]top mismatches ({(cls, metric)!r}):[/bold]')
+            for rank, item in enumerate(items[:top_n], start=1):
+                k = item['key']
+                a = float(item['a'])
+                b = float(item['b'])
+                abs_d = float(item['abs_delta'])
+                signed_d = float(item['signed_delta'])
 
-                if idx <= show_details:
-                    ra = lut_a.get(k, None)
-                    rb = lut_b.get(k, None)
-                    rs_a = ra["request_state"] if ra is not None else None
-                    rs_b = rb["request_state"] if rb is not None else None
+                # Try to extract split/sub_split info from key if it is tuple-like
+                split = None
+                if isinstance(k, tuple) and len(k) >= 5:
+                    # (id, tti, pert_id, metric, split, ...)
+                    split = k[4]
 
-                    pa = _prompt(rs_a)
-                    pb = _prompt(rs_b)
-                    prompts_equal = (pa == pb)
-                    writer(f"        prompts_equal={prompts_equal}")
+                metric_label = (
+                    metric if metric is not None else 'unknown_metric'
+                )
+                if split is not None:
+                    metric_label = f'{metric_label}, split={split}'
+
+                writer(f'   {rank:2d}. metric: {metric_label}')
+                writer(f'      key: {k}')
+                writer(
+                    f'      A={_fmt(a)}  B={_fmt(b)}  Δ(B-A)={_fmt(signed_d)}  |Δ|={_fmt(abs_d)}'
+                )
+
+                if (
+                    show_details
+                    and level >= 10
+                    and rank <= show_details
+                    and A_map is not None
+                    and B_map is not None
+                ):
+                    ra = A_map.get(k, None)
+                    rb = B_map.get(k, None)
+
+                    rs_a = (
+                        getattr(ra, 'request_state', None)
+                        if ra is not None
+                        else None
+                    )
+                    rs_b = (
+                        getattr(rb, 'request_state', None)
+                        if rb is not None
+                        else None
+                    )
+                    if rs_a is None and isinstance(ra, dict):
+                        rs_a = ra.get('request_state', None)
+                    if rs_b is None and isinstance(rb, dict):
+                        rs_b = rb.get('request_state', None)
+
+                    pa = (
+                        _smart_truncate(
+                            ((rs_a or {}).get('request') or {}).get(
+                                'prompt', None
+                            ),
+                            prompt_chars,
+                        )
+                        if isinstance(rs_a, dict)
+                        else ''
+                    )
+                    pb = (
+                        _smart_truncate(
+                            ((rs_b or {}).get('request') or {}).get(
+                                'prompt', None
+                            ),
+                            prompt_chars,
+                        )
+                        if isinstance(rs_b, dict)
+                        else ''
+                    )
+                    prompts_equal = pa == pb
+                    writer(f'      prompts_equal={prompts_equal}')
+
+                    def _inst_input(rs: Any) -> str:
+                        if not isinstance(rs, dict):
+                            return ''
+                        inst = rs.get('instance') or {}
+                        inp = inst.get('input') or {}
+                        if isinstance(inp, dict) and 'text' in inp:
+                            return _smart_truncate(
+                                repr(inp.get('text', None)), input_chars
+                            )
+                        # important: use repr, to avoid rendering newline chars.
+                        return _smart_truncate(repr(inp), input_chars)
+
+                    def _completion(rs: Any) -> str:
+                        if not isinstance(rs, dict):
+                            return ''
+                        comps = (rs.get('result') or {}).get(
+                            'completions'
+                        ) or []
+                        txt = comps[0].get('text', None) if comps else None
+                        # important: use repr, to avoid rendering newline chars.
+                        return _smart_truncate(repr(txt), completion_chars)
 
                     if rs_a is not None:
-                        writer(f"        [{a_name}] input: {_instance_input(rs_a)}")
-                        writer(f"        [{a_name}] completion: {_completion(rs_a)}")
+                        writer(
+                            f'      [{self.a_name}] input: {_inst_input(rs_a)}'
+                        )
+                        writer(
+                            f'      [{self.a_name}] completion: {_completion(rs_a)}'
+                        )
                     if rs_b is not None:
-                        writer(f"        [{b_name}] input: {_instance_input(rs_b)}")
-                        writer(f"        [{b_name}] completion: {_completion(rs_b)}")
-
-                    if prompts_equal:
-                        if pb is not None:
-                            writer(f"        prompt: {pb}")
-                    else:
-                        if pa is not None:
-                            writer(f"        prompt[{a_name}]: {pa}")
-                        if pb is not None:
-                            writer(f"        prompt[{b_name}]: {pb}")
-
-                    if rs_a is not None and rs_b is not None and hasattr(self, "_diff_request_states"):
-                        rd = self._diff_request_states(rs_a, rs_b, max_diffs=diff_max)
-                        diffs = list(rd.get("diffs", []) or [])
-
-                        def _path_tuple(p):
-                            if isinstance(p, (list, tuple)):
-                                return tuple(p)
-                            return (p,)
-
-                        # Dedup redundant prefix diffs
-                        paths = [_path_tuple(d.get("path")) for d in diffs]
-                        path_set = set(paths)
-                        keep = []
-                        for d in diffs:
-                            p = _path_tuple(d.get("path"))
-                            is_prefix = any((q != p and len(q) > len(p) and q[: len(p)] == p) for q in path_set)
-                            if not is_prefix:
-                                keep.append(d)
-                        diffs = keep
-
-                        IMPORTANT_PREFIXES = (
-                            ("request", "prompt"),
-                            ("result", "completions"),
-                            ("instance", "input"),
-                            ("instance", "references"),
-                            ("instance", "perturbation"),
-                            ("request", "max_tokens"),
-                            ("request", "model_deployment"),
-                            ("request", "model"),
+                        writer(
+                            f'      [{self.b_name}] input: {_inst_input(rs_b)}'
+                        )
+                        writer(
+                            f'      [{self.b_name}] completion: {_completion(rs_b)}'
                         )
 
-                        def _priority(path):
-                            path = _path_tuple(path)
-                            for rank, pref in enumerate(IMPORTANT_PREFIXES):
-                                if path[: len(pref)] == pref:
-                                    return rank
-                            return 999
+                    if prompts_equal:
+                        if pa:
+                            writer(f'      prompt: {pa}')
+                    else:
+                        if pa:
+                            writer(f'      prompt [{self.a_name}]: {pa}')
+                        if pb:
+                            writer(f'      prompt [{self.b_name}]: {pb}')
 
-                        diffs.sort(key=lambda d: (_priority(d.get("path")), str(d.get("path"))))
-                        n_diffs = rd.get("n_diffs", len(diffs))
-                        show = min(diff_show, len(diffs))
-                        writer(f"        request_state_diff: n_diffs={n_diffs} (showing {show})")
+                    if isinstance(rs_a, dict) and isinstance(rs_b, dict):
+                        diffs = self._request_state_diffs(
+                            rs_a, rs_b, max_items=diff_max_items
+                        )
+                        writer(
+                            f'      request_state_diff: n_diffs={diffs["n_diffs"]} (showing {len(diffs["items"])})'
+                        )
+                        for d in diffs['items']:
+                            writer(
+                                f'        - {d["path"]}: {d["a"]}  ->  {d["b"]}'
+                            )
 
-                        for d in diffs[:show]:
-                            p = _path_tuple(d.get("path"))
-                            path_s = "/".join(map(str, p))
-                            av = d.get("a")
-                            bv = d.get("b")
-                            if p == ("request", "prompt") or (p[:3] == ("result", "completions", 0) and p[-1] == "text"):
-                                avs = _slug(av, 120, hash_len=10)
-                                bvs = _slug(bv, 120, hash_len=10)
-                            else:
-                                avs = _slug(av, 70, hash_len=6)
-                                bvs = _slug(bv, 70, hash_len=6)
-                            writer(f"          - {path_s}: {avs}  ->  {bvs}")
+                writer('')
 
-                writer("")
-            writer("")
-    return None
+    def _request_state_diffs(
+        self,
+        rs_a: Mapping[str, Any],
+        rs_b: Mapping[str, Any],
+        *,
+        max_items: int = 7,
+    ) -> dict[str, Any]:
+        """Compact request_state diff for interactive debugging."""
+        paths = _walker_diff(rs_a, rs_b, max_paths=max_items)
+        items: list[dict[str, Any]] = []
+        for p in paths:
+            # resolve the path to values (best-effort)
+            keys = p.split('/') if p else []
+            va: Any = rs_a
+            vb: Any = rs_b
+            ok = True
+            for k in keys:
+                if isinstance(va, dict) and k in va:
+                    va = va[k]
+                else:
+                    ok = False
+                if isinstance(vb, dict) and k in vb:
+                    vb = vb[k]
+                else:
+                    ok = False
+            if not ok:
+                # fallback to a short repr of the entire structures
+                va = rs_a
+                vb = rs_b
+            items.append(
+                {'path': p, 'a': _short_urepr(va), 'b': _short_urepr(vb)}
+            )
+        return {'n_diffs': len(paths), 'items': items}
 
+
+def _format_indexable_diff(
+    a: Any,
+    b: Any,
+    *,
+    label_a: str = 'A',
+    label_b: str = 'B',
+    max_items: int = 25,
+    indent: str = '  ',
+) -> list[str]:
+    """
+    Pretty-print structure diffs using ub.IndexableWalker.diff(), but in a way that
+    stays readable in a console report.
+
+    This tries to be robust to ubelt version differences:
+    - Some versions return a list of DiffItem objects (with .path/.value1/.value2)
+    - Others return a mapping/dict with keys like 'faillist', 'unique1', 'unique2'
+    """
+    lines: list[str] = []
+    try:
+        w = ub.IndexableWalker(a, list_cls=tuple)
+        diff = w.diff(b)
+    except Exception as ex:
+        return [f"{indent}⚠️ diff failed: {ex!r}"]
+
+    def _pp_path(path: Any) -> str:
+        if isinstance(path, (list, tuple)):
+            return '/'.join(map(str, path))
+        return str(path)
+
+    # --- Case 1: dict-style diff (older style) ---
+    if isinstance(diff, Mapping):
+        faillist = list(diff.get('faillist', []) or [])
+        unique_b = list(diff.get('unique1', []) or [])
+        unique_a = list(diff.get('unique2', []) or [])
+
+        if faillist:
+            lines.append(f"{indent}Value mismatches ({len(faillist)}):")
+            for item in faillist[:max_items]:
+                try:
+                    path, vb, va = item[0], item[1], item[2]
+                    lines.append(
+                        f"{indent}  {_pp_path(path)}: "
+                        f"{label_a}={_short_urepr(va)}  {label_b}={_short_urepr(vb)}"
+                    )
+                except Exception:
+                    lines.append(f"{indent}  {_short_urepr(item)}")
+            if len(faillist) > max_items:
+                lines.append(f"{indent}  ... +{len(faillist) - max_items} more")
+
+        if unique_a:
+            lines.append(f"{indent}Only in {label_a} ({len(unique_a)}):")
+            for item in unique_a[:max_items]:
+                path = item[0] if isinstance(item, (list, tuple)) else item
+                lines.append(f"{indent}  {_pp_path(path)}")
+            if len(unique_a) > max_items:
+                lines.append(f"{indent}  ... +{len(unique_a) - max_items} more")
+
+        if unique_b:
+            lines.append(f"{indent}Only in {label_b} ({len(unique_b)}):")
+            for item in unique_b[:max_items]:
+                path = item[0] if isinstance(item, (list, tuple)) else item
+                lines.append(f"{indent}  {_pp_path(path)}")
+            if len(unique_b) > max_items:
+                lines.append(f"{indent}  ... +{len(unique_b) - max_items} more")
+
+        return lines
+
+    # --- Case 2: list-of-DiffItem style (newer ubelt style) ---
+    try:
+        n = len(diff)  # type: ignore[arg-type]
+    except Exception:
+        n = None
+
+    if n is None:
+        # unknown iterable type
+        try:
+            diff_list = list(diff)  # type: ignore[arg-type]
+        except Exception:
+            return [f"{indent}⚠️ diff is not iterable"]
+    else:
+        diff_list = diff  # type: ignore[assignment]
+
+    lines.append(f"{indent}Diff items ({len(diff_list)}):")
+    for d in list(diff_list)[:max_items]:
+        path = getattr(d, 'path', None)
+        if path is None and isinstance(d, (tuple, list)) and d:
+            path = d[0]
+        va = getattr(d, 'value1', None)
+        vb = getattr(d, 'value2', None)
+        # Fallback names some versions use
+        if va is None and hasattr(d, 'a'):
+            va = getattr(d, 'a')
+        if vb is None and hasattr(d, 'b'):
+            vb = getattr(d, 'b')
+
+        lines.append(
+            f"{indent}  {_pp_path(path)}: "
+            f"{label_a}={_short_urepr(va)}  {label_b}={_short_urepr(vb)}"
+        )
+
+    if len(diff_list) > max_items:
+        lines.append(f"{indent}  ... +{len(diff_list) - max_items} more")
+    return lines

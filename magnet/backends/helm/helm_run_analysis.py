@@ -76,13 +76,17 @@ class HelmRunAnalysis(ub.NiceRepr):
         return self._raw('scenario', lambda: self.run.json.scenario())
 
     def scenario_state(self) -> dict[str, Any]:
-        return self._raw('scenario_state', lambda: self.run.json.scenario_state())
+        return self._raw(
+            'scenario_state', lambda: self.run.json.scenario_state()
+        )
 
     def stats(self) -> list[dict[str, Any]]:
         return self._raw('stats', lambda: self.run.json.stats())
 
     def per_instance_stats(self) -> list[dict[str, Any]]:
-        return self._raw('per_instance_stats', lambda: self.run.json.per_instance_stats())
+        return self._raw(
+            'per_instance_stats', lambda: self.run.json.per_instance_stats()
+        )
 
     def _raw(self, key: str, factory):
         if key not in self._raw_cache:
@@ -91,7 +95,7 @@ class HelmRunAnalysis(ub.NiceRepr):
 
     # --- Summaries -----------------------------------------------------
 
-    def summary_dict(self,  *args, **kwargs) -> dict[str, Any]:
+    def summary_dict(self, *args, **kwargs) -> dict[str, Any]:
         # Hack for now while developing. TODO: move the implementation here and
         # fix the signature.
         return summary_dict(self, *args, **kwargs)
@@ -129,11 +133,23 @@ class HelmRunAnalysis(ub.NiceRepr):
                 continue
 
             name_obj = row.get('name', None)
-            metric = name_obj.get('name', None) if isinstance(name_obj, dict) else None
-            split = name_obj.get('split', None) if isinstance(name_obj, dict) else None
+            metric = (
+                name_obj.get('name', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
+            split = (
+                name_obj.get('split', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
             pert_id = None
-            if isinstance(name_obj, dict) and isinstance(name_obj.get('perturbation', None), dict):
-                pert_id = helm_hashers.perturbation_id(name_obj['perturbation'], short_hash=short_hash)
+            if isinstance(name_obj, dict) and isinstance(
+                name_obj.get('perturbation', None), dict
+            ):
+                pert_id = helm_hashers.perturbation_id(
+                    name_obj['perturbation'], short_hash=short_hash
+                )
             is_pert = pert_id is not None
 
             mclass, mpref = classify_metric(metric)
@@ -158,7 +174,9 @@ class HelmRunAnalysis(ub.NiceRepr):
         self._cache[cache_key] = idx
         return idx
 
-    def stats_inventory(self, *, drop_zero_count: bool = False) -> dict[str, Counter]:
+    def stats_inventory(
+        self, *, drop_zero_count: bool = False
+    ) -> dict[str, Counter]:
         """Lightweight histograms over ``stats.json`` for exploration."""
         cache_key = ('stats_inventory', drop_zero_count)
         if cache_key in self._cache:
@@ -177,9 +195,20 @@ class HelmRunAnalysis(ub.NiceRepr):
             if drop_zero_count and c == 0:
                 continue
             name_obj = row.get('name', None)
-            metric = name_obj.get('name', None) if isinstance(name_obj, dict) else None
-            split = name_obj.get('split', None) if isinstance(name_obj, dict) else None
-            is_pert = bool(isinstance(name_obj, dict) and name_obj.get('perturbation', None))
+            metric = (
+                name_obj.get('name', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
+            split = (
+                name_obj.get('split', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
+            is_pert = bool(
+                isinstance(name_obj, dict)
+                and name_obj.get('perturbation', None)
+            )
             hist['perturbed'][is_pert] += 1
             hist['splits'][split] += 1
             hist['family'][metric_family(metric)] += 1
@@ -190,7 +219,9 @@ class HelmRunAnalysis(ub.NiceRepr):
 
     # --- Requests + per-instance stats join ----------------------------
 
-    def joined_instance_stat_table(self, *, assert_assumptions: bool = True, short_hash: int = 16):
+    def joined_instance_stat_table(
+        self, *, assert_assumptions: bool = True, short_hash: int = 16
+    ):
         """Join per-instance stats to request_states.
 
         Returns one row **per per-instance stat**, with the corresponding
@@ -225,9 +256,11 @@ class HelmRunAnalysis(ub.NiceRepr):
           exactly one request_state.
         * Every per-instance stat can be matched to exactly one request_state.
         """
-        request_states = self.scenario_state().get("request_states", []) or []
+        request_states = self.scenario_state().get('request_states', []) or []
         perinstance_stats = self.per_instance_stats() or []
-        tbl = JoinedInstanceStatTable(request_states, perinstance_stats, short_hash=short_hash)
+        tbl = JoinedInstanceStatTable(
+            request_states, perinstance_stats, short_hash=short_hash
+        )
         if assert_assumptions:
             tbl.assert_assumptions()
         return tbl
@@ -286,18 +319,19 @@ def _nice_perturbation_id(pert: Any, *, short_hash: int = 12) -> str | None:
     """
     if not isinstance(pert, dict) or not pert:
         return None
-    name = pert.get("name", "pert")
+    name = pert.get('name', 'pert')
     # Strip known unstable payloads if present (optional and conservative)
     canon = ub.udict(pert).copy()
-    canon.pop("mapping_file_path", None)
-    canon.pop("name_file_path", None)
+    canon.pop('mapping_file_path', None)
+    canon.pop('name_file_path', None)
     h = helm_hashers.stable_hash36(canon)[:short_hash]
-    return f"{name}~{h}"
+    return f'{name}~{h}'
 
 
 @dataclass(frozen=True, slots=True)
 class InstanceVariantKey:
     """Identifies a specific evaluated variant of an instance."""
+
     instance_id: str | None
     train_trial_index: int | None
     perturbation_id: str | None
@@ -313,6 +347,7 @@ class InstanceVariantKey:
 @dataclass(frozen=True, slots=True)
 class InstanceStatKey:
     """Identifies a single metric row for a specific instance variant."""
+
     variant: InstanceVariantKey
     metric: str | None
     split: str | None
@@ -335,17 +370,18 @@ class InstanceStatKey:
 @dataclass(frozen=True, slots=True)
 class InstanceStatRow:
     """A joined per-instance stat row with attached request_state."""
+
     key: InstanceStatKey
     stat: dict[str, Any]
     request_state: dict[str, Any] | None
 
     @property
     def mean(self) -> float | None:
-        return _safe_float(self.stat.get("mean", None))
+        return _safe_float(self.stat.get('mean', None))
 
     @property
     def count(self) -> int:
-        return int(self.stat.get("count", 0) or 0)
+        return int(self.stat.get('count', 0) or 0)
 
 
 class JoinedInstanceStatTable(ub.NiceRepr):
@@ -411,20 +447,26 @@ class JoinedInstanceStatTable(ub.NiceRepr):
         self.perinstance_stats = perinstance_stats
         self.short_hash = short_hash
 
-        self.request_state_by_variant: dict[InstanceVariantKey, dict[str, Any]] = {}
-        self.stats_by_variant: dict[InstanceVariantKey, list[dict[str, Any]]] = {}
-        self.rows_by_variant: dict[InstanceVariantKey, list[InstanceStatRow]] = {}
+        self.request_state_by_variant: dict[
+            InstanceVariantKey, dict[str, Any]
+        ] = {}
+        self.stats_by_variant: dict[
+            InstanceVariantKey, list[dict[str, Any]]
+        ] = {}
+        self.rows_by_variant: dict[
+            InstanceVariantKey, list[InstanceStatRow]
+        ] = {}
         self.row_by_key: dict[InstanceStatKey, InstanceStatRow] = {}
 
         self.diagnostics: dict[str, Any] = {
-            "request_state_duplicates": [],
-            "unmatched_variants": [],
+            'request_state_duplicates': [],
+            'unmatched_variants': [],
         }
 
         self._build()
 
     def __nice__(self):
-        return f"variants={len(self.request_state_by_variant)} rows={len(self.row_by_key)}"
+        return f'variants={len(self.request_state_by_variant)} rows={len(self.row_by_key)}'
 
     def __len__(self):
         return len(self.row_by_key)
@@ -439,31 +481,36 @@ class JoinedInstanceStatTable(ub.NiceRepr):
         # 1) index request_states by variant
         dupes = []
         for rs in self.request_states:
-            inst = rs.get("instance") or {}
-            iid = inst.get("id", None)
-            tti = _coerce_int(rs.get("train_trial_index", None))
-            pid = _nice_perturbation_id(inst.get("perturbation", None), short_hash=self.short_hash)
+            inst = rs.get('instance') or {}
+            iid = inst.get('id', None)
+            tti = _coerce_int(rs.get('train_trial_index', None))
+            pid = _nice_perturbation_id(
+                inst.get('perturbation', None), short_hash=self.short_hash
+            )
             vk = InstanceVariantKey(iid, tti, pid)
             if vk in self.request_state_by_variant:
                 dupes.append((vk, self.request_state_by_variant[vk], rs))
                 continue
             self.request_state_by_variant[vk] = rs
-        self.diagnostics["request_state_duplicates"] = dupes
+        self.diagnostics['request_state_duplicates'] = dupes
 
         # 2) merge perinstance bundles into per-variant groups
         tmp: dict[InstanceVariantKey, list[dict[str, Any]]] = {}
 
         for row in self.perinstance_stats:
-            iid = row.get("instance_id", None)
-            tti = _coerce_int(row.get("train_trial_index", None))
-            stats = row.get("stats", []) or []
+            iid = row.get('instance_id', None)
+            tti = _coerce_int(row.get('train_trial_index', None))
+            stats = row.get('stats', []) or []
             # group stats inside this row by their stat-name perturbation
             per_pid: dict[str | None, list[dict[str, Any]]] = {}
             for stat in stats:
-                name_obj = stat.get("name", None) or {}
+                name_obj = stat.get('name', None) or {}
                 stat_pid = None
                 if isinstance(name_obj, dict):
-                    stat_pid = _nice_perturbation_id(name_obj.get("perturbation", None), short_hash=self.short_hash)
+                    stat_pid = _nice_perturbation_id(
+                        name_obj.get('perturbation', None),
+                        short_hash=self.short_hash,
+                    )
                 per_pid.setdefault(stat_pid, []).append(stat)
 
             for stat_pid, subset in per_pid.items():
@@ -479,8 +526,14 @@ class JoinedInstanceStatTable(ub.NiceRepr):
 
             # fallback: if stat pid None but only one request variant exists for this base key
             if rs is None and vk.perturbation_id is None:
-                candidates = [k for k in self.request_state_by_variant.keys()
-                              if (k.instance_id == vk.instance_id and k.train_trial_index == vk.train_trial_index)]
+                candidates = [
+                    k
+                    for k in self.request_state_by_variant.keys()
+                    if (
+                        k.instance_id == vk.instance_id
+                        and k.train_trial_index == vk.train_trial_index
+                    )
+                ]
                 if len(candidates) == 1:
                     rs = self.request_state_by_variant[candidates[0]]
 
@@ -489,13 +542,28 @@ class JoinedInstanceStatTable(ub.NiceRepr):
 
             rows = []
             for stat in stats:
-                name_obj = stat.get("name", None) or {}
-                metric = name_obj.get("name", None) if isinstance(name_obj, dict) else None
-                split = name_obj.get("split", None) if isinstance(name_obj, dict) else None
-                sub_split = name_obj.get("sub_split", None) if isinstance(name_obj, dict) else None
+                name_obj = stat.get('name', None) or {}
+                metric = (
+                    name_obj.get('name', None)
+                    if isinstance(name_obj, dict)
+                    else None
+                )
+                split = (
+                    name_obj.get('split', None)
+                    if isinstance(name_obj, dict)
+                    else None
+                )
+                sub_split = (
+                    name_obj.get('sub_split', None)
+                    if isinstance(name_obj, dict)
+                    else None
+                )
                 stat_pid = None
                 if isinstance(name_obj, dict):
-                    stat_pid = _nice_perturbation_id(name_obj.get("perturbation", None), short_hash=self.short_hash)
+                    stat_pid = _nice_perturbation_id(
+                        name_obj.get('perturbation', None),
+                        short_hash=self.short_hash,
+                    )
 
                 sk = InstanceStatKey(vk, metric, split, sub_split, stat_pid)
                 row_obj = InstanceStatRow(sk, stat, rs)
@@ -504,22 +572,33 @@ class JoinedInstanceStatTable(ub.NiceRepr):
 
             self.rows_by_variant[vk] = rows
 
-        self.diagnostics["unmatched_variants"] = unmatched
+        self.diagnostics['unmatched_variants'] = unmatched
 
     # --- assertions (optional) ---
 
-    def assert_assumptions(self) -> "JoinedInstanceStatTable":
-        dupes = self.diagnostics.get("request_state_duplicates", [])
-        assert not dupes, f"Duplicate request_state variant keys. Example={dupes[:1]!r}"
+    def assert_assumptions(self) -> 'JoinedInstanceStatTable':
+        dupes = self.diagnostics.get('request_state_duplicates', [])
+        assert not dupes, (
+            f'Duplicate request_state variant keys. Example={dupes[:1]!r}'
+        )
 
-        unmatched = self.diagnostics.get("unmatched_variants", [])
-        assert not unmatched, f"Some perinstance variants could not be matched to request_states. Example={unmatched[:5]!r}"
+        unmatched = self.diagnostics.get('unmatched_variants', [])
+        assert not unmatched, (
+            f'Some perinstance variants could not be matched to request_states. Example={unmatched[:5]!r}'
+        )
         return self
 
     # --- query helpers ---
 
     def variant_keys(self) -> list[InstanceVariantKey]:
-        return sorted(self.request_state_by_variant.keys(), key=lambda k: (str(k.instance_id), k.train_trial_index or -1, str(k.perturbation_id)))
+        return sorted(
+            self.request_state_by_variant.keys(),
+            key=lambda k: (
+                str(k.instance_id),
+                k.train_trial_index or -1,
+                str(k.perturbation_id),
+            ),
+        )
 
     def variant_keys_for_instance(
         self,
@@ -533,41 +612,68 @@ class JoinedInstanceStatTable(ub.NiceRepr):
         for k in self.request_state_by_variant.keys():
             if k.instance_id != instance_id:
                 continue
-            if train_trial_index is not None and k.train_trial_index != train_trial_index:
+            if (
+                train_trial_index is not None
+                and k.train_trial_index != train_trial_index
+            ):
                 continue
             if k.is_perturbed and not include_perturbed:
                 continue
             if (not k.is_perturbed) and not include_unperturbed:
                 continue
             out.append(k)
-        return sorted(out, key=lambda k: (k.train_trial_index or -1, str(k.perturbation_id)))
+        return sorted(
+            out,
+            key=lambda k: (k.train_trial_index or -1, str(k.perturbation_id)),
+        )
 
-    def request_state(self, variant: InstanceVariantKey) -> dict[str, Any] | None:
+    def request_state(
+        self, variant: InstanceVariantKey
+    ) -> dict[str, Any] | None:
         return self.request_state_by_variant.get(variant, None)
 
-    def rows_for_variant(self, variant: InstanceVariantKey) -> list[InstanceStatRow]:
+    def rows_for_variant(
+        self, variant: InstanceVariantKey
+    ) -> list[InstanceStatRow]:
         return self.rows_by_variant.get(variant, [])
 
-    def stats_for_variant(self, variant: InstanceVariantKey) -> list[dict[str, Any]]:
+    def stats_for_variant(
+        self, variant: InstanceVariantKey
+    ) -> list[dict[str, Any]]:
         return [r.stat for r in self.rows_for_variant(variant)]
 
-    def rows_for_instance(self, instance_id: str, *, include_perturbed: bool = True) -> list[InstanceStatRow]:
+    def rows_for_instance(
+        self, instance_id: str, *, include_perturbed: bool = True
+    ) -> list[InstanceStatRow]:
         rows = []
-        for vk in self.variant_keys_for_instance(instance_id, include_perturbed=include_perturbed, include_unperturbed=True):
+        for vk in self.variant_keys_for_instance(
+            instance_id,
+            include_perturbed=include_perturbed,
+            include_unperturbed=True,
+        ):
             rows.extend(self.rows_for_variant(vk))
         return rows
 
-    def stats_for_instance(self, instance_id: str, *, include_perturbed: bool = True) -> list[dict[str, Any]]:
-        return [r.stat for r in self.rows_for_instance(instance_id, include_perturbed=include_perturbed)]
+    def stats_for_instance(
+        self, instance_id: str, *, include_perturbed: bool = True
+    ) -> list[dict[str, Any]]:
+        return [
+            r.stat
+            for r in self.rows_for_instance(
+                instance_id, include_perturbed=include_perturbed
+            )
+        ]
 
-    def get_row(self, key: InstanceStatKey | tuple[Any, ...]) -> InstanceStatRow | None:
+    def get_row(
+        self, key: InstanceStatKey | tuple[Any, ...]
+    ) -> InstanceStatRow | None:
         if isinstance(key, InstanceStatKey):
             return self.row_by_key.get(key, None)
         if isinstance(key, tuple) and len(key) == 7:
             vk = InstanceVariantKey(key[0], _coerce_int(key[1]), key[2])
             sk = InstanceStatKey(vk, key[3], key[4], key[5], key[6])
             return self.row_by_key.get(sk, None)
-        raise TypeError(f"Unrecognized key type: {type(key)}")
+        raise TypeError(f'Unrecognized key type: {type(key)}')
 
 
 def summary_dict(
@@ -633,14 +739,18 @@ def summary_dict(
             raise KeyError(level)
 
     if include_instance_stats is None:
-        include_instance_stats = (level >= 5)
+        include_instance_stats = level >= 5
     if include_headline_instances is None:
-        include_headline_instances = (level >= 10)
+        include_headline_instances = level >= 10
 
     cache_key = (
         'summary_dict_v4',
-        level, short_hash, include_instance_stats, include_headline_instances,
-        drop_zero_count, assert_join_assumptions,
+        level,
+        short_hash,
+        include_instance_stats,
+        include_headline_instances,
+        drop_zero_count,
+        assert_join_assumptions,
     )
     if cache_key in self._cache:
         return self._cache[cache_key]
@@ -668,16 +778,30 @@ def summary_dict(
                 continue
 
             name_obj = name_getter(row)
-            metric = name_obj.get('name', None) if isinstance(name_obj, dict) else None
-            split = name_obj.get('split', None) if isinstance(name_obj, dict) else None
+            metric = (
+                name_obj.get('name', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
+            split = (
+                name_obj.get('split', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
 
             mclass, _ = classify_metric(metric)
             fam = metric_family(metric)
 
             support = 'supported' if c > 0 else 'unsupported'
-            fam_counts.setdefault(mclass, {}).setdefault(support, Counter())[fam] += 1
-            metric_counts.setdefault(mclass, {}).setdefault(support, Counter())[metric] += 1
-            split_counts.setdefault(mclass, {}).setdefault(support, Counter())[split] += 1
+            fam_counts.setdefault(mclass, {}).setdefault(support, Counter())[
+                fam
+            ] += 1
+            metric_counts.setdefault(mclass, {}).setdefault(support, Counter())[
+                metric
+            ] += 1
+            split_counts.setdefault(mclass, {}).setdefault(support, Counter())[
+                split
+            ] += 1
 
         # Convert counters to stable sortable lists (count desc, then name)
         out = {}
@@ -685,13 +809,35 @@ def summary_dict(
             out[mclass] = {}
             for support in ('supported', 'unsupported'):
                 counter = fam_counts[mclass].get(support, Counter())
-                out[mclass][support] = sorted(counter.items(), key=lambda kv: (-kv[1], str(kv[0])))
+                out[mclass][support] = sorted(
+                    counter.items(), key=lambda kv: (-kv[1], str(kv[0]))
+                )
             # quick per-class totals
-            out[mclass]['n_rows_supported'] = int(sum(fam_counts[mclass].get('supported', {}).values()))
-            out[mclass]['n_rows_unsupported'] = int(sum(fam_counts[mclass].get('unsupported', {}).values()))
+            out[mclass]['n_rows_supported'] = int(
+                sum(fam_counts[mclass].get('supported', {}).values())
+            )
+            out[mclass]['n_rows_unsupported'] = int(
+                sum(fam_counts[mclass].get('unsupported', {}).values())
+            )
             # unique metric counts (per support)
-            out[mclass]['n_unique_metrics_supported'] = int(sum(1 for k, v in metric_counts[mclass].get('supported', {}).items() if k is not None))
-            out[mclass]['n_unique_metrics_unsupported'] = int(sum(1 for k, v in metric_counts[mclass].get('unsupported', {}).items() if k is not None))
+            out[mclass]['n_unique_metrics_supported'] = int(
+                sum(
+                    1
+                    for k, v in metric_counts[mclass]
+                    .get('supported', {})
+                    .items()
+                    if k is not None
+                )
+            )
+            out[mclass]['n_unique_metrics_unsupported'] = int(
+                sum(
+                    1
+                    for k, v in metric_counts[mclass]
+                    .get('unsupported', {})
+                    .items()
+                    if k is not None
+                )
+            )
 
         # Signature for “is the inventory basically the same?”
         try:
@@ -711,7 +857,7 @@ def summary_dict(
     spec = self.run_spec() or {}
     scen = self.scenario() or {}
     scen_state = self.scenario_state() or {}
-    request_states = (scen_state.get('request_states', []) or [])
+    request_states = scen_state.get('request_states', []) or []
     stats = self.stats() or []
 
     label = self.name or str(self.run.path.name)
@@ -721,7 +867,9 @@ def summary_dict(
     n_rs_pert = 0
     for rs in request_states:
         inst = rs.get('instance') or {}
-        base_keys.append((inst.get('id', None), rs.get('train_trial_index', None)))
+        base_keys.append(
+            (inst.get('id', None), rs.get('train_trial_index', None))
+        )
         if inst.get('perturbation', None):
             n_rs_pert += 1
     base_counter = Counter(base_keys)
@@ -731,17 +879,32 @@ def summary_dict(
 
     # --- run-level stat inventories ---
     run_stats_total = len(stats)
-    run_stats_nonzero = sum(1 for r in stats if int(r.get('count', 0) or 0) != 0)
-    run_stats_with_mean = sum(1 for r in stats if (int(r.get('count', 0) or 0) != 0) and ('mean' in r))
-    run_stats_pert = sum(1 for r in stats if isinstance(r.get('name', None), dict) and bool(r['name'].get('perturbation', None)))
+    run_stats_nonzero = sum(
+        1 for r in stats if int(r.get('count', 0) or 0) != 0
+    )
+    run_stats_with_mean = sum(
+        1 for r in stats if (int(r.get('count', 0) or 0) != 0) and ('mean' in r)
+    )
+    run_stats_pert = sum(
+        1
+        for r in stats
+        if isinstance(r.get('name', None), dict)
+        and bool(r['name'].get('perturbation', None))
+    )
 
     # signatures: run spec / scenario / stat-name-set
     stat_name_ids = []
     for r in stats:
         try:
-            stat_name_ids.append(helm_hashers.stat_name_id(r.get('name', None), count=r.get('count', None)))
+            stat_name_ids.append(
+                helm_hashers.stat_name_id(
+                    r.get('name', None), count=r.get('count', None)
+                )
+            )
         except Exception:
-            stat_name_ids.append(ub.urepr(r.get('name', None), compact=1, nl=0, nobr=1))
+            stat_name_ids.append(
+                ub.urepr(r.get('name', None), compact=1, nl=0, nobr=1)
+            )
     stat_name_ids = sorted(set(stat_name_ids))
 
     run_stats_fams, run_stats_fams_sig = _family_support_inventory(
@@ -765,7 +928,11 @@ def summary_dict(
             # (still useful to report join-derived counts)
             inst_rows_total = len(joined)
             inst_rows_nonzero = sum(1 for r in joined if int(r.count or 0) != 0)
-            inst_rows_with_mean = sum(1 for r in joined if (int(r.count or 0) != 0) and (r.mean is not None))
+            inst_rows_with_mean = sum(
+                1
+                for r in joined
+                if (int(r.count or 0) != 0) and (r.mean is not None)
+            )
 
             # per-instance family inventory: use the underlying stat dicts
             inst_stats = [r.stat for r in joined]
@@ -800,7 +967,11 @@ def summary_dict(
             inst = rs.get('instance') or {}
             pert = inst.get('perturbation', None) or {}
             pname = pert.get('name', None) if isinstance(pert, dict) else None
-            return (str(inst.get('id', '')), int(rs.get('train_trial_index', 0) or 0), str(pname))
+            return (
+                str(inst.get('id', '')),
+                int(rs.get('train_trial_index', 0) or 0),
+                str(pname),
+            )
 
         unp = sorted(unp, key=_sortkey)
         per = sorted(per, key=_sortkey)
@@ -810,50 +981,61 @@ def summary_dict(
         for rs in pick:
             inst = rs.get('instance') or {}
             pert = inst.get('perturbation', None)
-            pert_name = pert.get('name', None) if isinstance(pert, dict) else None
+            pert_name = (
+                pert.get('name', None) if isinstance(pert, dict) else None
+            )
             pert_id = None
             try:
-                pert_id = helm_hashers.perturbation_id(pert, short_hash=short_hash)
+                pert_id = helm_hashers.perturbation_id(
+                    pert, short_hash=short_hash
+                )
             except Exception:
                 pert_id = None
 
             req = rs.get('request') or {}
             res = rs.get('result') or {}
-            comps = (res.get('completions') or [])
+            comps = res.get('completions') or []
             comp_text = comps[0].get('text', None) if comps else None
 
-            headline.append({
-                'instance_id': inst.get('id', None),
-                'train_trial_index': rs.get('train_trial_index', None),
-                'split': inst.get('split', None),
-                'perturbation': pert_name,
-                'perturbation_id': pert_id,
-                'prompt': req.get('prompt', None),
-                'completion': comp_text,
-                'input': (inst.get('input') or {}).get('text', None) if isinstance(inst.get('input', None), dict) else inst.get('input', None),
-            })
+            headline.append(
+                {
+                    'instance_id': inst.get('id', None),
+                    'train_trial_index': rs.get('train_trial_index', None),
+                    'split': inst.get('split', None),
+                    'perturbation': pert_name,
+                    'perturbation_id': pert_id,
+                    'prompt': req.get('prompt', None),
+                    'completion': comp_text,
+                    'input': (inst.get('input') or {}).get('text', None)
+                    if isinstance(inst.get('input', None), dict)
+                    else inst.get('input', None),
+                }
+            )
 
     out: dict[str, Any] = {
         'label': label,
         'path': str(self.run.path),
         'run_spec_name': spec.get('name', None),
-        'scenario_name': (spec.get('scenario_spec', {}) or {}).get('class_name', None),
-
+        'scenario_name': (spec.get('scenario_spec', {}) or {}).get(
+            'class_name', None
+        ),
         'signatures': {
             'run_spec_sig': _short_sig(spec),
             'scenario_sig': _short_sig(scen) if scen else None,
             'stats_name_sig': _short_sig(stat_name_ids),
             'run_stats_families_sig': run_stats_fams_sig,
-            'instance_stats_families_sig': (inst_info or {}).get('inventory_sig', None) if isinstance(inst_info, dict) else None,
+            'instance_stats_families_sig': (inst_info or {}).get(
+                'inventory_sig', None
+            )
+            if isinstance(inst_info, dict)
+            else None,
         },
-
         'requests': {
             'request_states': n_variants,
             'bases': n_bases,
             'perturbed_request_states': n_rs_pert,
             'max_variants_per_base': max_variants_per_base,
         },
-
         'run_stats': {
             'total': run_stats_total,
             'nonzero': run_stats_nonzero,
@@ -861,7 +1043,6 @@ def summary_dict(
             'perturbed': run_stats_pert,
             'families_by_class': run_stats_fams,
         },
-
         'instance_stats': inst_info,
         'headline_instances': headline,
     }
@@ -939,6 +1120,7 @@ def summary(
     if writer is None:
         try:
             from rich import print as rich_print
+
             writer = rich_print
         except Exception:
             writer = print
@@ -988,7 +1170,9 @@ def summary(
         # Using repr to make output more structured.
         text = repr(text)
         if smart_truncate is not None:
-            out = smart_truncate(text, max_length=n, hash_len=8, separator=' ', trunc_loc=0.5)
+            out = smart_truncate(
+                text, max_length=n, hash_len=8, separator=' ', trunc_loc=0.5
+            )
         else:
             out = text[:n] + '…' if len(text) > n else text
         if _escape is not None:
@@ -998,90 +1182,98 @@ def summary(
     # --- level 0: one-liner ---
     if level <= 0:
         writer(
-            f"{label} | spec={info.get('run_spec_name')} | "
-            f"sig(spec)={sig.get('run_spec_sig')} | "
-            f"sig(stats)={sig.get('stats_name_sig')} | "
-            f"req={req.get('request_states')} bases={req.get('bases')} maxvar={req.get('max_variants_per_base')}"
+            f'{label} | spec={info.get("run_spec_name")} | '
+            f'sig(spec)={sig.get("run_spec_sig")} | '
+            f'sig(stats)={sig.get("stats_name_sig")} | '
+            f'req={req.get("request_states")} bases={req.get("bases")} maxvar={req.get("max_variants_per_base")}'
         )
         return None
 
     # --- header ---
-    writer(f"Run: {label}")
-    writer(f"  path: {info.get('path')}")
-    writer(f"  run_spec_name: {info.get('run_spec_name')}")
-    writer(f"  scenario: {info.get('scenario_name')}")
-    writer("  signatures:")
-    writer(f"    run_spec_sig:   {sig.get('run_spec_sig')}")
-    writer(f"    scenario_sig:   {sig.get('scenario_sig')}")
-    writer(f"    stats_name_sig: {sig.get('stats_name_sig')}")
+    writer(f'Run: {label}')
+    writer(f'  path: {info.get("path")}')
+    writer(f'  run_spec_name: {info.get("run_spec_name")}')
+    writer(f'  scenario: {info.get("scenario_name")}')
+    writer('  signatures:')
+    writer(f'    run_spec_sig:   {sig.get("run_spec_sig")}')
+    writer(f'    scenario_sig:   {sig.get("scenario_sig")}')
+    writer(f'    stats_name_sig: {sig.get("stats_name_sig")}')
 
     # --- requests ---
-    writer("  requests:")
+    writer('  requests:')
     writer(
-        f"    request_states={req.get('request_states')} "
-        f"bases={req.get('bases')} perturbed={req.get('perturbed_request_states')} "
-        f"max_variants_per_base={req.get('max_variants_per_base')}"
+        f'    request_states={req.get("request_states")} '
+        f'bases={req.get("bases")} perturbed={req.get("perturbed_request_states")} '
+        f'max_variants_per_base={req.get("max_variants_per_base")}'
     )
 
     # --- run-level stats ---
-    writer("  run-level stats (stats.json):")
+    writer('  run-level stats (stats.json):')
     writer(
-        f"    total={rs.get('total')} nonzero={rs.get('nonzero')} "
-        f"with_mean={rs.get('with_mean')} perturbed={rs.get('perturbed')}"
+        f'    total={rs.get("total")} nonzero={rs.get("nonzero")} '
+        f'with_mean={rs.get("with_mean")} perturbed={rs.get("perturbed")}'
     )
 
-    fams_by_class = (rs.get('families_by_class') or {})
-    writer("    families_by_class (class -> supported/unsupported -> family):")
+    fams_by_class = rs.get('families_by_class') or {}
+    writer('    families_by_class (class -> supported/unsupported -> family):')
     for cls in classes_to_show:
         if cls not in fams_by_class:
             continue
         cinfo = fams_by_class.get(cls) or {}
-        writer(f"      {cls}: supported_rows={cinfo.get('n_rows_supported')} unsupported_rows={cinfo.get('n_rows_unsupported')}")
+        writer(
+            f'      {cls}: supported_rows={cinfo.get("n_rows_supported")} unsupported_rows={cinfo.get("n_rows_unsupported")}'
+        )
         supp = cinfo.get('supported', [])[:family_topn]
         unsupp = cinfo.get('unsupported', [])[:family_topn]
         if supp:
-            writer("        supported:")
+            writer('        supported:')
             for fam, cnt in supp:
-                writer(f"          {fam}: {cnt}")
+                writer(f'          {fam}: {cnt}')
         if unsupp and level >= 10:
-            writer("        unsupported:")
+            writer('        unsupported:')
             for fam, cnt in unsupp:
-                writer(f"          {fam}: {cnt}")
+                writer(f'          {fam}: {cnt}')
 
     # --- instance-level stats ---
     if inst is None:
-        writer("  instance-level stats: (disabled)")
+        writer('  instance-level stats: (disabled)')
     elif isinstance(inst, dict) and inst.get('error'):
-        writer(f"  instance-level stats: ERROR {inst.get('error')}")
+        writer(f'  instance-level stats: ERROR {inst.get("error")}')
     else:
-        writer("  instance-level stats (joined per_instance_stats + request_states):")
         writer(
-            f"    rows_total={inst.get('rows_total')} "
-            f"rows_nonzero={inst.get('rows_nonzero')} rows_with_mean={inst.get('rows_with_mean')} "
-            f"families_sig={sig.get('instance_stats_families_sig')}"
+            '  instance-level stats (joined per_instance_stats + request_states):'
         )
-        inst_fams = (inst.get('families_by_class') or {})
-        writer("    families_by_class (class -> supported/unsupported -> family):")
+        writer(
+            f'    rows_total={inst.get("rows_total")} '
+            f'rows_nonzero={inst.get("rows_nonzero")} rows_with_mean={inst.get("rows_with_mean")} '
+            f'families_sig={sig.get("instance_stats_families_sig")}'
+        )
+        inst_fams = inst.get('families_by_class') or {}
+        writer(
+            '    families_by_class (class -> supported/unsupported -> family):'
+        )
         for cls in classes_to_show:
             if cls not in inst_fams:
                 continue
             cinfo = inst_fams.get(cls) or {}
-            writer(f"      {cls}: supported_rows={cinfo.get('n_rows_supported')} unsupported_rows={cinfo.get('n_rows_unsupported')}")
+            writer(
+                f'      {cls}: supported_rows={cinfo.get("n_rows_supported")} unsupported_rows={cinfo.get("n_rows_unsupported")}'
+            )
             supp = cinfo.get('supported', [])[:family_topn]
             unsupp = cinfo.get('unsupported', [])[:family_topn]
             if supp:
-                writer("        supported:")
+                writer('        supported:')
                 for fam, cnt in supp:
-                    writer(f"          {fam}: {cnt}")
+                    writer(f'          {fam}: {cnt}')
             if unsupp and level >= 10:
-                writer("        unsupported:")
+                writer('        unsupported:')
                 for fam, cnt in unsupp:
-                    writer(f"          {fam}: {cnt}")
+                    writer(f'          {fam}: {cnt}')
 
     # --- headline instances (high level) ---
     headline = info.get('headline_instances', None)
     if headline and level >= 10:
-        writer("  headline instances (lookup by instance_id):")
+        writer('  headline instances (lookup by instance_id):')
         for h in headline:
             iid = h.get('instance_id')
             tti = h.get('train_trial_index')
@@ -1089,16 +1281,18 @@ def summary(
             pert = h.get('perturbation')
             pid = h.get('perturbation_id')
 
-            writer(f"    - id={iid} tti={tti} split={split} pert={pert} pid={pid}")
+            writer(
+                f'    - id={iid} tti={tti} split={split} pert={pert} pid={pid}'
+            )
             inp = _clip(h.get('input'), input_chars)
             prm = _clip(h.get('prompt'), prompt_chars)
             cmp = _clip(h.get('completion'), completion_chars)
             if inp is not None:
-                writer(f"      input: {inp}")
+                writer(f'      input: {inp}')
             if prm is not None:
-                writer(f"      prompt: {prm}")
+                writer(f'      prompt: {prm}')
             if cmp is not None:
-                writer(f"      completion: {cmp}")
+                writer(f'      completion: {cmp}')
 
     return None
 
@@ -1109,4 +1303,4 @@ def summary_text(self, *, level: int = 1, **kwargs) -> str:
     """
     lines: list[str] = []
     self.summary(level=level, writer=lines.append, **kwargs)
-    return "\n".join(lines)
+    return '\n'.join(lines)
