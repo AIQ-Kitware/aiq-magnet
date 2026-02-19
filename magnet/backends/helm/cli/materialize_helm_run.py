@@ -270,7 +270,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
             ...   '--mode', 'compute_if_missing',
             ... ])
         """
-        config = MaterializeHelmRunConfig.cli(argv=argv, data=kwargs, verbose='auto')
+        config = MaterializeHelmRunConfig.cli(
+            argv=argv, data=kwargs, verbose='auto'
+        )
 
         if config.run_entry is None:
             raise SystemExit('Missing required --run-entry')
@@ -350,7 +352,11 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
             logger.success('Found reusable run: {}', match.run_name)
             # Materialize into out_dpath in the suite layout we want.
             target_run_dir = (
-                out_dpath / 'benchmark_output' / 'runs' / config.suite / match.run_name
+                out_dpath
+                / 'benchmark_output'
+                / 'runs'
+                / config.suite
+                / match.run_name
             )
             logger.info(
                 'Materializing via {}: {} -> {}',
@@ -377,7 +383,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 logger.error('No reusable run found and mode=reuse_only')
                 manifest['status'] = 'missing'
                 manifest_fpath.write_text(kwutil.Json.dumps(manifest, indent=2))
-                raise SystemExit('No reusable HELM run found and mode=reuse_only')
+                raise SystemExit(
+                    'No reusable HELM run found and mode=reuse_only'
+                )
 
             # Ensure benchmark_output exists (helm-run will create, but pre-creating is fine)
             (out_dpath / 'benchmark_output').mkdir(exist_ok=True)
@@ -471,13 +479,16 @@ def parse_run_entry_description(desc: str) -> tuple[str, dict[str, object]]:
             "Run entry description must contain ':' separating benchmark and parameters"
         )
     from helm.common.object_spec import parse_object_spec
+
     spec = parse_object_spec(desc)
     bench = spec.class_name
     tokens = spec.args
     return bench, tokens
 
 
-def canonicalize_requested_tokens(tokens: dict[str, object]) -> dict[str, object]:
+def canonicalize_requested_tokens(
+    tokens: dict[str, object],
+) -> dict[str, object]:
     """
     Apply small, conservative normalizations that we have observed in practice.
 
@@ -725,7 +736,9 @@ def infer_num_instances(run_dir: Path) -> int | None:
     return None
 
 
-def is_complete_run_dir(run_dir: Path, require_per_instance_stats: bool = True) -> bool:
+def is_complete_run_dir(
+    run_dir: Path, require_per_instance_stats: bool = True
+) -> bool:
     """
     Determine if a run directory is "complete enough" to reuse.
 
@@ -783,25 +796,27 @@ def discover_benchmark_output_dirs(
         if not root.exists():
             continue
 
-        if root.name == "benchmark_output" and root.is_dir():
+        if root.name == 'benchmark_output' and root.is_dir():
             yield root
             continue
 
         # os.walk gives strings; use Path for comparisons
-        for dirpath, dirnames, filenames in os.walk(root, topdown=True, followlinks=False):
+        for dirpath, dirnames, filenames in os.walk(
+            root, topdown=True, followlinks=False
+        ):
             # Prune heavy/common dirs (optional but often helpful)
             # Adjust list based on what exists in your environments.
-            prunable = {".git", "__pycache__", ".venv", "venv", "node_modules"}
+            prunable = {'.git', '__pycache__', '.venv', 'venv', 'node_modules'}
             dirnames[:] = [d for d in dirnames if d not in prunable]
 
             # If any immediate child is named benchmark_output, yield it and prune it
-            if "benchmark_output" in dirnames:
-                bo = Path(dirpath) / "benchmark_output"
+            if 'benchmark_output' in dirnames:
+                bo = Path(dirpath) / 'benchmark_output'
                 if bo.is_dir():
                     yield bo
 
                 # Don't descend into benchmark_output itself
-                dirnames[:] = [d for d in dirnames if d != "benchmark_output"]
+                dirnames[:] = [d for d in dirnames if d != 'benchmark_output']
 
 
 def find_best_precomputed_run(
@@ -901,11 +916,15 @@ def find_best_precomputed_run(
                 if max_eval_instances is not None:
                     n = infer_num_instances(run_dir)
                     if n is not None and n < max_eval_instances:
-                        logger.warning(f'Found candidate: {run_dir}, but not enough instances')
+                        logger.warning(
+                            f'Found candidate: {run_dir}, but not enough instances'
+                        )
                         continue
                 logger.info(f'Found candidate: {run_dir}')
                 candidates.append(
-                    MatchResult(run_dir=run_dir, run_name=run.name, source_root=bo)
+                    MatchResult(
+                        run_dir=run_dir, run_name=run.name, source_root=bo
+                    )
                 )
 
     if not candidates:
@@ -948,7 +967,11 @@ def ensure_symlink(src: Path, dst: Path) -> None:
     if dst.is_symlink():
         try:
             existing = os.readlink(dst)
-            existing_abs = (dst.parent / existing).resolve() if not os.path.isabs(existing) else Path(existing).resolve()
+            existing_abs = (
+                (dst.parent / existing).resolve()
+                if not os.path.isabs(existing)
+                else Path(existing).resolve()
+            )
             if existing_abs == desired_abs:
                 return
         except OSError:

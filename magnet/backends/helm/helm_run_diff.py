@@ -150,10 +150,10 @@ def _walker_diff(a: Any, b: Any, *, max_paths: int = 12) -> list[str]:
     walker_a = ub.IndexableWalker(a)
     walker_b = ub.IndexableWalker(b)
     info = walker_a.diff(walker_b)
-    info.pop("passlist", None)
+    info.pop('passlist', None)
 
     def _format_path(path: Iterable[Any]) -> str:
-        return ".".join(map(str, path))
+        return '.'.join(map(str, path))
 
     def _truncate(lines: list[str], max_items: int) -> list[str]:
         """
@@ -166,17 +166,32 @@ def _walker_diff(a: Any, b: Any, *, max_paths: int = 12) -> list[str]:
         if n <= max_items:
             return lines
         remain = n - max_items
-        return lines[:max_items] + [f"<{remain} more not shown>"]
+        return lines[:max_items] + [f'<{remain} more not shown>']
 
-    unique1 = sorted(info.get("unique1", []))
-    unique2 = sorted(info.get("unique2", []))
-    faillist = sorted(info.get("faillist", []), key=lambda d: d.path)
+    unique1 = sorted(info.get('unique1', []))
+    unique2 = sorted(info.get('unique2', []))
+    faillist = sorted(info.get('faillist', []), key=lambda d: d.path)
 
     out = info | {
-        "unique1": _truncate([_format_path(p) + ': ' + _smart_truncate(repr(walker_a[p]), 80) for p in unique1], max_paths),
-        "unique2": _truncate([_format_path(p) + ': ' + _smart_truncate(repr(walker_b[p]), 80) for p in unique2], max_paths),
-        "faillist": _truncate(
-            [f"{_format_path(d.path)}: {_smart_truncate(repr(d.value1), 80)} != {_smart_truncate(repr(d.value2), 80)}" for d in faillist],
+        'unique1': _truncate(
+            [
+                _format_path(p) + ': ' + _smart_truncate(repr(walker_a[p]), 80)
+                for p in unique1
+            ],
+            max_paths,
+        ),
+        'unique2': _truncate(
+            [
+                _format_path(p) + ': ' + _smart_truncate(repr(walker_b[p]), 80)
+                for p in unique2
+            ],
+            max_paths,
+        ),
+        'faillist': _truncate(
+            [
+                f'{_format_path(d.path)}: {_smart_truncate(repr(d.value1), 80)} != {_smart_truncate(repr(d.value2), 80)}'
+                for d in faillist
+            ],
             max_paths,
         ),
     }
@@ -499,8 +514,8 @@ class HelmRunDiff(ub.NiceRepr):
         agree = info['value_agreement']['overall']['agree_ratio']
 
         if level <= 0:
-            spec_name_a = info["run_spec_name_a"]
-            spec_name_b = info["run_spec_name_b"]
+            spec_name_a = info['run_spec_name_a']
+            spec_name_b = info['run_spec_name_b']
             if spec_name_a == spec_name_b:
                 line_name = spec_name_a
             else:
@@ -534,10 +549,8 @@ class HelmRunDiff(ub.NiceRepr):
             )
 
             if level >= 15:
-                if (not info['run_spec_dict_ok']):
-                    writer(
-                        f'  diff: {ub.urepr(info["run_spec_diff_paths"])}'
-                    )
+                if not info['run_spec_dict_ok']:
+                    writer(f'  diff: {ub.urepr(info["run_spec_diff_paths"])}')
 
             if info['scenario_ok'] is None:
                 writer(
@@ -545,8 +558,10 @@ class HelmRunDiff(ub.NiceRepr):
                 )
             else:
                 if level >= 15:
-                    writer(f'Scenario: {_format_bool(bool(info["scenario_ok"]))}')
-                    if (info['scenario_ok'] is False):
+                    writer(
+                        f'Scenario: {_format_bool(bool(info["scenario_ok"]))}'
+                    )
+                    if info['scenario_ok'] is False:
                         writer(
                             f'  diff: {ub.urepr(info["scenario_diff_paths"])}'
                         )
@@ -1103,9 +1118,11 @@ class HelmRunDiff(ub.NiceRepr):
                     # important: use repr, to avoid rendering newline chars.
                     pa = (
                         _smart_truncate(
-                            repr(((rs_a or {}).get('request') or {}).get(
-                                'prompt', None
-                            )),
+                            repr(
+                                ((rs_a or {}).get('request') or {}).get(
+                                    'prompt', None
+                                )
+                            ),
                             prompt_chars,
                         )
                         if isinstance(rs_a, dict)
@@ -1113,9 +1130,11 @@ class HelmRunDiff(ub.NiceRepr):
                     )
                     pb = (
                         _smart_truncate(
-                            repr(((rs_b or {}).get('request') or {}).get(
-                                'prompt', None
-                            )),
+                            repr(
+                                ((rs_b or {}).get('request') or {}).get(
+                                    'prompt', None
+                                )
+                            ),
                             prompt_chars,
                         )
                         if isinstance(rs_b, dict)
@@ -1149,11 +1168,13 @@ class HelmRunDiff(ub.NiceRepr):
                     # --- Inputs / completions (avoid duplicates) ---
                     input_a = _inst_input(rs_a) if rs_a is not None else None
                     input_b = _inst_input(rs_b) if rs_b is not None else None
-                    comp_a  = _completion(rs_a) if rs_a is not None else None
-                    comp_b  = _completion(rs_b) if rs_b is not None else None
+                    comp_a = _completion(rs_a) if rs_a is not None else None
+                    comp_b = _completion(rs_b) if rs_b is not None else None
 
-                    inputs_equal = (input_a == input_b) and (input_a is not None)
-                    comps_equal  = (comp_a == comp_b) and (comp_a is not None)
+                    inputs_equal = (input_a == input_b) and (
+                        input_a is not None
+                    )
+                    comps_equal = (comp_a == comp_b) and (comp_a is not None)
 
                     # Input
                     if inputs_equal:
@@ -1169,9 +1190,13 @@ class HelmRunDiff(ub.NiceRepr):
                         writer(f'      completion (same): {comp_a}')
                     else:
                         if comp_a is not None:
-                            writer(f'      [{self.a_name}] completion: {comp_a}')
+                            writer(
+                                f'      [{self.a_name}] completion: {comp_a}'
+                            )
                         if comp_b is not None:
-                            writer(f'      [{self.b_name}] completion: {comp_b}')
+                            writer(
+                                f'      [{self.b_name}] completion: {comp_b}'
+                            )
 
                     if level >= 20:
                         if isinstance(rs_a, dict) and isinstance(rs_b, dict):

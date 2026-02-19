@@ -64,6 +64,7 @@ class DownloadHelmConfig(scfg.DataConfig):
     """
     Download HELM benchmark run artifacts from the public GCS bucket.
     """
+
     # hack, scriptconfig should allow modals to overwrite this in the context
     # of usage, not definition in a future version, for now this does what we
     # want.
@@ -169,14 +170,19 @@ class DownloadHelmConfig(scfg.DataConfig):
         ),
     )
 
-    verbose = scfg.Value(False, isflag=True, help='Verbose output', group='logging')
+    verbose = scfg.Value(
+        False, isflag=True, help='Verbose output', group='logging'
+    )
     bucket = scfg.Value(
         'gs://crfm-helm-public',
         help='The storage bucket to download from. No need to change this.',
         group='behavior',
     )
     checksum = scfg.Value(
-        False, isflag=True, help='Enable checksum-based comparison', group='behavior'
+        False,
+        isflag=True,
+        help='Enable checksum-based comparison',
+        group='behavior',
     )
     backend = scfg.Value(
         'fsspec',
@@ -217,6 +223,7 @@ def setup_logging(verbose: bool = False) -> None:
     - You may override via MAGNET_LOG_LEVEL (e.g. DEBUG, INFO, WARNING).
     """
     import os
+
     level = os.environ.get('MAGNET_LOG_LEVEL')
     if not level:
         level = 'DEBUG' if verbose else 'INFO'
@@ -225,21 +232,23 @@ def setup_logging(verbose: bool = False) -> None:
     # 3. Attempt to use richuru, otherwise fallback to standard loguru
     try:
         from rich.logging import RichHandler
+
         # Add RichHandler as the sink
         # We use format="{message}" because RichHandler handles its own formatting
         from rich.console import Console
+
         # Create a console specifically for stderr
         error_console = Console(stderr=True)
         logger.add(
             RichHandler(
                 console=error_console,  # Force Rich to use stderr
                 markup=True,
-                rich_tracebacks=True
+                rich_tracebacks=True,
             ),
             level=level,
-            format="{message}",
+            format='{message}',
             backtrace=False,
-            diagnose=False
+            diagnose=False,
         )
     except ImportError:
         # Fallback to standard loguru output if rich is not available
@@ -248,7 +257,7 @@ def setup_logging(verbose: bool = False) -> None:
             level=level,
             colorize=True,
             backtrace=False,
-            diagnose=False
+            diagnose=False,
         )
 
 
@@ -309,7 +318,9 @@ class GsutilStorageBackend:
             if sys.stdin.isatty() and cls._apt_available():
                 from rich import prompt
 
-                ans = prompt.Confirm.ask('Install gsutil now via apt on Debian/Ubuntu?')
+                ans = prompt.Confirm.ask(
+                    'Install gsutil now via apt on Debian/Ubuntu?'
+                )
                 if ans:
                     cls._install_gsutil_ubuntu()
                 else:
@@ -362,7 +373,9 @@ class GsutilStorageBackend:
             return False
         out = str(cp.stdout or '') + str(cp.stderr or '')
         return bool(
-            re.search(r'^gsutil version:', out, flags=re.IGNORECASE | re.MULTILINE)
+            re.search(
+                r'^gsutil version:', out, flags=re.IGNORECASE | re.MULTILINE
+            )
         )
 
     @classmethod
@@ -421,7 +434,12 @@ class GsutilStorageBackend:
     def download_tree(
         self, src_prefix: str, dest_dir: ub.Path, checksum: bool = False
     ) -> None:
-        logger.info('gsutil rsync src={} -> dest={} checksum={}', src_prefix, dest_dir, bool(checksum))
+        logger.info(
+            'gsutil rsync src={} -> dest={} checksum={}',
+            src_prefix,
+            dest_dir,
+            bool(checksum),
+        )
         dest_dir.ensuredir()
         cmd = [self.gsutil, '-m', 'rsync', '-r']
         if checksum:
@@ -439,7 +457,8 @@ class FsspecStorageBackend:
             import fsspec  # type: ignore
         except Exception as ex:  # pragma: no cover (import-time edge)
             raise ExitError(
-                f'backend=fsspec requested, but fsspec/gcsfs is not installed: {ex}', 1
+                f'backend=fsspec requested, but fsspec/gcsfs is not installed: {ex}',
+                1,
             )
         self.fs = fsspec.filesystem('gcs', token='anon')
 
@@ -485,8 +504,8 @@ class FsspecStorageBackend:
     def download_tree(
         self, src_prefix: str, dest_dir: ub.Path, checksum: bool = False
     ) -> None:
-
         from fsspec.callbacks import TqdmCallback
+
         logger.debug('fsspec rsync src={} -> dest={}', src_prefix, dest_dir)
 
         if checksum:
@@ -499,8 +518,13 @@ class FsspecStorageBackend:
             base = _strip_gs(src_prefix).rstrip('/')
             dest_dir.ensuredir()
             # TODO: can we use fsspec.generic.rsync here?
-            callback = TqdmCallback(tqdm_kwargs={"desc": f"Downloading {base}"})
-            self.fs.get(base, str(dest_dir.parent) + '/', recursive=True, callback=callback)
+            callback = TqdmCallback(tqdm_kwargs={'desc': f'Downloading {base}'})
+            self.fs.get(
+                base,
+                str(dest_dir.parent) + '/',
+                recursive=True,
+                callback=callback,
+            )
         else:
             base = _strip_gs(src_prefix).rstrip('/')
             dest_dir.ensuredir()
@@ -514,7 +538,7 @@ class FsspecStorageBackend:
             for rpath, info in remote.items():
                 if info.get('type') == 'directory':
                     continue
-                rel = rpath[len(base):].lstrip('/')
+                rel = rpath[len(base) :].lstrip('/')
                 if not rel:
                     continue
                 lpath = dest_dir / rel
@@ -532,7 +556,7 @@ class FsspecStorageBackend:
 
             callback = TqdmCallback(
                 tqdm_kwargs={
-                    "desc": f"Downloading {base} ({len(rpaths)} files; {skipped} up-to-date)",
+                    'desc': f'Downloading {base} ({len(rpaths)} files; {skipped} up-to-date)',
                 }
             )
             self.fs.get(rpaths, lpaths, callback=callback)
@@ -588,6 +612,7 @@ class HelmRemoteStore:
         >>> result2 = sorted([r.relative_to(dpath2) / f for r, ds, fs in dpath2.walk() for f in fs + ['.']])
         >>> assert result2 == result1
     """
+
     def __init__(self, bucket='gs://crfm-helm-public', backend='fsspec'):
         if backend == 'fsspec':
             self.backend = FsspecStorageBackend(bucket=bucket)
@@ -631,6 +656,7 @@ class HelmRemoteStore:
             >>> assert 'runs' not in versions
         """
         from packaging.version import parse as Version, InvalidVersion
+
         root = self._runs_root(benchmark)
         vers = self.backend.list_dirs(root)
         try:
@@ -652,7 +678,12 @@ class HelmRemoteStore:
 
     # --- download API ---
     def download_version(
-        self, benchmark: str, version: str, dest: ub.Path, *, checksum: bool = False
+        self,
+        benchmark: str,
+        version: str,
+        dest: ub.Path,
+        *,
+        checksum: bool = False,
     ) -> None:
         root = self._runs_root(benchmark)
         self.backend.download_tree(f'{root}/{version}', dest, checksum=checksum)
@@ -715,11 +746,19 @@ def filter_runs(all_runs, runs):
     return matched
 
 
-def _do_requested_download(storage, benchmark, version, dest, verbose, runs, checksum):
+def _do_requested_download(
+    storage, benchmark, version, dest, verbose, runs, checksum
+):
     """
     Main download logic, either filtered or not.
     """
-    logger.info('Download request benchmark={} version={} runs_filter={} dest={}', benchmark, version, bool(runs), dest)
+    logger.info(
+        'Download request benchmark={} version={} runs_filter={} dest={}',
+        benchmark,
+        version,
+        bool(runs),
+        dest,
+    )
 
     bucket_base = storage._runs_root(benchmark)
     src = f'{bucket_base}/{version}'
@@ -738,9 +777,16 @@ def _do_requested_download(storage, benchmark, version, dest, verbose, runs, che
 
             pattern = kwutil.MultiPattern.coerce(runs)
             matched = filter_runs(all_runs, pattern)
-            logger.info('Matched {} / {} runs under {}', len(matched), len(all_runs), src)
+            logger.info(
+                'Matched {} / {} runs under {}',
+                len(matched),
+                len(all_runs),
+                src,
+            )
             if not matched:
-                logger.warning(f'No runs matched patterns {pattern} under {src}')
+                logger.warning(
+                    f'No runs matched patterns {pattern} under {src}'
+                )
                 available_text = '\n'.join([f'  - {r}' for r in all_runs])
                 logger.warning('Available runs:' + available_text)
                 logger.warning(
@@ -760,7 +806,9 @@ def _do_requested_download(storage, benchmark, version, dest, verbose, runs, che
         else:
             # Download entire version.
             logger.info('Downloading entire version tree: {}', src)
-            storage.download_version(benchmark, version, dest, checksum=bool(checksum))
+            storage.download_version(
+                benchmark, version, dest, checksum=bool(checksum)
+            )
 
     except subprocess.CalledProcessError as ex:
         logger.error('gsutil rsync failed.')
@@ -786,6 +834,7 @@ def main(argv=None, **kwargs) -> int:
         logger.debug('config = ' + escape(ub.urepr(args, nl=1)))
 
     import kwutil
+
     benchmark_arg = args.benchmark
     version_arg = args.version
 
@@ -821,10 +870,16 @@ def main(argv=None, **kwargs) -> int:
         if _looks_like_single_selector(selector):
             return [selector]
         import kwutil
+
         pat = kwutil.MultiPattern.coerce(selector)
         all_benchmarks = storage.list_benchmarks()
         matched = [b for b in all_benchmarks if pat.match(b)]
-        logger.debug('Benchmark selector {} matched {} / {}', selector, len(matched), len(all_benchmarks))
+        logger.debug(
+            'Benchmark selector {} matched {} / {}',
+            selector,
+            len(matched),
+            len(all_benchmarks),
+        )
         return matched
 
     def resolve_versions(benchmark: str, selector: str) -> List[str]:
@@ -837,12 +892,17 @@ def main(argv=None, **kwargs) -> int:
         selector = (selector or '').strip()
         if selector in {'latest', 'auto'}:
             v = storage.latest_version(benchmark)
-            logger.debug("Resolved latest version for {} -> {}", benchmark, v)
+            logger.debug('Resolved latest version for {} -> {}', benchmark, v)
             return [v] if v else []
         if _looks_like_single_selector(selector):
-            logger.debug('Version selector treated as single for {}: {}', benchmark, selector)
+            logger.debug(
+                'Version selector treated as single for {}: {}',
+                benchmark,
+                selector,
+            )
             return [selector]
         import kwutil
+
         pat = kwutil.MultiPattern.coerce(selector)
         all_versions = storage.list_versions(benchmark)
         return [v for v in all_versions if pat.match(v)]
@@ -885,7 +945,9 @@ def main(argv=None, **kwargs) -> int:
 
     # --- download mode ---
     if not args.download_dir:
-        logger.error('Error: download directory not provided. Run with --help for usage')
+        logger.error(
+            'Error: download directory not provided. Run with --help for usage'
+        )
         return 2
 
     download_dir = ub.Path(args.download_dir)
@@ -917,7 +979,9 @@ def main(argv=None, **kwargs) -> int:
                 continue
 
         if version_arg in {'latest', 'auto'}:
-            logger.debug(f'Using latest version for {benchmark}: {version_list[0]}')
+            logger.debug(
+                f'Using latest version for {benchmark}: {version_list[0]}'
+            )
 
         logger.debug(f'version_list={version_list}')
         for version in version_list:
@@ -926,13 +990,16 @@ def main(argv=None, **kwargs) -> int:
             dest_root = download_dir / benchmark / 'benchmark_output' / 'runs'
             dest = dest_root / version
 
-            logger.info(ub.codeblock(
-                f'''
+            logger.info(
+                ub.codeblock(
+                    f"""
                 HELM benchmark: {benchmark}
                 Version:        {version}
                 Source:         {src}
                 Destination:    {dest}
-                '''))
+                """
+                )
+            )
 
             ret = _do_requested_download(
                 storage, benchmark, version, dest, verbose, runs, checksum
@@ -943,6 +1010,7 @@ def main(argv=None, **kwargs) -> int:
                     return final_ret
 
     return final_ret
+
 
 __cli__ = DownloadHelmConfig
 __cli__.main = main
