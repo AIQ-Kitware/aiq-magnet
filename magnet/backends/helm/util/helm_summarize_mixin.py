@@ -2,6 +2,9 @@
 
 Lightweight, JSON-oriented helpers inspired by HELM's summarization code.
 
+TODO: This still needs to be integerated, but leaving it here as it codifies
+some of the HELM behavior we want to replicate.
+
 Why a mixin?
 ------------
 You asked to keep "the ability for HelmRunAnalysis to do the things the

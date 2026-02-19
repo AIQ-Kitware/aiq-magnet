@@ -40,7 +40,7 @@ import kwdagger
 
 class MaterializeHelmRunNode(kwdagger.ProcessNode):
     """
-    Wraps: python -m magnet.backends.helm.materialize_helm_run
+    Wraps: python -m magnet.backends.helm.cli.materialize_helm_run
 
     This script writes:
       <out_dpath>/benchmark_output/runs/<suite>/<run_name>/...
@@ -52,7 +52,7 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
     name = 'helm'
 
     # If magnet is importable, this is the cleanest way to invoke the module.
-    executable = "python -m magnet.backends.helm.materialize_helm_run"
+    executable = "python -m magnet.backends.helm.cli.materialize_helm_run"
 
     # We generally don't want kwdagger to try to "materialize" huge external
     # directories (like /data/crfm-helm-public) into each job dir, so we do NOT

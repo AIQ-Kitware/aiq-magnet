@@ -53,7 +53,7 @@ Example (compute if missing):
             --runs 'regex:.*physical_interactions.*meta.*' \
             --download_dir=./local-crfm-helm-public
 
-    python -m magnet.backends.helm.materialize_helm_run \
+    python -m magnet.backends.helm.cli.materialize_helm_run \
         --run_entry "mmlu:subject=philosophy,model=openai/gpt2" \
         --suite my-suite \
         --max_eval_instances 10 \
@@ -61,7 +61,7 @@ Example (compute if missing):
         --precomputed_roots ./local-crfm-helm-public
 
     # This one should find the existing results in your precomputed directory
-    python -m magnet.backends.helm.materialize_helm_run \
+    python -m magnet.backends.helm.cli.materialize_helm_run \
         --run_entry "ewok:domain=physical_interactions,model=meta/llama-3-8b-chat" \
         --suite my-suite \
         --max_eval_instances 10 \
@@ -260,7 +260,7 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         Example:
             >>> # This doctest is illustrative only; it requires helm-run installed.
             >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)
-            >>> from magnet.backends.helm.materialize_helm_run import main
+            >>> from magnet.backends.helm.cli.materialize_helm_run import main
             >>> dpath = ub.Path.appdir('magnet/tests/materialize').delete().ensuredir()
             >>> main([
             ...   '--run-entry', 'mmlu:subject=philosophy,model=openai/gpt2',
@@ -455,7 +455,7 @@ def parse_run_entry_description(desc: str) -> tuple[str, dict[str, object]]:
         desc (str): has the format <class_name>:<key>=<value>,<key>=<value>
 
     Example:
-        >>> from magnet.backends.helm.materialize_helm_run import *  # NOQA
+        >>> from magnet.backends.helm.cli.materialize_helm_run import *  # NOQA
         >>> parse_run_entry_description("mmlu:subject=philosophy,model=openai/gpt2")
         ('mmlu', {'subject': 'philosophy', 'model': 'openai/gpt2'})
 
@@ -828,7 +828,7 @@ def find_best_precomputed_run(
     Example:
         >>> # xdoctest: +SKIP
         >>> from pathlib import Path
-        >>> from magnet.backends.helm.materialize_helm_run import (
+        >>> from magnet.backends.helm.cli.materialize_helm_run import (
         ...     find_best_precomputed_run, infer_num_instances
         ... )
         >>> root = Path('/data/crfm-helm-public')

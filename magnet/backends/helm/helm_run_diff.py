@@ -98,8 +98,8 @@ from __future__ import annotations
 import ubelt as ub
 
 from dataclasses import dataclass
-from magnet.backends.helm import helm_hashers
-from magnet.backends.helm.helm_metrics import classify_metric
+from magnet.backends.helm.util import helm_hashers
+from magnet.backends.helm.util import helm_metrics
 from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
 from typing import Any, Callable, Iterable
 
@@ -877,7 +877,7 @@ class HelmRunDiff(ub.NiceRepr):
             )
             if metric is None and sa is not None and not isinstance(sa, dict):
                 metric = getattr(sa, 'metric', None)
-            metric_class, _ = classify_metric(metric)
+            metric_class, _ = helm_metrics.classify_metric(metric)
             gkey = (metric_class, metric)
 
             # Determine perturbed vs unperturbed (best-effort)

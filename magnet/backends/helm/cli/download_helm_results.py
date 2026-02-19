@@ -8,7 +8,7 @@ Download HELM benchmark run artifacts from the public GCS bucket.
 
 Example:
     >>> # xdoctest: +REQUIRES(module:gcsfs)
-    >>> from magnet.backends.helm import download_helm_results
+    >>> from magnet.backends.helm.cli import download_helm_results
     >>> import ubelt as ub
     >>> #
     >>> # Test listing benchamrks
@@ -28,7 +28,7 @@ Example:
 
 Example:
     >>> # xdoctest: +REQUIRES(module:gcsfs)
-    >>> from magnet.backends.helm import download_helm_results
+    >>> from magnet.backends.helm.cli import download_helm_results
     >>> import ubelt as ub
     >>> # Start fresh
     >>> dpath = ub.Path.appdir('magnet/tests/download_helm_list')
@@ -452,7 +452,7 @@ class FsspecStorageBackend:
 
         Example:
             >>> # xdoctest: +REQUIRES(module:gcsfs)
-            >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+            >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
             >>> backend_fs = FsspecStorageBackend('gs://crfm-helm-public')
             >>> dirs_fs = backend_fs.list_dirs('gs://crfm-helm-public/image2struct/benchmark_output/runs')
             >>> assert 'runs' not in dirs_fs, 'should not return the base dir'
@@ -545,7 +545,7 @@ class HelmRemoteStore:
 
     Example:
         >>> # xdoctest: +REQUIRES(module:gcsfs)
-        >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+        >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
         >>> self = HelmRemoteStore()
         >>> benchmarks = self.list_benchmarks()
         >>> benchmark = benchmarks[0]
@@ -560,7 +560,7 @@ class HelmRemoteStore:
         >>> # xdoctest: +REQUIRES(--slow)
         >>> # xdoctest: +REQUIRES(module:gcsfs)
         >>> # Test backends are the same
-        >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+        >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
         >>> import pytest
         >>> if not GsutilStorageBackend.is_available():
         >>>     pytest.skip('cli tool not available, cannot test')
@@ -625,7 +625,7 @@ class HelmRemoteStore:
         """
         Example:
             >>> # xdoctest: +REQUIRES(module:gcsfs)
-            >>> from magnet.backends.helm.download_helm_results import *  # NOQA
+            >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
             >>> store = HelmRemoteStore()
             >>> versions = store.list_versions('image2struct')
             >>> assert 'runs' not in versions

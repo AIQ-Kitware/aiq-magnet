@@ -1,5 +1,7 @@
 """magnet.backends.helm.helm_hashers
 
+NOTE: this might be over-engineering. Treat hashes as internal only for now.
+
 Centralized hashing helpers for HELM run analysis / comparison.
 
 These functions provide:
@@ -20,23 +22,17 @@ primary canonicalization requirement for HELM's nested stat-name dicts.
 We intentionally avoid adding extra canonicalization logic here (e.g. list
 sorting) because list ordering can be semantic. If you later decide to add
 "deep canonicalization" rules, add them here so all callers stay consistent.
+
+Example:
+     >>> from magnet.backends.helm.util import helm_hashers
+     >>> name_obj = {'name': 'num_bytes', 'split': 'valid', 'perturbation': {'name': 'dialect', 'prob': 1.0}}
+     >>> key = helm_hashers.stat_key(name_obj)
+     >>> assert key.startswith('num_bytes,split=valid,pert=dialect')
+     >>> pid = helm_hashers.perturbation_id(name_obj['perturbation'])
+     >>> assert pid.startswith('dialect')
 """
-
-# Doctest
-# -------
-# These are intentionally small and only cover stability + readability.
-#
-#     >>> from magnet.backends.helm.import helm_hashers
-#     >>> name_obj = {'name': 'num_bytes', 'split': 'valid', 'perturbation': {'name': 'dialect', 'prob': 1.0}}
-#     >>> key = helm_hashers.stat_key(name_obj)
-#     >>> assert key.startswith('num_bytes,split=valid,pert=dialect::')
-#     >>> pid = helm_hashers.perturbation_id(name_obj['perturbation'])
-#     >>> assert pid.startswith('dialect::')
-
 from __future__ import annotations
-
 from typing import Any
-
 import ubelt as ub
 
 
@@ -187,7 +183,7 @@ def stat_key(name_obj: Any, *, count: Any = None, short_hash: int = 16) -> str:
     the end contains a short stable hash of the full object.
     """
     if not isinstance(name_obj, dict):
-        prefix = f"invalid_name"
+        prefix = "invalid_name"
         if count is not None:
             prefix += f",count={count}"
         return prefixed_hash_id((name_obj, count), prefix=prefix, short_hash=short_hash)
@@ -223,4 +219,3 @@ def stat_key(name_obj: Any, *, count: Any = None, short_hash: int = 16) -> str:
     # with same name but different args still disambiguate.
     payload = {'name': name_obj, 'count': count} if count is not None else {'name': name_obj}
     return prefixed_hash_id(payload, prefix=prefix, short_hash=short_hash)
-

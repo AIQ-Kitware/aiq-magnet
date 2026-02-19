@@ -32,8 +32,8 @@ from typing import Any, Mapping
 
 import ubelt as ub
 
-from magnet.backends.helm import helm_hashers
-from magnet.backends.helm.helm_metrics import classify_metric, metric_family
+from magnet.backends.helm.util import helm_hashers
+from magnet.backends.helm.util import helm_metrics
 
 
 class HelmRunAnalysis(ub.NiceRepr):
@@ -152,8 +152,8 @@ class HelmRunAnalysis(ub.NiceRepr):
                 )
             is_pert = pert_id is not None
 
-            mclass, mpref = classify_metric(metric)
-            fam = metric_family(metric)
+            mclass, mpref = helm_metrics.classify_metric(metric)
+            fam = helm_metrics.metric_family(metric)
 
             key = helm_hashers.stat_key(name_obj, short_hash=short_hash)
             idx[key] = StatMeta(
@@ -211,8 +211,8 @@ class HelmRunAnalysis(ub.NiceRepr):
             )
             hist['perturbed'][is_pert] += 1
             hist['splits'][split] += 1
-            hist['family'][metric_family(metric)] += 1
-            hist['metric_class'][classify_metric(metric)[0]] += 1
+            hist['family'][helm_metrics.metric_family(metric)] += 1
+            hist['metric_class'][helm_metrics.classify_metric(metric)[0]] += 1
 
         self._cache[cache_key] = hist
         return hist
@@ -789,8 +789,8 @@ def summary_dict(
                 else None
             )
 
-            mclass, _ = classify_metric(metric)
-            fam = metric_family(metric)
+            mclass, _ = helm_metrics.classify_metric(metric)
+            fam = helm_metrics.metric_family(metric)
 
             support = 'supported' if c > 0 else 'unsupported'
             fam_counts.setdefault(mclass, {}).setdefault(support, Counter())[

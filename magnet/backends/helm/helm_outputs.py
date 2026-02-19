@@ -1,9 +1,6 @@
 """
 Object oriented classes to represent, load, and explore the outputs of helm
 benchmarks.
-
-TODO:
-    - [ ] move this file into the helm backend directory.
 """
 from __future__ import annotations
 import os
@@ -34,12 +31,6 @@ ScenarioStateStruct = util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState, dict
 RunSpecStruct = util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
 StatStruct = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
 PerInstanceStatsStruct = util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
-
-# monkey patch until kwutil 0.3.7
-MONKEYPATCH_KWUTIL = False  # remove if stable
-if MONKEYPATCH_KWUTIL:
-    from kwutil import util_dotdict
-    kwutil.DotDict = util_dotdict.DotDict
 
 
 class HelmOutputs(ub.NiceRepr):
