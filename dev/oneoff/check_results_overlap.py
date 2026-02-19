@@ -7,9 +7,9 @@ import ubelt as ub
 import kwutil
 from magnet.backends.helm.helm_outputs import HelmRun
 from magnet.backends.helm.helm_outputs import HelmOutputs
-from magnet.backends.helm.rundiff import sankey
 from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
 from magnet.backends.helm.helm_run_diff import HelmRunDiff
+from magnet.utils import sankey
 
 """
 !python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_details.yaml
