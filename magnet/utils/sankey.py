@@ -120,11 +120,17 @@ class Plan:
                 if isinstance(st, Root):
                     lines.append(f'{indent}ROOT {st.label!r}')
                 elif isinstance(st, Group):
-                    lines.append(f'{indent}GROUP {st.name!r} by={_by_repr(st.by)}')
+                    lines.append(
+                        f'{indent}GROUP {st.name!r} by={_by_repr(st.by)}'
+                    )
                 elif isinstance(st, Bucket):
-                    lines.append(f'{indent}BUCKET {st.name!r} by={_by_repr(st.by)}')
+                    lines.append(
+                        f'{indent}BUCKET {st.name!r} by={_by_repr(st.by)}'
+                    )
                 elif isinstance(st, Split):
-                    lines.append(f'{indent}SPLIT {st.name!r} by={_by_repr(st.by)}')
+                    lines.append(
+                        f'{indent}SPLIT {st.name!r} by={_by_repr(st.by)}'
+                    )
                     for k, sub in st.branches.items():
                         lines.append(f'{indent}  BRANCH {k!r}:')
                         rec(sub, indent + '    ')
@@ -202,7 +208,7 @@ class Plan:
         Build a DiGraph where edges carry aggregated flow in edge_attr.
 
         Example:
-            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
+            >>> from magnet.utils.sankey import *  # NOQA
             >>> # Build a sankey graph and check aggregated edge weights
             >>> plan = Plan(
             ...     Root("ROOT_NODE"),
@@ -282,7 +288,9 @@ class SankeyDiGraph(nx.DiGraph):
         ]
         for row in rows:
             row['reason'] = (
-                r.choice(['oom', 'timeout']) if row['status'] == 'fail' else None
+                r.choice(['oom', 'timeout'])
+                if row['status'] == 'fail'
+                else None
             )
 
         plan = Plan(
@@ -317,7 +325,7 @@ class SankeyDiGraph(nx.DiGraph):
         Example:
             >>> # xdoctest: +REQUIRES(module:plotly)
             >>> import plotly
-            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
+            >>> from magnet.utils.sankey import *  # NOQA
             >>> self = SankeyDiGraph.demo()
             >>> print(self.summarize())
             Nodes: 10  Edges: 17
@@ -344,7 +352,9 @@ class SankeyDiGraph(nx.DiGraph):
             return sum(self[n][v].get(edge_attr, 0) for v in self.successors(n))
 
         def inflow(n):
-            return sum(self[u][n].get(edge_attr, 0) for u in self.predecessors(n))
+            return sum(
+                self[u][n].get(edge_attr, 0) for u in self.predecessors(n)
+            )
 
         nodes_sorted = sorted(
             self.nodes, key=lambda n: (outflow(n), inflow(n)), reverse=True
@@ -370,13 +380,15 @@ class SankeyDiGraph(nx.DiGraph):
 
     # ---- core conversions ----
 
-    def _to_sankey_data(self) -> tuple[List[Any], List[int], List[int], List[float]]:
+    def _to_sankey_data(
+        self,
+    ) -> tuple[List[Any], List[int], List[int], List[float]]:
         """
         Convert into (nodes, source, target, value) for Plotly Sankey.
 
         Example:
             >>> # Convert nx graph to plotly sankey arrays
-            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
+            >>> from magnet.utils.sankey import *  # NOQA
             >>> import networkx as nx
             >>> G = SankeyDiGraph()
             >>> G.add_edge("A", "B", value=2)
@@ -413,7 +425,7 @@ class SankeyDiGraph(nx.DiGraph):
         Example:
             >>> # xdoctest: +REQUIRES(module:plotly)
             >>> import plotly
-            >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
+            >>> from magnet.utils.sankey import *  # NOQA
             >>> G = SankeyDiGraph.demo(n=20)
             >>> fig = G.to_plotly(title='Demo')
             >>> assert fig.layout.title.text == 'Demo'
