@@ -12,7 +12,7 @@ Ignore:
 
     ls /data/crfm-helm-public/thaiexam/benchmark_output/runs/v1.1.0/thai_exam:exam=tpat1,method=multiple_choice_joint,model=aisingapore_llama3-8b-cpt-sea-lionv2.1-instruct
 
-    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_detail_specs.yaml
+    python ~/code/aiq-magnet/dev/poc/inspect_historic_helm_runs.py /data/crfm-helm-public --out_fpath run_specs.yaml --out_detail_fpath run_details.yaml
 
     cat run_specs.yaml | grep -v together > run_specs2.yaml
 
@@ -53,7 +53,7 @@ import kwutil
 import scriptconfig as scfg
 from loguru import logger
 
-from magnet.helm_outputs import HelmOutputs, HelmRun
+from magnet.backends.helm.helm_outputs import HelmOutputs, HelmRun
 
 # Reuse your existing discovery + inference logic
 from magnet.backends.helm.materialize_helm_run import (
