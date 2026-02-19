@@ -91,6 +91,8 @@ class InstancePredictor(Predictor):
 
         return human_table
 
+        return human_table
+
     def predict(self,
                 train_split,
                 sequestered_test_split) -> list[InstancePrediction]:
