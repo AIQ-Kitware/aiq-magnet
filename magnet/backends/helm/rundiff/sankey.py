@@ -315,6 +315,7 @@ class SankeyDiGraph(nx.DiGraph):
         Like Plan.graph_to_text, but bound to the graph.
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:plotly)
             >>> import plotly
             >>> from magnet.backends.helm.rundiff.sankey import *  # NOQA
             >>> self = SankeyDiGraph.demo()
@@ -369,7 +370,7 @@ class SankeyDiGraph(nx.DiGraph):
 
     # ---- core conversions ----
 
-    def _to_sankey_data(self) -> Tuple[List[Any], List[int], List[int], List[float]]:
+    def _to_sankey_data(self) -> tuple[List[Any], List[int], List[int], List[float]]:
         """
         Convert into (nodes, source, target, value) for Plotly Sankey.
 

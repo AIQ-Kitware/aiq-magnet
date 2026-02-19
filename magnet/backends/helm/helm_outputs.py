@@ -49,9 +49,10 @@ class HelmOutputs(ub.NiceRepr):
     Example:
         >>> from magnet.backends.helm.helm_outputs import HelmOutputs
         >>> self = HelmOutputs.demo()
-        >>> suite_names = [s.name for s in self.suites()]
+        >>> suite_names = [s.path.name for s in self.suites()]
         >>> run_names = self.list_run_specs(suite='*')
         >>> summary = self.summarize()
+        ...
         >>> print(f'suite_names = {ub.urepr(suite_names, nl=1)}')
         >>> print(f'run_names = {ub.urepr(run_names, nl=1)}')
         >>> print(f'summary = {ub.urepr(summary, nl=1)}')
@@ -222,7 +223,7 @@ class HelmOutputs(ub.NiceRepr):
                 run_spec = run.msgspec.run_spec()
                 adapter_spec = run.msgspec.scenario_state().adapter_spec
                 rows.append({
-                    'name': run.name,
+                    'name': run.path.name,
                     'n_stats': n_stats,
                     'n_metrics': len(run_spec.metric_specs),
                     'n_perinstance': n_perinstance,
