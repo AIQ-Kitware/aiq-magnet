@@ -40,7 +40,7 @@ import kwdagger
 
 class MaterializeHelmRunNode(kwdagger.ProcessNode):
     """
-    Wraps: python -m magnet.backends.helm.materialize_helm_run
+    Wraps: python -m magnet.backends.helm.cli.materialize_helm_run
 
     This script writes:
       <out_dpath>/benchmark_output/runs/<suite>/<run_name>/...
@@ -49,10 +49,11 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
 
     We tell kwdagger that DONE is the primary output so skip_existing works.
     """
+
     name = 'helm'
 
     # If magnet is importable, this is the cleanest way to invoke the module.
-    executable = "python -m magnet.backends.helm.materialize_helm_run"
+    executable = 'python -m magnet.backends.helm.cli.materialize_helm_run'
 
     # We generally don't want kwdagger to try to "materialize" huge external
     # directories (like /data/crfm-helm-public) into each job dir, so we do NOT
@@ -67,36 +68,34 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
     # - done_fname is treated by this pipeline as a "path" for kwdagger's
     #   completion checking. The script itself interprets it as a filename.
     out_paths = {
-        "out_dpath": ".",
-        "done_fname": "DONE",
-        "manifest_fname": "adapter_manifest.json",
+        'out_dpath': '.',
+        'done_fname': 'DONE',
+        'manifest_fname': 'adapter_manifest.json',
     }
 
     # kwdagger considers a node "complete" when the primary output exists.
-    primary_out_key = "done_fname"
+    primary_out_key = 'done_fname'
 
     # Parameters that *change the logical identity of the work*.
     # These participate in hashing, so a different run-entry => a new job folder.
     algo_params = {
         # NOTE: set these via kwdagger schedule matrix / params
-        "run_entry": None,
-        "suite": "my-suite",
-        "max_eval_instances": None,
-        "require_per_instance_stats": True,
-
+        'run_entry': None,
+        'suite': 'my-suite',
+        'max_eval_instances': None,
+        'require_per_instance_stats': True,
         # Behavior toggles that change how/what we materialize
-        "mode": "compute_if_missing",   # reuse_only | compute_if_missing | force_recompute
-        "materialize": "symlink",       # symlink | copy
+        'mode': 'compute_if_missing',  # reuse_only | compute_if_missing | force_recompute
+        'materialize': 'symlink',  # symlink | copy
     }
 
     # Performance / environment parameters.
     # These are recorded, but ideally should not change the “meaning” of outputs.
     perf_params = {
         # Your shared precomputed root:
-        "precomputed_root": "/data/crfm-helm-public",
-
+        'precomputed_root': '/data/crfm-helm-public',
         # helm-run perf knobs:
-        "num_threads": 1,
+        'num_threads': 1,
     }
 
     # Optional: You can define load_result if you want kwdagger aggregate to read
@@ -115,6 +114,6 @@ def helm_single_run_pipeline():
         kwdagger schedule --params="pipeline: 'magnet.pipelines.helm_materialize_pipeline.helm_single_run_pipeline()' ..."
     """
     nodes = {
-        "materialize_helm_run": MaterializeHelmRunNode(),
+        'materialize_helm_run': MaterializeHelmRunNode(),
     }
     return kwdagger.Pipeline(nodes)
