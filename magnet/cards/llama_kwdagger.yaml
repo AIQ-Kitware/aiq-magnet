@@ -9,7 +9,7 @@ claim:
     assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
 
 kwdagger: 
-  pipeline: 'llama_consistency.pipelines.llama_pipeline()'
+  pipeline: 'magnet.llama_consistency.pipelines.llama_pipeline()'
   matrix:
       llama_predict.base_model:
           - meta/llama-2-13b

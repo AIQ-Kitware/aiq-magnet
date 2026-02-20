@@ -5,8 +5,8 @@ Two node pipeline for llama-consistency example card
 import kwdagger
 import ubelt as ub
 
-from llama_consistency.cli.llama_predict import ExampleLlamaEndpointCLI
-from llama_consistency.cli.claim import ConsistencyClaimCLI
+from .cli.llama_predict import ExampleLlamaEndpointCLI
+from .cli.claim import ConsistencyClaimCLI
 
 try:
     MODULE_DPATH = ub.Path(__file__).parent
