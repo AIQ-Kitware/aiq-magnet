@@ -3,7 +3,6 @@ from graphlib import TopologicalSorter
 from itertools import product
 from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
 import yaml
-import argparse
 import sys
 
 import scriptconfig as scfg
@@ -28,6 +27,9 @@ class EvaluationConfig(scfg.DataConfig):
 
     path = scfg.Value(
         None, required=True, position=1, help='Path to evaluation card YAML'
+    )
+    set = scfg.Value(
+        [], nargs='*', help='Override symbol values (e.g. --set dataset=legalbench num_replicates=5)'
     )
 
 
@@ -354,14 +356,14 @@ class Symbols:
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="Resolve an Evaluation Card")
-
-    parser.add_argument('path',
-                        type=str,
-                        help="Path to evaluation card YAML file")
-
-    return parser
+def _parse_overrides(override_strs):
+    overrides = {}
+    for s in override_strs:
+        if '=' not in s:
+            raise ValueError(f"Invalid override '{s}', expected KEY=VALUE")
+        key, value = s.split('=', 1)
+        overrides[key] = value
+    return overrides
 
 
 def main(argv=None, **kwargs):
@@ -370,6 +372,16 @@ def main(argv=None, **kwargs):
     )
 
     card = EvaluationCard(args.path)
+
+    for key, value in _parse_overrides(args.set).items():
+        if key not in card.symbols:
+            raise ValueError(f"Unknown symbol '{key}' -- available: {list(card.symbols.keys())}")
+        sym_spec = card.symbols[key]
+        # Cast to the symbol's declared type
+        type_map = {'int': int, 'float': float, 'str': str, 'bool': lambda v: v.lower() in ('true', '1', 'yes')}
+        caster = type_map.get(sym_spec.get('type', 'str'), str)
+        sym_spec['value'] = caster(value)
+
     card.evaluate()
     card.summarize()
 
