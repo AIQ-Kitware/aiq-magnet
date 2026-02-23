@@ -604,7 +604,7 @@ class SankeyDiGraph(nx.DiGraph):
             target.append(idx[v])
             value.append(float(data.get(self.edge_attr, 0)))
 
-        node_labels = [self.node[n].get('labeel', n) for n in nodes]
+        node_labels = [self.nodes[n].get('label', n) for n in nodes]
 
         return node_labels, source, target, value
 
