@@ -511,23 +511,28 @@ splits['not attempted'].set_label('Failed')
 
 
 from magnet.utils import sankey_builder
-sankey_builder.Root(f'Attempted Runs')
+root = sankey_builder.Root()
+rungroup = root.group(by='attempt_status')
+compared_node = rungroup['compared']
+unrun_node = rungroup['not attempted']
+unrun_node.label = 'Failed'
+bench_groups = compared_node.group(by='benchmark_name')
+bench_groups.group(by='core_iou_bucket')
 
+# plan = sankey.Plan(
+#     sankey.Root(f'Attempted Runs n={len(df)}'),
+#     sankey.Split('Runs', 'attempt_status', branches={
+#         'compared': sankey.Plan(
+#             sankey.Group('benchmark', by='benchmark_name'),
+#             sankey.Bucket('core_iou', by='core_iou_bucket'),
+#         ),
+#         'not attempted': sankey.Node('Failed')  # I want any that meet this condition to be sent to a node called failed.
+#     })
+# )
 
-plan = sankey.Plan(
-    sankey.Root(f'Attempted Runs n={len(df)}'),
-    sankey.Split('Runs', 'attempt_status', branches={
-        'compared': sankey.Plan(
-            sankey.Group('benchmark', by='benchmark_name'),
-            sankey.Bucket('core_iou', by='core_iou_bucket'),
-        ),
-        'not attempted': sankey.Node('Failed')  # I want any that meet this condition to be sent to a node called failed.
-    })
-)
+print(root.to_text())
 
-print(plan.to_text())
-
-G = plan.build_sankey(df.to_dict('records'), label_fmt='{value}')
+G = root.build_sankey(df.to_dict('records'), label_fmt='{value}')
 print(G.summarize(max_edges=150))
 
 fig = G.to_plotly(title='HELM Reproduction Funnel')
