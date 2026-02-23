@@ -460,11 +460,6 @@ def agreement_label(row: dict[str, object]) -> str:
     return row.get('agreement_bucket_base_task', 'unknown')
 
 
-df['core_iou'] = (df['comparable_core'] - df['mismatched_core']) / df[
-    'comparable_core'
-]
-
-
 CORE_IOU_BINS = [
     1.0,
     # 0.90,
@@ -472,6 +467,9 @@ CORE_IOU_BINS = [
     0.50,
     0.25,
     0.00
+]
+df['core_iou'] = (df['comparable_core'] - df['mismatched_core']) / df[
+    'comparable_core'
 ]
 core_iou_bucket = make_bucket_fn(CORE_IOU_BINS, endpoints_as_strict_buckets=True)
 df['core_iou_bucket'] = df['core_iou'].map(core_iou_bucket)
@@ -512,12 +510,16 @@ splits['not attempted'].set_label('Failed')
 
 from magnet.utils import sankey_builder
 root = sankey_builder.Root()
-rungroup = root.group(by='attempt_status')
+
+bench_groups = root.group(by='benchmark_name')
+
+rungroup = bench_groups.group(by='attempt_status')
 compared_node = rungroup['compared']
+compared_node.label = 'Run'
 unrun_node = rungroup['not attempted']
 unrun_node.label = 'Failed'
-bench_groups = compared_node.group(by='benchmark_name')
-bench_groups.group(by='core_iou_bucket')
+
+compared_node.group(by='core_iou_bucket')
 
 # plan = sankey.Plan(
 #     sankey.Root(f'Attempted Runs n={len(df)}'),
@@ -535,13 +537,26 @@ print(root.to_text())
 G = root.build_sankey(df.to_dict('records'), label_fmt='{value}')
 print(G.summarize(max_edges=150))
 
+G.nodes['CONST']['label'] = f'Attempted Runs n={len(df)}'
 fig = G.to_plotly(title='HELM Reproduction Funnel')
+
+
+import plotly.graph_objects as go
+
+node_labels, source, target, value = G._to_sankey_data()
+sankey = go.Sankey(
+    node=dict(label=node_labels, pad=15, thickness=18),
+    link=dict(source=source, target=target, value=value),
+)
+fig = go.Figure(sankey)
+fig.update_layout(title_text=title, font_size=14)
+
+
 fpath = 'helm_repro_sankey.jpg'
 fig.write_image(fpath, scale=4.0)
 import kwplot
 kwplot.cropwhite_ondisk(fpath)
 print(f'Wrote helm_repro_sankey: {fpath}')
-
 modified_wormhole_send(fpath)
 
 # --- Per-benchmark drilldown sankeys (deeper, but still run-level) ---

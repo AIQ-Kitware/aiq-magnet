@@ -22,9 +22,22 @@ from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Sequ
 
 import itertools
 import networkx as nx
+import typing
 
 Row = Dict[str, Any]
 By = Union[str, Callable[[Row], Any]]
+
+if typing.TYPE_CHECKING:
+    from typing import Protocol
+
+    Row = Dict[str, Any]
+    Grouper = Union[str, Callable[[Row], Any]]
+
+    class PlotlyFigureLike(Protocol):
+        def write_image(self, *args, **kwargs): ...
+        def update_layout(
+            self, dict1=None, overwrite=False, **kwargs
+        ) -> 'PlotlyFigureLike': ...
 
 
 def _eval(by: By, row: Row) -> Any:
@@ -591,7 +604,9 @@ class SankeyDiGraph(nx.DiGraph):
             target.append(idx[v])
             value.append(float(data.get(self.edge_attr, 0)))
 
-        return nodes, source, target, value
+        node_labels = [self.node[n].get('labeel', n) for n in nodes]
+
+        return node_labels, source, target, value
 
     def to_plotly(self, *, title: str = 'Sankey') -> PlotlyFigureLike:
         """
@@ -620,12 +635,11 @@ class SankeyDiGraph(nx.DiGraph):
         import plotly.graph_objects as go
 
         nodes, source, target, value = self._to_sankey_data()
-        fig = go.Figure(
-            go.Sankey(
-                node=dict(label=nodes, pad=15, thickness=18),
-                link=dict(source=source, target=target, value=value),
-            )
+        sankey = go.Sankey(
+            node=dict(label=nodes, pad=15, thickness=18),
+            link=dict(source=source, target=target, value=value),
         )
+        fig = go.Figure(sankey)
         fig.update_layout(title_text=title, font_size=14)
         return fig
 
