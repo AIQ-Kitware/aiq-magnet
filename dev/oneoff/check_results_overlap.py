@@ -19,6 +19,14 @@ from magnet.utils import sankey
 """
 helm_rows = kwutil.Yaml.load('run_details.yaml')
 
+
+for dupname, dupx in ub.find_duplicates([r['run_spec_name'] for r in helm_rows]).items():
+    for idx in dupx:
+        helm_rows[idx]
+    ...
+
+
+
 if 0:
     # Debug HelmRunAnalysis
     run_dir = '/data/crfm-helm-public/classic/benchmark_output/runs/v0.3.0/wikifact:k=5,subject=symptoms_and_signs,model=lmsys_vicuna-7b-v1.3'
@@ -408,30 +416,39 @@ for helm_row in ub.ProgIter(helm_rows, desc='compare runs'):
 
 DEVELOPER_DETAILED_DIFF_ANALYSIS = True
 if DEVELOPER_DETAILED_DIFF_ANALYSIS:
-    for rd in ub.ProgIter(rundiffs, desc='drill down', verbose=3):
-        # rd.summary(level=0)
-        # rd.summary()
-        a = rd.a
-        b = rd.b
-        rd = HelmRunDiff(run_a=a, run_b=b, a_name='HELM', b_name='KWDG')
+    import json
+    with open('rundiff.jsonl', mode='a', encoding='utf8') as file:
+        for rd in ub.ProgIter(rundiffs, desc='drill down', verbose=3):
+            # rd.summary(level=0)
+            # rd.summary()
+            a = rd.a
+            b = rd.b
+            rd = HelmRunDiff(run_a=a, run_b=b, a_name='HELM', b_name='KWDG')
 
-        summary = rd.summary_dict()
-        core_agreement = summary['value_agreement']['by_class']['core']
+            summary = rd.summary_dict(level=100)
+            # json.dumps(summary, ensure_ascii=False)
 
-        if 0:
-            idx = a.stat_index(drop_zero_count=True, require_mean=True)
-            core_a = pd.DataFrame(
-                {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
-            )
-            idx = b.stat_index(drop_zero_count=True, require_mean=True)
-            core_b = pd.DataFrame(
-                {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
-            )
-            spec_a = rd.a.run_spec()
-            spec_b = rd.b.run_spec()
-            print(f'spec_a = {ub.urepr(spec_a, nl=3)}')
-            print(f'spec_b = {ub.urepr(spec_b, nl=3)}')
-            rd.summarize_instances()
+            # list(kwutil.Json.find_unserializable(summary))
+            # summary = kwutil.Json.ensure_serializable(summary)
+            file.write(json.dumps(summary, ensure_ascii=False) + "\n")
+            file.flush()  # optional; good if you want progress written even if interrupted
+
+            core_agreement = summary['value_agreement']['by_class']['core']
+
+            if 0:
+                idx = a.stat_index(drop_zero_count=True, require_mean=True)
+                core_a = pd.DataFrame(
+                    {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
+                )
+                idx = b.stat_index(drop_zero_count=True, require_mean=True)
+                core_b = pd.DataFrame(
+                    {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
+                )
+                spec_a = rd.a.run_spec()
+                spec_b = rd.b.run_spec()
+                print(f'spec_a = {ub.urepr(spec_a, nl=3)}')
+                print(f'spec_b = {ub.urepr(spec_b, nl=3)}')
+                rd.summarize_instances()
 
 df = pd.DataFrame(sankey_rows)
 df_comp = df[df['attempt_status'] == 'compared']

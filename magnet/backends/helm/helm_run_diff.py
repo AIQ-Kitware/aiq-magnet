@@ -295,6 +295,31 @@ def _fmt(x: Any) -> str:
     return str(x)
 
 
+def _key_to_serializable(key: Any) -> Any:
+    """Convert various key types (dataclasses, tuples) into JSON-friendly types.
+
+    - If object has ``as_tuple()``, use that and return a list.
+    - If it's a tuple, return a list (JSON will accept either but list is explicit).
+    - Otherwise fallback to string repr.
+    """
+    # dataclass-like keys (InstanceStatKey, InstanceVariantKey) implement as_tuple
+    try:
+        if hasattr(key, 'as_tuple') and callable(getattr(key, 'as_tuple')):
+            return list(key.as_tuple())
+    except Exception:
+        pass
+    if isinstance(key, tuple):
+        return list(key)
+    # lists are already JSON-safe
+    if isinstance(key, list):
+        return key
+    # fallback: use a stable repr
+    try:
+        return ub.urepr(key, nl=0, compact=1)
+    except Exception:
+        return str(key)
+
+
 class HelmRunDiff(ub.NiceRepr):
     """Compare two HELM runs.
 
@@ -761,9 +786,9 @@ class HelmRunDiff(ub.NiceRepr):
             - agree_ratio: 1 - mismatched / comparable
             - agree_ratio_unperturbed / agree_ratio_perturbed
         * top_mismatches_by_group:
-            Mapping from ``(metric_class, metric_name)`` to a list of mismatch
-            items (sorted by |Δ|), each containing:
-                key, a, b, abs_delta, signed_delta
+            List of objects; each element has fields ``metric_class`` and
+            ``metric`` and an ``items`` list of mismatches (sorted by |Δ|).
+            Each mismatch item contains: key, a, b, abs_delta, signed_delta.
 
         Notes
         -----
@@ -834,6 +859,8 @@ class HelmRunDiff(ub.NiceRepr):
             'perturbed': {'comparable': 0, 'mismatched': 0},
         }
 
+        # use a temporary map for bookkeeping, but the final result will be a
+        # list of objects so the summary dict is JSON-serializable.
         grouped: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
 
         for k in set_a & set_b:
@@ -909,7 +936,7 @@ class HelmRunDiff(ub.NiceRepr):
                 mismatched += 1
                 var_stats[variant]['mismatched'] += 1
                 item = {
-                    'key': k,
+                    'key': _key_to_serializable(k),
                     'a': ma,
                     'b': mb,
                     'abs_delta': abs(ma - mb),
@@ -936,10 +963,20 @@ class HelmRunDiff(ub.NiceRepr):
             ),
         }
 
+        # convert to a JSON-friendly structure: list of group objects
+        group_list: list[dict[str, Any]] = []
+        for (mclass, metric), items in grouped.items():
+            group_list.append(
+                {
+                    'metric_class': mclass,
+                    'metric': metric,
+                    'items': items,
+                }
+            )
         out = {
             'coverage': cov.__dict__,
             'means': means,
-            'top_mismatches_by_group': grouped,
+            'top_mismatches_by_group': group_list,
         }
 
         self._cache[cache_key] = out
@@ -984,20 +1021,18 @@ class HelmRunDiff(ub.NiceRepr):
             f'pert={means["agree_ratio_perturbed"]:.3f})'
         )
 
-        grouped: dict[tuple[str, str | None], list[dict[str, Any]]] = (
-            info.get('top_mismatches_by_group', {}) or {}
-        )
+        grouped: list[dict[str, Any]] = info.get('top_mismatches_by_group', []) or []
+        # grouped is now a list of group objects; convert to list for sorting
 
         # Choose groups to show: core first, bookkeeping second
-        def _group_rank(
-            item: tuple[tuple[str, str | None], list[dict[str, Any]]],
-        ) -> tuple[int, float]:
-            (cls, _metric), items = item
+        def _group_rank(group: dict[str, Any]) -> tuple[int, float]:
+            cls = group.get('metric_class')
+            items = group.get('items', [])
             cls_rank = {'core': 0, 'bookkeeping': 1, 'untracked': 2}.get(cls, 9)
             max_abs = items[0]['abs_delta'] if items else 0.0
             return (cls_rank, -max_abs)
 
-        groups_sorted = sorted(grouped.items(), key=_group_rank)
+        groups_sorted = sorted(grouped, key=_group_rank)
 
         # Decide which metric classes are eligible at this level
         allowed_classes = {'core'}
@@ -1007,14 +1042,14 @@ class HelmRunDiff(ub.NiceRepr):
             allowed_classes |= {'bookkeeping'}
 
         # Filter groups by allowed class
-        filtered = [g for g in groups_sorted if g[0][0] in allowed_classes]
+        filtered = [g for g in groups_sorted if g.get('metric_class') in allowed_classes]
 
         # If we filtered everything out (e.g. no core diffs), fall back to showing *something*
         if not filtered and groups_sorted:
             # Prefer untracked, then bookkeeping, then whatever exists
             pref_order = ['untracked', 'bookkeeping', 'core']
             for cls in pref_order:
-                filtered = [g for g in groups_sorted if g[0][0] == cls]
+                filtered = [g for g in groups_sorted if g.get('metric_class') == cls]
                 if filtered:
                     break
             if not filtered:
@@ -1028,12 +1063,12 @@ class HelmRunDiff(ub.NiceRepr):
             max_groups = 6
         if max_groups is not None:
             # Ensure we show at least some core and some bookkeeping groups when possible.
-            core = [g for g in groups_sorted if g[0][0] == 'core']
-            book = [g for g in groups_sorted if g[0][0] == 'bookkeeping']
+            core = [g for g in groups_sorted if g.get('metric_class') == 'core']
+            book = [g for g in groups_sorted if g.get('metric_class') == 'bookkeeping']
             other = [
                 g
                 for g in groups_sorted
-                if g[0][0] not in {'core', 'bookkeeping'}
+                if g.get('metric_class') not in {'core', 'bookkeeping'}
             ]
             keep = []
             keep.extend(core[: max_groups // 2])
@@ -1062,8 +1097,13 @@ class HelmRunDiff(ub.NiceRepr):
             )
             A_map = getattr(A_join, 'row_by_key', None)
             B_map = getattr(B_join, 'row_by_key', None)
+            A_getrow = getattr(A_join, 'get_row', None)
+            B_getrow = getattr(B_join, 'get_row', None)
 
-        for (cls, metric), items in groups_sorted:
+        for group in groups_sorted:
+            cls = group.get('metric_class')
+            metric = group.get('metric')
+            items = group.get('items', [])
             writer(f'  [bold]top mismatches ({(cls, metric)!r}):[/bold]')
             for rank, item in enumerate(items[:top_n], start=1):
                 k = item['key']
@@ -1072,9 +1112,9 @@ class HelmRunDiff(ub.NiceRepr):
                 abs_d = float(item['abs_delta'])
                 signed_d = float(item['signed_delta'])
 
-                # Try to extract split/sub_split info from key if it is tuple-like
+                # Try to extract split/sub_split info from key if it is tuple/list-like
                 split = None
-                if isinstance(k, tuple) and len(k) >= 5:
+                if (isinstance(k, tuple) or isinstance(k, list)) and len(k) >= 5:
                     # (id, tti, pert_id, metric, split, ...)
                     split = k[4]
 
@@ -1097,8 +1137,29 @@ class HelmRunDiff(ub.NiceRepr):
                     and A_map is not None
                     and B_map is not None
                 ):
-                    ra = A_map.get(k, None)
-                    rb = B_map.get(k, None)
+                    # Try to resolve row objects from the join tables.
+                    # Item keys were serialized (lists); attempt to use the
+                    # table's `get_row` API with a tuple form, which will
+                    # reconstruct InstanceStatKey when appropriate.
+                    ra = None
+                    rb = None
+                    if A_getrow is not None:
+                        try:
+                            lookup_key = tuple(k) if isinstance(k, list) else k
+                            ra = A_getrow(lookup_key)
+                        except Exception:
+                            ra = None
+                    if ra is None and A_map is not None:
+                        ra = A_map.get(k, None)
+
+                    if B_getrow is not None:
+                        try:
+                            lookup_key = tuple(k) if isinstance(k, list) else k
+                            rb = B_getrow(lookup_key)
+                        except Exception:
+                            rb = None
+                    if rb is None and B_map is not None:
+                        rb = B_map.get(k, None)
 
                     rs_a = (
                         getattr(ra, 'request_state', None)
