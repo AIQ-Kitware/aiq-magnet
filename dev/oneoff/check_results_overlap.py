@@ -1,4 +1,7 @@
 """
+Notebook style code the developer is working with interactively by copy/pasting
+blocks into IPython.
+
 !uv pip install kaleido plotly
 """
 
@@ -37,7 +40,7 @@ if 0:
         self = HelmRunAnalysis(helm_run)
 
 finished_jobs = list(
-    ub.Path('/home/local/KHQ/jon.crall/code/aiq-magnet/results/helm').glob(
+    ub.Path('~/code/aiq-magnet/results/helm').expand().glob(
         '*/DONE'
     )
 )
@@ -403,33 +406,35 @@ for helm_row in ub.ProgIter(helm_rows, desc='compare runs'):
     # helm_row.update(row)
 
 
-for rd in rundiffs:
-    # rd.summary(level=0)
-    # rd.summary()
-    a = rd.a
-    b = rd.b
-    rd = HelmRunDiff(run_a=a, run_b=b, a_name='HELM', b_name='KWDG')
+DEVELOPER_DETAILED_DIFF_ANALYSIS = True
+if DEVELOPER_DETAILED_DIFF_ANALYSIS:
+    for rd in ub.ProgIter(rundiffs, desc='drill down', verbose=3):
+        # rd.summary(level=0)
+        # rd.summary()
+        a = rd.a
+        b = rd.b
+        rd = HelmRunDiff(run_a=a, run_b=b, a_name='HELM', b_name='KWDG')
 
-    summary = rd.summary_dict()
-    core_agreement = summary['value_agreement']['by_class']['core']
+        summary = rd.summary_dict()
+        core_agreement = summary['value_agreement']['by_class']['core']
 
-    if 0:
-        idx = a.stat_index(drop_zero_count=True, require_mean=True)
-        core_a = pd.DataFrame(
-            {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
-        )
-        idx = b.stat_index(drop_zero_count=True, require_mean=True)
-        core_b = pd.DataFrame(
-            {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
-        )
-        spec_a = rd.a.run_spec()
-        spec_b = rd.b.run_spec()
-        print(f'spec_a = {ub.urepr(spec_a, nl=3)}')
-        print(f'spec_b = {ub.urepr(spec_b, nl=3)}')
-        rd.summarize_instances()
+        if 0:
+            idx = a.stat_index(drop_zero_count=True, require_mean=True)
+            core_a = pd.DataFrame(
+                {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
+            )
+            idx = b.stat_index(drop_zero_count=True, require_mean=True)
+            core_b = pd.DataFrame(
+                {k: m for k, m in idx.items() if m.metric_class == 'core'}.values()
+            )
+            spec_a = rd.a.run_spec()
+            spec_b = rd.b.run_spec()
+            print(f'spec_a = {ub.urepr(spec_a, nl=3)}')
+            print(f'spec_b = {ub.urepr(spec_b, nl=3)}')
+            rd.summarize_instances()
 
 df = pd.DataFrame(sankey_rows)
-# df = df[df['attempt_status'] == 'compared']
+df_comp = df[df['attempt_status'] == 'compared']
 print(df.value_counts(['benchmark_name', 'reproduced_step1']))
 print(
     df.value_counts(
@@ -442,6 +447,26 @@ print(
     )
 )
 print(df.value_counts(['attempt_status', 'agreement_bucket']).sort_index())
+
+
+def diagnose_status(row):
+    if row['attempt_status'] == 'not attempted':
+        return None
+    mismatch = set()
+    print(f'row={row}')
+    if row['spec_status'].split(' ')[-1] == 'mismatch':
+        mismatch |= {'run_spec'}
+    if row['scenario_status'].split(' ')[-1] == 'mismatch':
+        mismatch |= {'scenario_spec'}
+    # if row['scenario_status'].split(' ')[-1] == 'mismatch':
+    #     mismatch |= {'stats_name'}
+    if not mismatch:
+        return 'specs match'
+    else:
+        return 'mismatch: ' + ', '.join(sorted(mismatch))
+
+df['spec_diagnostic'] = [diagnose_status(row) for _, row in df.iterrows()]
+df['spec_diagnostic'].value_counts()
 
 
 def attempt_status(row: dict[str, object]) -> str:
@@ -471,7 +496,7 @@ CORE_IOU_BINS = [
 df['core_iou'] = (df['comparable_core'] - df['mismatched_core']) / df[
     'comparable_core'
 ]
-core_iou_bucket = make_bucket_fn(CORE_IOU_BINS, endpoints_as_strict_buckets=True)
+core_iou_bucket = make_bucket_fn(CORE_IOU_BINS, endpoints_as_strict_buckets=True, nan_label='no comparable metrics')
 df['core_iou_bucket'] = df['core_iou'].map(core_iou_bucket)
 print(df['core_iou_bucket'].value_counts())
 
@@ -481,27 +506,28 @@ df['stats_name_status'].value_counts()
 
 # Sankey plan: same skeleton, but add a core IoU bucket stage
 
-root = sankey.Root('All Attempts')
-# When we get the data if one of the names isn't available, we handle it by
-# dynamically adding it, but here we can use the result object to specify
-# cases.
-splits = root.split(by='attempt_status')
-compared = splits.add_case(value='compared')
-failcase = splits.add_case(value='not attempted')
-failcase.set_label('Failed')
+# root = sankey.Root('All Attempts')
+# # When we get the data if one of the names isn't available, we handle it by
+# # dynamically adding it, but here we can use the result object to specify
+# # cases.
+# splits = root.split(by='attempt_status')
+# compared = splits.add_case(value='compared')
+# failcase = splits.add_case(value='not attempted')
+# failcase.set_label('Failed')
 
-bench_group = compared.group(by='benchmark_name', name='benchmark')
-bench_group.group(by='core_iou_bucket')
+# bench_group = compared.group(by='benchmark_name', name='benchmark')
+# bench_group.group(by='core_iou_bucket')
 
 
-# Note it should alway be possible to put "benchmarks" before attempt status like:
-root = sankey.Root('All Attempts')
-bench_group = root.group(by='benchmark_name', name='benchmark')
-splits = bench_group.split(by='attempt_status')
-compared = splits.cases['compared']  # behaves like a defaultdict
-compared.group(by='core_iou_bucket')
+# # Note it should alway be possible to put "benchmarks" before attempt status like:
+# root = sankey.Root('All Attempts')
+# bench_group = root.group(by='benchmark_name', name='benchmark')
+# splits = bench_group.split(by='attempt_status')
+# splits['not attempted'].set_label('Failed')
+# compared = splits.cases['compared']  # behaves like a defaultdict
 
-splits['not attempted'].set_label('Failed')
+# compared.group(by='spec_diagnostic')
+# compared.group(by='core_iou_bucket')
 
 
 # ---
@@ -510,7 +536,6 @@ splits['not attempted'].set_label('Failed')
 
 from magnet.utils import sankey_builder
 root = sankey_builder.Root()
-
 bench_groups = root.group(by='benchmark_name')
 
 rungroup = bench_groups.group(by='attempt_status')
@@ -519,7 +544,9 @@ compared_node.label = 'Run'
 unrun_node = rungroup['not attempted']
 unrun_node.label = 'Failed'
 
-compared_node.group(by='core_iou_bucket')
+compared_node \
+    .group(by='core_iou_bucket')
+    # .group(by='spec_diagnostic') \
 
 # plan = sankey.Plan(
 #     sankey.Root(f'Attempted Runs n={len(df)}'),
@@ -538,17 +565,18 @@ G = root.build_sankey(df.to_dict('records'), label_fmt='{value}')
 print(G.summarize(max_edges=150))
 
 G.nodes['CONST']['label'] = f'Attempted Runs n={len(df)}'
-fig = G.to_plotly(title='HELM Reproduction Funnel')
+# fig = G.to_plotly(title='HELM Reproduction Funnel')
 
 
 import plotly.graph_objects as go
-
 node_labels, source, target, value = G._to_sankey_data()
 sankey = go.Sankey(
+    # arrangement='freeform',
     node=dict(label=node_labels, pad=15, thickness=18),
     link=dict(source=source, target=target, value=value),
 )
 fig = go.Figure(sankey)
+title = 'Title'
 fig.update_layout(title_text=title, font_size=14)
 
 
@@ -590,7 +618,7 @@ for bench, rows in bench_groups.items():
     figb.write_image(str(fpath_b))
     print(f'Wrote benchmark sankey: {fpath_b}')
 
-if 1:
+if 0:
     print(
         ub.codeblock(
             f"""
