@@ -6,6 +6,7 @@ import json
 import sys
 from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
 
+from kwdagger import ProcessNode, Pipeline
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from rich import print
 import scriptconfig as scfg
@@ -33,6 +34,10 @@ class EvaluationConfig(scfg.DataConfig):
         None, required=True, position=1, help='Path to evaluation card YAML'
     )
 
+    results_path = scfg.Value(
+        './results', help='Root data path for saved results'
+    )
+
 
 class EvaluationCard:
     """
@@ -47,9 +52,11 @@ class EvaluationCard:
         >>> card.evaluate()
         VERIFIED
     """
-    def __init__(self, path):
+    def __init__(self, path, results_path):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
+
+        self.results_path = ub.Path(results_path)
 
         self.title = cfg.get("title", "")
         self.description = cfg.get("description", "")
@@ -57,7 +64,11 @@ class EvaluationCard:
         self.claim = Claim(cfg.get("claim"))
         self.symbols = cfg.get("symbols", {})
 
-        self.pipeline = cfg.get("kwdagger", {})
+        # explicit kwdagger spec
+        self.kwdagger = cfg.get('kwdagger', {})
+
+        # populate ProcessNode(s) programmatically
+        self.pipeline = cfg.get("pipeline", {})
 
         self.evaluations = []
 
@@ -65,16 +76,16 @@ class EvaluationCard:
         """
         Declaration of card state, whether not started, in progress, or complete
         """
-        if len(self.evaluations) == 0:
-            return "UNEVALUTED"
+        if self.claim.status == "UNVERIFIED" and len(self.evaluations) > 0:
+            not_evaluated_count = sum([evaluation.claim.status == "UNVERIFIED" for evaluation in self.evaluations])
+            percent_not_evaluated = not_evaluated_count / len(self.evaluations)
 
-        not_evaluated_count = sum([evaluation.claim.status == "UNVERIFIED" for evaluation in self.evaluations])
-        percent_not_evaluated = not_evaluated_count / len(self.evaluations)
-
-        if percent_not_evaluated == 0:
-            return "EVALUATED"
+            if percent_not_evaluated == 0:
+                return "EVALUATED"
+            else:
+                return f"{percent_not_evaluated:.2f} REMAINING"
         else:
-            return f"{percent_not_evaluated:.2f} REMAINING"
+            return "EVALUATED"
 
     def evaluate(self):
         """
@@ -84,31 +95,27 @@ class EvaluationCard:
         2. Evaluate claim under symbol values
         3. Summarize general finding
         """
-        
-        # kwdagger dispatch TODO: encapsulate into own handler
+        results = []
+
+        if self.kwdagger:
+            # Claim node handles symbols outside of EvaluationCard
+            results = KWDaggerProcessor(self.kwdagger, root_dpath=self.results_path).collect_results()
+
         if self.pipeline:
-            print(self.pipeline)
-            kwd_config = ScheduleEvaluationConfig(
-                params=self.pipeline, #includes pipeline and additional params
-                root_dpath=ub.Path('./results'),
-                backend='serial',
-                skip_existing=True,
-                run=True,
-            )
-
-            dag, queue = build_schedule(kwd_config)
-
-            # TODO: self.evaluations = load 'symbols'?
+            pipeline_runs = GenericPipelineProcessor(self.pipeline, root_dpath=self.results_path).collect_symbols()
+            
+            # Claim resolution
             results = []
 
-            # Glob all Claim node json files recursively FIXME: hardcoded
-            paths = kwd_config.root_dpath.glob('**/verdict.json')
+            for run in pipeline_runs:
+                run_symbols = pipeline_runs[run]
+                self.symbols.update(run_symbols)
+                self.evaluations.extend(self.dispatch(Symbols.decompose_symbol_defs(self.symbols)))
 
-            for claim_json in paths:
-                claim_result = json.load(open(claim_json, 'r'))
-                if 'result' in claim_result and 'status' in claim_result['result']:
-                    results.append(claim_result['result']['status'])
-
+            for evaluation in self.evaluations:
+                status, _ = evaluation.execute()
+                results.append(status)
+            
         else:
             self.evaluations = self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
 
@@ -141,10 +148,9 @@ class EvaluationCard:
             card_result = 'VERIFIED'
 
         self.claim.status = card_result
-        print(card_result)
         return card_result
 
-    def dispatch(self, flattened_sweep): #: List[Symbols]) -> List[EvaluationTask]:
+    def dispatch(self, flattened_sweep):
         return [EvaluationTask(Claim({'python': self.claim.claim}), symbols) for symbols in flattened_sweep]
 
     def summarize(self):
@@ -171,6 +177,129 @@ class EvaluationCard:
 
         print("================================")
         print(f"[bold]CARD STATUS:[/bold] {status}""")
+
+class GenericPipelineProcessor:
+    '''
+    Handler for yaml-based pipeline specification 
+
+    *possibly merge with KWDaggerProcessor*
+    '''
+    def __init__(self, pipeline_def, root_dpath):
+        self.pipeline = pipeline_def
+        self.root_dpath = root_dpath
+        self.dag = None
+        self.matrix = None
+        self.symbols = {}
+
+    def define_kwdagger(self):
+        '''
+        Construct kwdagger pipeline programmatically
+
+        *only verified for one-stage pipeline, needs 'connector' handling*
+        '''
+        nodes = {}
+
+        for node_def in self.pipeline:
+            # collect nodes
+            name = next(iter(node_def))
+            node_params = node_def[name]
+        
+            # FIXME: should update matrix for full pipeline
+            node_params, self.matrix = self._parse_params(name, node_params)
+
+            node = ProcessNode(name=name, **node_params)
+            nodes[name] = node
+
+        self.dag = Pipeline(nodes)
+        self.dag.build_nx_graphs()
+
+    def dispatch(self, backend='serial', skip_existing=True, **kwargs):
+        self.define_kwdagger()
+
+        kwdagger_params = {'pipeline': self.dag, 'matrix': self.matrix}
+
+        kwd_config = ScheduleEvaluationConfig(
+            params=kwdagger_params, #includes pipeline and additional params
+            root_dpath=self.root_dpath,
+            backend=backend,
+            skip_existing=skip_existing,
+            run=True,
+        )
+
+        dag, queue = build_schedule(kwd_config)
+
+    def collect_symbols(self):
+        if not self.symbols:
+            self.dispatch()
+        
+        # Glob all results json (only one node in pipeline)
+        paths = self.root_dpath.glob(f"**/{self.dag.nodes[next(iter(self.dag.nodes))].out_paths['results_fpath']}")
+
+        for symbol_resolution in paths:
+            symbols = json.load(open(symbol_resolution, 'r'))
+            parent_dir = symbol_resolution.parent.stem
+            if 'result' in symbols:
+                # assume all fields exist
+                for symbol in symbols['result']:
+                    # record all sweeps
+                    if parent_dir not in self.symbols:
+                        self.symbols[parent_dir] = {}
+
+                    self.symbols[parent_dir][symbol] = {'value': symbols['result'][symbol]}
+
+        return self.symbols
+    
+    def _parse_params(self, node_name, node_cfg):
+        '''
+        Parse sweepable parameters from definition
+        '''
+        matrix = {}
+        for k in node_cfg:
+            if isinstance(node_cfg[k], dict) and "_params" in k: 
+                # TODO: Construct a more robust validator
+                for param, v in node_cfg[k].items():
+                    matrix[f"{node_name}.{param}"] = v
+                # decompose yaml
+                node_cfg[k] = list(node_cfg[k].keys())
+        return node_cfg, matrix
+
+
+class KWDaggerProcessor:
+    '''
+    Handler for full kwdagger pipeline specification
+    '''
+    def __init__(self, pipeline_def, root_dpath):
+        self.spec = pipeline_def
+        self.root_dpath = root_dpath
+        self.results = []
+
+    def dispatch(self, backend='serial', skip_existing=True, **kwargs):
+        kwd_config = ScheduleEvaluationConfig(
+            params=self.spec, #includes pipeline and additional params
+            root_dpath=self.root_dpath,
+            backend=backend,
+            skip_existing=skip_existing,
+            run=True,
+            **kwargs
+        )
+
+        dag, queue = build_schedule(kwd_config)
+    
+    def collect_results(self):
+        if not self.results:
+            self.dispatch()
+        
+        # Glob all Claim node json files recursively
+        paths = self.root_dpath.glob(f'**/verdict.json')
+
+        # Assumes {result: {status: value}} output format
+        for claim_json in paths:
+            claim_result = json.load(open(claim_json, 'r'))
+            if 'result' in claim_result and 'status' in claim_result['result']:
+                self.results.append(claim_result['result']['status'])
+        
+        return self.results
+
 
 class EvaluationTask:
     """
@@ -386,22 +515,12 @@ class Symbols:
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
 
-def build_parser():
-    parser = argparse.ArgumentParser(description="Resolve an Evaluation Card")
-
-    parser.add_argument('path',
-                        type=str,
-                        help="Path to evaluation card YAML file")
-
-    return parser
-
-
 def main(argv=None, **kwargs):
     args = EvaluationConfig.cli(
         argv=argv, data=kwargs, strict=True, verbose='auto', special_options=False
     )
 
-    card = EvaluationCard(args.path)
+    card = EvaluationCard(args.path, args.results_path)
     card.evaluate()
     card.summarize()
 
