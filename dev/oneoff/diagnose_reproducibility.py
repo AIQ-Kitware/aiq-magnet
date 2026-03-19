@@ -166,6 +166,50 @@ def aggregate_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
     diagnosis_counter = Counter()
     reason_counter = Counter()
     reason_by_priority = defaultdict(Counter)
+    reason_detail_counter = defaultdict(Counter)
+    inferred_causal_counter = Counter()
+    deployment_transition_counter = Counter()
+    inferred_causal_examples: list[dict[str, Any]] = []
+
+    def _reason_lut(diag: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        out = {}
+        for reason in diag.get('reasons', []) or []:
+            if not isinstance(reason, dict):
+                continue
+            name = reason.get('name', None)
+            if name is None:
+                continue
+            out[str(name)] = reason
+        return out
+
+    def _summarize_eval_detail(details: dict[str, Any]) -> str:
+        delta = details.get('metric_specs_multiset_delta', {}) or {}
+        if not isinstance(delta, dict):
+            return 'metric_specs_multiset_delta=unknown'
+        n_added = delta.get('n_added', None)
+        n_removed = delta.get('n_removed', None)
+        added_structured = delta.get('added_structured', []) or []
+        removed_structured = delta.get('removed_structured', []) or []
+        added_classes = sorted(
+            {
+                str(x.get('class_name', '?'))
+                for x in added_structured
+                if isinstance(x, dict)
+            }
+        )
+        removed_classes = sorted(
+            {
+                str(x.get('class_name', '?'))
+                for x in removed_structured
+                if isinstance(x, dict)
+            }
+        )
+        added_s = ','.join(added_classes[:3]) if added_classes else '-'
+        removed_s = ','.join(removed_classes[:3]) if removed_classes else '-'
+        return (
+            f'n_added={n_added},n_removed={n_removed},'
+            f'added_classes={added_s},removed_classes={removed_s}'
+        )
 
     for row in rows:
         status = row.get('status', 'unknown')
@@ -182,6 +226,47 @@ def aggregate_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
             reason_counter[name] += 1
             reason_by_priority[str(priority)][name] += 1
 
+        reason_lut = _reason_lut(diag)
+        dep = reason_lut.get('deployment_drift', None)
+        eval_spec = reason_lut.get('evaluation_spec_drift', None)
+        dep_transition = None
+
+        if dep is not None:
+            dep_details = dep.get('details', {}) or {}
+            a_val = dep_details.get('a_value', None)
+            b_val = dep_details.get('b_value', None)
+            dep_transition = f'{a_val!r} -> {b_val!r}'
+            deployment_transition_counter[dep_transition] += 1
+            reason_detail_counter['deployment_drift'][dep_transition] += 1
+
+        if eval_spec is not None:
+            eval_details = eval_spec.get('details', {}) or {}
+            eval_summary = _summarize_eval_detail(eval_details)
+            reason_detail_counter['evaluation_spec_drift'][eval_summary] += 1
+
+        if dep is not None and eval_spec is not None:
+            dep_p = dep.get('priority', None)
+            eval_p = eval_spec.get('priority', None)
+            if (
+                isinstance(dep_p, int)
+                and isinstance(eval_p, int)
+                and dep_p <= eval_p
+            ):
+                inferred_causal_counter['deployment_precedes_eval_spec_drift'] += 1
+                if dep_transition is not None:
+                    inferred_causal_counter[
+                        f'deployment_transition::{dep_transition}'
+                    ] += 1
+                if len(inferred_causal_examples) < 20:
+                    inferred_causal_examples.append(
+                        {
+                            'run_spec_name': row.get('run_spec_name', None),
+                            'deployment_transition': dep_transition,
+                            'deployment_priority': dep_p,
+                            'eval_priority': eval_p,
+                        }
+                    )
+
     out = {
         'n_rows': len(rows),
         'status_counts': dict(status_counter),
@@ -190,6 +275,15 @@ def aggregate_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
         'reason_counts_by_priority': {
             p: dict(c) for p, c in reason_by_priority.items()
         },
+        'reason_detail_counts': {
+            name: dict(counter.most_common(20))
+            for name, counter in reason_detail_counter.items()
+        },
+        'deployment_transition_counts': dict(
+            deployment_transition_counter.most_common(20)
+        ),
+        'inferred_causal_counts': dict(inferred_causal_counter),
+        'inferred_causal_examples': inferred_causal_examples,
     }
     return out
 
@@ -538,7 +632,7 @@ def write_sankey_report(
                 max_label_len = max((len(str(x)) for x in node_labels), default=20)
                 export_width = min(5200, max(2800, 1700 + max_label_len * 18))
                 export_height = min(5200, max(2200, 1000 + len(node_labels) * 50))
-                export_scale = 4.5
+                export_scale = 2.25
                 fig_static.update_traces(
                     node=dict(pad=20, thickness=20),
                 )
