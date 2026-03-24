@@ -154,6 +154,28 @@ from loguru import logger
 from magnet.helm_outputs import HelmOutputs
 
 
+def _normalize_optional_pathish(value):
+    """
+    Normalize common "unset" placeholder values emitted by schedulers / CLIs.
+
+    Args:
+        value: raw parsed CLI/config value
+
+    Returns:
+        The original value, or ``None`` for empty / null-like placeholders.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text == '':
+            return None
+        if text.lower() in {'none', 'null'}:
+            return None
+        return text
+    return value
+
+
 class MaterializeHelmRunConfig(scfg.DataConfig):
     """
     Materialize HELM results either by computing them directly or pulling them
@@ -237,21 +259,21 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
     )
 
     enable_huggingface_models = scfg.Value(
-        [],
-        nargs='*',
+        None,
+        type=str,
         help=(
-            'Optional passthrough for helm-run --enable-huggingface-models. '
-            'Useful when the Hugging Face repo id is directly usable by HELM.'
+            'Optional YAML-encoded list passed through to helm-run '
+            '--enable-huggingface-models. Example: \'[repo-a, repo-b]\''
         ),
         tags=['algo_param'],
     )
 
     enable_local_huggingface_models = scfg.Value(
-        [],
-        nargs='*',
+        None,
+        type=str,
         help=(
-            'Optional passthrough for helm-run --enable-local-huggingface-models. '
-            'Useful when pointing HELM at a local model directory.'
+            'Optional YAML-encoded list passed through to helm-run '
+            '--enable-local-huggingface-models. Example: \'[/models/a, /models/b]\''
         ),
         tags=['algo_param'],
     )
@@ -310,6 +332,16 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         """
         config = MaterializeHelmRunConfig.cli(
             argv=argv, data=kwargs, verbose='auto'
+        )
+        config.precomputed_root = _normalize_optional_pathish(config.precomputed_root)
+        config.model_deployments_fpath = _normalize_optional_pathish(
+            config.model_deployments_fpath
+        )
+        config.enable_huggingface_models = kwutil.Yaml.coerce(
+            config.enable_huggingface_models
+        )
+        config.enable_local_huggingface_models = kwutil.Yaml.coerce(
+            config.enable_local_huggingface_models
         )
 
         if config.run_entry is None:

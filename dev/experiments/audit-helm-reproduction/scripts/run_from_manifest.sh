@@ -32,7 +32,11 @@ printf 'Backend: %s\n' "$BACKEND"
 printf 'Devices: %s\n' "$DEVICES"
 printf 'tmux_workers: %s\n' "$TMUX_WORKERS"
 
+QUEUE_NAME="$(printf 'audit-%s' "$EXPERIMENT_NAME" | tr -c 'A-Za-z0-9._-' '-')"
+printf 'queue_name: %s\n' "$QUEUE_NAME"
+
 kwdagger schedule \
+    --queue_name="$QUEUE_NAME" \
     --params="$PARAMS" \
     --devices="$DEVICES" \
     --tmux_workers="$TMUX_WORKERS" \

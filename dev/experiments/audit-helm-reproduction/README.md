@@ -95,6 +95,10 @@ Heavy run outputs are written by default to:
 /data/crfm-helm-audit/<experiment_name>/
 ```
 
+The runner also derives a distinct `kwdagger` queue name from the experiment
+name, which helps avoid interactive tmux collision prompts when multiple audit
+batches have been launched on the same machine.
+
 ## Manifest Schema
 
 The workflow uses a small YAML manifest as the unit of experiment definition.

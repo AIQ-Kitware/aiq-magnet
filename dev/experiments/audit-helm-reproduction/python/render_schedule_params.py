@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 
 from common import dump_yaml, experiment_result_dpath, load_manifest
 
@@ -23,10 +24,10 @@ def build_schedule_params(manifest: dict) -> dict:
         matrix["helm.model_deployments_fpath"] = [model_deployments_fpath]
     enable_hf = manifest.get("enable_huggingface_models", [])
     if enable_hf:
-        matrix["helm.enable_huggingface_models"] = [enable_hf]
+        matrix["helm.enable_huggingface_models"] = [json.dumps(enable_hf)]
     enable_local_hf = manifest.get("enable_local_huggingface_models", [])
     if enable_local_hf:
-        matrix["helm.enable_local_huggingface_models"] = [enable_local_hf]
+        matrix["helm.enable_local_huggingface_models"] = [json.dumps(enable_local_hf)]
     return {
         "pipeline": "magnet.backends.helm.pipeline.helm_single_run_pipeline()",
         "matrix": matrix,
