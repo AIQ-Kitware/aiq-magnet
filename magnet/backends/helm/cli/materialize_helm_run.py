@@ -136,6 +136,7 @@ from __future__ import annotations
 
 import os
 import time
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
@@ -218,6 +219,43 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['perf_param'],
     )
 
+    local_path = scfg.Value(
+        'prod_env',
+        type=str,
+        help='Passed to helm-run --local-path. Relative paths are resolved inside out_dpath.',
+        tags=['perf_param'],
+    )
+
+    model_deployments_fpath = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional path to a HELM model_deployments.yaml file that will be copied '
+            'into <local_path>/model_deployments.yaml before invoking helm-run.'
+        ),
+        tags=['algo_param'],
+    )
+
+    enable_huggingface_models = scfg.Value(
+        [],
+        nargs='*',
+        help=(
+            'Optional passthrough for helm-run --enable-huggingface-models. '
+            'Useful when the Hugging Face repo id is directly usable by HELM.'
+        ),
+        tags=['algo_param'],
+    )
+
+    enable_local_huggingface_models = scfg.Value(
+        [],
+        nargs='*',
+        help=(
+            'Optional passthrough for helm-run --enable-local-huggingface-models. '
+            'Useful when pointing HELM at a local model directory.'
+        ),
+        tags=['algo_param'],
+    )
+
     # extra_helm_args = scfg.Value(
     #     [],
     #     nargs='*',
@@ -260,9 +298,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         Example:
             >>> # This doctest is illustrative only; it requires helm-run installed.
             >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)
-            >>> from magnet.backends.helm.cli.materialize_helm_run import main
+            >>> from magnet.backends.helm.cli.materialize_helm_run import MaterializeHelmRunConfig
             >>> dpath = ub.Path.appdir('magnet/tests/materialize').delete().ensuredir()
-            >>> main([
+            >>> MaterializeHelmRunConfig.main([
             ...   '--run-entry', 'mmlu:subject=philosophy,model=openai/gpt2',
             ...   '--suite', 'my-suite',
             ...   '--max-eval-instances', '2',
@@ -320,6 +358,10 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 'require_per_instance_stats': config.require_per_instance_stats,
                 'mode': config.mode,
                 'materialize': config.materialize,
+                'local_path': config.local_path,
+                'model_deployments_fpath': config.model_deployments_fpath,
+                'enable_huggingface_models': list(config.enable_huggingface_models or []),
+                'enable_local_huggingface_models': list(config.enable_local_huggingface_models or []),
             },
             'status': None,
             'reuse': None,
@@ -389,14 +431,22 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
 
             # Ensure benchmark_output exists (helm-run will create, but pre-creating is fine)
             (out_dpath / 'benchmark_output').mkdir(exist_ok=True)
+            prepared_local_path = prepare_local_helm_config(
+                out_dpath=out_dpath,
+                local_path=config.local_path,
+                model_deployments_fpath=config.model_deployments_fpath,
+            )
 
             logger.info('No reusable run found; running helm-run')
             run_helm(
                 requested_desc=config.run_entry,
                 suite=config.suite,
                 out_dpath=out_dpath,
+                local_path=prepared_local_path,
                 max_eval_instances=config.max_eval_instances,
                 num_threads=config.num_threads,
+                enable_huggingface_models=list(config.enable_huggingface_models or []),
+                enable_local_huggingface_models=list(config.enable_local_huggingface_models or []),
                 extra_args=[],
             )
 
@@ -993,12 +1043,56 @@ def ensure_copytree(src: Path, dst: Path) -> None:
     ub.copytree(src, dst)
 
 
+def resolve_local_path(out_dpath: Path, local_path: str | os.PathLike[str]) -> Path:
+    """
+    Resolve HELM's local config path.
+
+    HELM defaults to ``prod_env`` relative to its current working directory, so
+    we mirror that here by resolving relative paths inside ``out_dpath``.
+    """
+    path = Path(local_path)
+    if path.is_absolute():
+        return path
+    return out_dpath / path
+
+
+def prepare_local_helm_config(
+    out_dpath: Path,
+    local_path: str | os.PathLike[str],
+    model_deployments_fpath: str | os.PathLike[str] | None = None,
+) -> Path:
+    """
+    Prepare the local HELM config directory used by ``helm-run``.
+
+    Currently this only materializes an optional ``model_deployments.yaml``
+    override file, but keeping it centralized makes future config additions
+    straightforward.
+    """
+    local_path_abs = resolve_local_path(out_dpath, local_path)
+    local_path_abs.mkdir(parents=True, exist_ok=True)
+
+    if model_deployments_fpath:
+        src = Path(model_deployments_fpath).expanduser().resolve()
+        if not src.exists():
+            raise FileNotFoundError(
+                f'model_deployments_fpath does not exist: {src}'
+            )
+        dst = local_path_abs / 'model_deployments.yaml'
+        shutil.copy2(src, dst)
+        logger.info('Copied model deployments override: {} -> {}', src, dst)
+
+    return local_path_abs
+
+
 def run_helm(
     requested_desc: str,
     suite: str,
     out_dpath: Path,
+    local_path: Path,
     max_eval_instances: Optional[int],
     num_threads: int,
+    enable_huggingface_models: Optional[list[str]] = None,
+    enable_local_huggingface_models: Optional[list[str]] = None,
     extra_args: Optional[list[str]] = None,
 ) -> None:
     """
@@ -1006,11 +1100,23 @@ def run_helm(
 
     We do not run helm-summarize by design.
     """
-    cmd = ['helm-run', '--run-entries', requested_desc, '--suite', suite]
+    cmd = [
+        'helm-run',
+        '--run-entries',
+        requested_desc,
+        '--suite',
+        suite,
+        '--local-path',
+        os.fspath(local_path),
+    ]
     if max_eval_instances is not None:
         cmd += ['--max-eval-instances', str(max_eval_instances)]
     if num_threads is not None:
         cmd += ['--num-threads', str(num_threads)]
+    if enable_huggingface_models:
+        cmd += ['--enable-huggingface-models', *map(str, enable_huggingface_models)]
+    if enable_local_huggingface_models:
+        cmd += ['--enable-local-huggingface-models', *map(str, enable_local_huggingface_models)]
     cmd += list(extra_args or [])
     logger.info('Executing: {}', ' '.join(map(str, cmd)))
     ub.cmd(cmd, cwd=out_dpath, verbose=3, system=True).check_returncode()
