@@ -54,20 +54,26 @@ def infer_benchmark_group(run_spec_name: str | None) -> str:
 
 
 def load_kwdg_rows(results_dpath: Path) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
-    finished_jobs = sorted(results_dpath.glob("*/DONE"))
+    finished_jobs = sorted(
+        fpath
+        for fpath in results_dpath.rglob("DONE")
+        if (fpath.parent / "job_config.json").exists()
+    )
     rows = []
     for fpath in ub.ProgIter(finished_jobs, desc="load kwdg runs"):
         dpath = fpath.parent
         try:
             config = kwutil.Json.load(dpath / "job_config.json")
-            run_spec_name = config["helm.run_entry"]
-            suites = HelmOutputs.coerce(dpath / "benchmark_output").suites()
-            if not suites:
+            run_spec_name = config.get("helm.run_entry", None)
+            if run_spec_name is None:
                 continue
-            runs = suites[0].runs()
+            suites = HelmOutputs.coerce(dpath / "benchmark_output").suites()
+            runs = []
+            for suite in suites:
+                runs.extend(list(suite.runs()))
             if len(runs) != 1:
                 continue
-            run = runs[0]
+            run = HelmRun.coerce(runs[0])
             rows.append(
                 {
                     "dpath": str(dpath),
@@ -167,10 +173,16 @@ def build_historic_rows(
 def write_summary_text(
     summary_report: dict[str, Any], out_fpath: Path
 ) -> None:
+    inputs = summary_report.get("inputs", {}) or {}
     lines = []
     lines.append(f"generated_utc: {summary_report['generated_utc']}")
     lines.append(f"case_jsonl: {summary_report['report_case_jsonl']}")
     lines.append(f"summary_json: {summary_report['report_summary_json']}")
+    if inputs:
+        lines.append("")
+        lines.append("inputs:")
+        for key, value in sorted(inputs.items()):
+            lines.append(f"  {key}: {value}")
     lines.append("")
     lines.append("status_counts:")
     for key, value in sorted(
@@ -349,6 +361,7 @@ def main() -> None:
             "precomputed_root": str(precomputed_root),
             "n_manifest_run_entries": len(manifest["run_entries"]),
             "n_kwdg_rows": len(kwdg_rows),
+            "n_historic_rows": len(historic_rows),
         },
         "aggregate": aggregate_report(all_case_rows),
     }
