@@ -29,7 +29,6 @@ Assumptions:
 
 Optional environment variables:
 
-- `CUDA_VISIBLE_DEVICES`
 - `AUDIT_DEFAULT_MAX_EVAL_INSTANCES`
 - `AUDIT_DEFAULT_TMUX_WORKERS`
 
@@ -85,8 +84,16 @@ dev/experiments/audit-helm-reproduction/configs/generated/apples_manifest.genera
 3. Launch the smoke-test batch on the GPU machine:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0,1 \
 dev/experiments/audit-helm-reproduction/scripts/run_smoke.sh
+```
+
+To change which GPUs `kwdagger` schedules onto, set the manifest `devices`
+field or regenerate the manifest with `--devices`, for example:
+
+```bash
+dev/experiments/audit-helm-reproduction/scripts/make_smoke_manifest.sh \
+  dev/experiments/audit-helm-reproduction/configs/generated/smoke_manifest.generated.yaml \
+  --devices 2,3
 ```
 
 4. Compare the completed batch to the historic HELM bundle:
@@ -173,6 +180,7 @@ aligns `max_eval_instances` with the historic public bundle for those entries:
 - `max_eval_instances=1000`
 - experiment name: `audit-smoke-apples`
 - suite: `audit-smoke-apples`
+- devices are still controlled by the manifest `devices` field or `--devices`
 
 This is the preferred first batch when the goal is reproduction fidelity rather
 than just workflow validation.

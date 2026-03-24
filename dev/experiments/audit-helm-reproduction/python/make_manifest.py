@@ -75,7 +75,7 @@ def build_smoke_manifest(args: argparse.Namespace) -> dict:
         if args.tmux_workers is not None
         else int(defaults["AUDIT_DEFAULT_TMUX_WORKERS"])
     )
-    devices = args.devices if args.devices is not None else os.environ.get("CUDA_VISIBLE_DEVICES", "0,1")
+    devices = args.devices if args.devices is not None else "0,1"
     return _build_manifest(
         experiment_name=args.experiment_name,
         description="Small smoke-test batch for HELM reproduction auditing.",
@@ -100,7 +100,7 @@ def build_apples_manifest(args: argparse.Namespace) -> dict:
         if args.tmux_workers is not None
         else int(defaults["AUDIT_DEFAULT_TMUX_WORKERS"])
     )
-    devices = args.devices if args.devices is not None else os.environ.get("CUDA_VISIBLE_DEVICES", "0,1")
+    devices = args.devices if args.devices is not None else "0,1"
     return _build_manifest(
         experiment_name=args.experiment_name,
         description=(
