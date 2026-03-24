@@ -1,0 +1,11 @@
+model_deployments:
+  - name: huggingface/example-local-deployment
+    model_name: creator/example-model
+    tokenizer_name: huggingface/example-local-deployment
+    max_sequence_length: 4096
+    client_spec:
+      class_name: "helm.clients.huggingface_client.HuggingFaceClient"
+      args:
+        pretrained_model_name_or_path: creator/example-model
+        device_map: auto
+        torch_dtype: torch.bfloat16

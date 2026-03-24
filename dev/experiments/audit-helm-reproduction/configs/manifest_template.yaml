@@ -1,0 +1,18 @@
+schema_version: 1
+experiment_name: your-experiment-name
+description: Describe the reproduction batch here.
+run_entries:
+  - mmlu:subject=us_foreign_policy,method=multiple_choice_joint,model=eleutherai/pythia-6.9b,data_augmentation=canonical
+max_eval_instances: 100
+suite: audit-custom
+mode: compute_if_missing
+materialize: symlink
+backend: tmux
+devices: 0,1
+tmux_workers: 2
+local_path: prod_env
+precomputed_root: null
+require_per_instance_stats: true
+model_deployments_fpath: null
+enable_huggingface_models: []
+enable_local_huggingface_models: []

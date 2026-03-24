@@ -84,6 +84,9 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
         'suite': 'my-suite',
         'max_eval_instances': None,
         'require_per_instance_stats': True,
+        'model_deployments_fpath': None,
+        'enable_huggingface_models': [],
+        'enable_local_huggingface_models': [],
         # Behavior toggles that change how/what we materialize
         'mode': 'compute_if_missing',  # reuse_only | compute_if_missing | force_recompute
         'materialize': 'symlink',  # symlink | copy
@@ -96,6 +99,7 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
         'precomputed_root': '/data/crfm-helm-public',
         # helm-run perf knobs:
         'num_threads': 1,
+        'local_path': 'prod_env',
     }
 
     # Optional: You can define load_result if you want kwdagger aggregate to read
