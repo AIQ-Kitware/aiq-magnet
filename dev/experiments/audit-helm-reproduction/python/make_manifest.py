@@ -26,34 +26,29 @@ def _validate_entries_exist(run_entries: list[str]) -> list[str]:
     return missing
 
 
-def build_smoke_manifest(args: argparse.Namespace) -> dict:
-    defaults = env_defaults()
-    max_eval_instances = (
-        args.max_eval_instances
-        if args.max_eval_instances is not None
-        else int(defaults["AUDIT_DEFAULT_MAX_EVAL_INSTANCES"])
-    )
-    tmux_workers = (
-        args.tmux_workers
-        if args.tmux_workers is not None
-        else int(defaults["AUDIT_DEFAULT_TMUX_WORKERS"])
-    )
-    devices = args.devices if args.devices is not None else os.environ.get("CUDA_VISIBLE_DEVICES", "0,1")
-
-    missing = _validate_entries_exist(SMOKE_RUN_ENTRIES)
+def _build_manifest(
+    *,
+    experiment_name: str,
+    description: str,
+    run_entries: list[str],
+    max_eval_instances: int,
+    suite: str,
+    tmux_workers: int,
+    devices: str,
+) -> dict:
+    missing = _validate_entries_exist(run_entries)
     if missing:
         raise RuntimeError(
-            "Smoke manifest entries were not found in run_specs.yaml: "
+            "Manifest entries were not found in run_specs.yaml: "
             + kwutil.Json.dumps(missing)
         )
-
     return {
         "schema_version": 1,
-        "experiment_name": args.experiment_name,
-        "description": "Small smoke-test batch for HELM reproduction auditing.",
-        "run_entries": SMOKE_RUN_ENTRIES,
+        "experiment_name": experiment_name,
+        "description": description,
+        "run_entries": run_entries,
         "max_eval_instances": max_eval_instances,
-        "suite": args.suite,
+        "suite": suite,
         "mode": "compute_if_missing",
         "materialize": "symlink",
         "backend": "tmux",
@@ -68,10 +63,62 @@ def build_smoke_manifest(args: argparse.Namespace) -> dict:
     }
 
 
+def build_smoke_manifest(args: argparse.Namespace) -> dict:
+    defaults = env_defaults()
+    max_eval_instances = (
+        args.max_eval_instances
+        if args.max_eval_instances is not None
+        else int(defaults["AUDIT_DEFAULT_MAX_EVAL_INSTANCES"])
+    )
+    tmux_workers = (
+        args.tmux_workers
+        if args.tmux_workers is not None
+        else int(defaults["AUDIT_DEFAULT_TMUX_WORKERS"])
+    )
+    devices = args.devices if args.devices is not None else os.environ.get("CUDA_VISIBLE_DEVICES", "0,1")
+    return _build_manifest(
+        experiment_name=args.experiment_name,
+        description="Small smoke-test batch for HELM reproduction auditing.",
+        run_entries=SMOKE_RUN_ENTRIES,
+        max_eval_instances=max_eval_instances,
+        suite=args.suite,
+        tmux_workers=tmux_workers,
+        devices=devices,
+    )
+
+
+def build_apples_manifest(args: argparse.Namespace) -> dict:
+    defaults = env_defaults()
+    # Historic public matches for the current smoke-control entries all use 1000.
+    max_eval_instances = (
+        args.max_eval_instances
+        if args.max_eval_instances is not None
+        else 1000
+    )
+    tmux_workers = (
+        args.tmux_workers
+        if args.tmux_workers is not None
+        else int(defaults["AUDIT_DEFAULT_TMUX_WORKERS"])
+    )
+    devices = args.devices if args.devices is not None else os.environ.get("CUDA_VISIBLE_DEVICES", "0,1")
+    return _build_manifest(
+        experiment_name=args.experiment_name,
+        description=(
+            "Apples-to-apples smoke batch aligned to the historic public HELM "
+            "requested max_eval_instances for the control entries."
+        ),
+        run_entries=SMOKE_RUN_ENTRIES,
+        max_eval_instances=max_eval_instances,
+        suite=args.suite,
+        tmux_workers=tmux_workers,
+        devices=devices,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--manifest-type", default="smoke", choices=["smoke"]
+        "--manifest-type", default="smoke", choices=["smoke", "apples"]
     )
     parser.add_argument("--output", required=True)
     parser.add_argument("--experiment-name", default="audit-smoke")
@@ -81,10 +128,12 @@ def main() -> None:
     parser.add_argument("--devices", default=None)
     args = parser.parse_args()
 
-    if args.manifest_type != "smoke":
+    if args.manifest_type == "smoke":
+        manifest = build_smoke_manifest(args)
+    elif args.manifest_type == "apples":
+        manifest = build_apples_manifest(args)
+    else:
         raise NotImplementedError(args.manifest_type)
-
-    manifest = build_smoke_manifest(args)
     out_fpath = Path(args.output)
     out_fpath.parent.mkdir(parents=True, exist_ok=True)
     out_fpath.write_text(dump_yaml(manifest))
