@@ -94,6 +94,7 @@ def aggregate_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
     status_counter = Counter()
     diagnosis_counter = Counter()
     reason_counter = Counter()
+    primary_reason_counter = Counter()
     for row in rows:
         status = row.get("status", "unknown")
         status_counter[status] += 1
@@ -101,6 +102,8 @@ def aggregate_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         diag = row.get("diagnosis", {}) or {}
         diagnosis_counter[diag.get("label", "unknown")] += 1
+        for reason_name in diag.get("primary_reason_names", []) or []:
+            primary_reason_counter[reason_name] += 1
         for reason in diag.get("reasons", []) or []:
             name = reason.get("name", "unknown")
             reason_counter[name] += 1
@@ -108,6 +111,7 @@ def aggregate_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "n_rows": len(rows),
         "status_counts": dict(status_counter),
         "diagnosis_label_counts": dict(diagnosis_counter),
+        "primary_reason_name_counts": dict(primary_reason_counter),
         "reason_counts": dict(reason_counter),
     }
 
@@ -193,6 +197,18 @@ def write_summary_text(
     lines.append("diagnosis_label_counts:")
     for key, value in sorted(
         summary_report["aggregate"]["diagnosis_label_counts"].items()
+    ):
+        lines.append(f"  {key}: {value}")
+    lines.append("")
+    lines.append("primary_reason_name_counts:")
+    for key, value in sorted(
+        summary_report["aggregate"].get("primary_reason_name_counts", {}).items()
+    ):
+        lines.append(f"  {key}: {value}")
+    lines.append("")
+    lines.append("reason_counts:")
+    for key, value in sorted(
+        summary_report["aggregate"].get("reason_counts", {}).items()
     ):
         lines.append(f"  {key}: {value}")
     out_fpath.write_text("\n".join(lines) + "\n")
