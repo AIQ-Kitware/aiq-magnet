@@ -49,6 +49,10 @@ Optional environment variables:
 
 ## Quick Start
 
+```bash
+cd $HOME/code/aiq-magnet
+```
+
 1. Validate the environment:
 
 ```bash

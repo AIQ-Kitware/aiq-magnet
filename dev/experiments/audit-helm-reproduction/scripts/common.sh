@@ -5,8 +5,8 @@ AUDIT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AUDIT_ROOT="$(cd "${AUDIT_SCRIPT_DIR}/.." && pwd)"
 
 audit::set_defaults() {
-    export AIQ_MAGNET_ROOT="${AIQ_MAGNET_ROOT:-/home/joncrall/code/aiq-magnet}"
-    export HELM_EDITABLE_ROOT="${HELM_EDITABLE_ROOT:-/home/joncrall/code/helm}"
+    export AIQ_MAGNET_ROOT="${AIQ_MAGNET_ROOT:-$HOME/code/aiq-magnet}"
+    export HELM_EDITABLE_ROOT="${HELM_EDITABLE_ROOT:-$HOME/code/helm}"
     export AIQ_PYTHON="${AIQ_PYTHON:-python}"
     export HELM_PRECOMPUTED_ROOT="${HELM_PRECOMPUTED_ROOT:-/data/crfm-helm-public}"
     export AUDIT_RESULTS_ROOT="${AUDIT_RESULTS_ROOT:-/data/crfm-helm-audit}"
