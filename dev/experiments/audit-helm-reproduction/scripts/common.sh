@@ -6,7 +6,6 @@ AUDIT_ROOT="$(cd "${AUDIT_SCRIPT_DIR}/.." && pwd)"
 
 audit::set_defaults() {
     export AIQ_MAGNET_ROOT="${AIQ_MAGNET_ROOT:-$HOME/code/aiq-magnet}"
-    export HELM_EDITABLE_ROOT="${HELM_EDITABLE_ROOT:-$HOME/code/helm}"
     export AIQ_PYTHON="${AIQ_PYTHON:-python}"
     export HELM_PRECOMPUTED_ROOT="${HELM_PRECOMPUTED_ROOT:-/data/crfm-helm-public}"
     export AUDIT_RESULTS_ROOT="${AUDIT_RESULTS_ROOT:-/data/crfm-helm-audit}"
@@ -16,7 +15,6 @@ audit::set_defaults() {
 
 audit::print_env() {
     printf 'AIQ_MAGNET_ROOT=%s\n' "$AIQ_MAGNET_ROOT"
-    printf 'HELM_EDITABLE_ROOT=%s\n' "$HELM_EDITABLE_ROOT"
     printf 'AIQ_PYTHON=%s\n' "$AIQ_PYTHON"
     printf 'HELM_PRECOMPUTED_ROOT=%s\n' "$HELM_PRECOMPUTED_ROOT"
     printf 'AUDIT_RESULTS_ROOT=%s\n' "$AUDIT_RESULTS_ROOT"

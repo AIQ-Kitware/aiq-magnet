@@ -17,7 +17,6 @@ The design goals are:
 These defaults are chosen to work in the current environment:
 
 - `AIQ_MAGNET_ROOT=/home/joncrall/code/aiq-magnet`
-- `HELM_EDITABLE_ROOT=/home/joncrall/code/helm`
 - `AIQ_PYTHON=python`
 - `HELM_PRECOMPUTED_ROOT=/data/crfm-helm-public`
 - `AUDIT_RESULTS_ROOT=/data/crfm-helm-audit`
