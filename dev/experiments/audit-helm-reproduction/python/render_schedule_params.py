@@ -10,7 +10,7 @@ def build_schedule_params(manifest: dict) -> dict:
     matrix = {
         "helm.run_entry": list(manifest["run_entries"]),
         "helm.max_eval_instances": [manifest["max_eval_instances"]],
-        "helm.precomputed_root": [manifest.get("precomputed_root", None)],
+        "helm.precomputed_root": manifest.get("precomputed_root", None),
         "helm.suite": [manifest.get("suite", "audit-smoke")],
         "helm.require_per_instance_stats": [
             manifest.get("require_per_instance_stats", True)

@@ -35,6 +35,8 @@ helm-run --run-entries civil_comments:demographic=LGBTQ,model=meta/llama-7b,data
 
 from __future__ import annotations
 
+import shlex
+
 import kwdagger
 
 
@@ -85,8 +87,8 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
         'max_eval_instances': None,
         'require_per_instance_stats': True,
         'model_deployments_fpath': None,
-        'enable_huggingface_models': [],
-        'enable_local_huggingface_models': [],
+        'enable_huggingface_models': None,
+        'enable_local_huggingface_models': None,
         # Behavior toggles that change how/what we materialize
         'mode': 'compute_if_missing',  # reuse_only | compute_if_missing | force_recompute
         'materialize': 'symlink',  # symlink | copy
@@ -96,11 +98,43 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
     # These are recorded, but ideally should not change the “meaning” of outputs.
     perf_params = {
         # Your shared precomputed root:
-        'precomputed_root': '/data/crfm-helm-public',
+        'precomputed_root': None,
         # helm-run perf knobs:
         'num_threads': 1,
         'local_path': 'prod_env',
     }
+
+    @property
+    def command(self) -> str:
+        """
+        Render CLI args while omitting unset optional values.
+
+        This keeps kwdagger-facing params in a clean key/value style and avoids
+        emitting placeholders such as ``--foo=None`` or bare flags for empty
+        list defaults.
+        """
+        filtered_config = {}
+        for key, value in self.final_config.items():
+            if value is None:
+                continue
+            if isinstance(value, list) and len(value) == 0:
+                continue
+            filtered_config[key] = value
+        parts = []
+        for key, value in filtered_config.items():
+            if isinstance(value, dict):
+                from kwutil.util_yaml import Yaml
+                value_text = shlex.quote(Yaml.dumps(value))
+                if '\n' in value_text and value_text[0] == "'":
+                    value_text = "'\n" + value_text[1:]
+                parts.append(f'    --{key}={value_text} \\')
+            else:
+                value_text = shlex.quote(str(value))
+                parts.append(f'    --{key}={value_text} \\')
+        argstr = '\n'.join(parts).lstrip().rstrip('\\')
+        if argstr:
+            return self.executable + ' \\\n    ' + argstr
+        return self.executable
 
     # Optional: You can define load_result if you want kwdagger aggregate to read
     # something out of this node. Usually this node is an “adapter/materializer”

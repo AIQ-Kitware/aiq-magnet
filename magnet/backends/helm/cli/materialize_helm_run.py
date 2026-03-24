@@ -151,7 +151,7 @@ from loguru import logger
 # We rely on MAGNET's HELM output exploration helpers.
 # These are already present in aiq-magnet and know how to load / validate
 # the standard json files produced by helm-run.
-from magnet.helm_outputs import HelmOutputs
+from magnet.backends.helm.helm_outputs import HelmOutputs
 
 
 def _normalize_optional_pathish(value):
