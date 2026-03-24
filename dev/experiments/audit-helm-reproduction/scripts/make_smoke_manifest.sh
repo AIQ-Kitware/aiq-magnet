@@ -7,10 +7,14 @@ source "${SCRIPT_DIR}/common.sh"
 audit::set_defaults
 
 OUTPUT="${1:-${AUDIT_ROOT}/configs/generated/smoke_manifest.generated.yaml}"
+if [[ $# -gt 0 ]]; then
+    shift
+fi
 mkdir -p "$(dirname "$OUTPUT")"
 
 "$AIQ_PYTHON" "${AUDIT_ROOT}/python/make_manifest.py" \
     --manifest-type smoke \
-    --output "$OUTPUT"
+    --output "$OUTPUT" \
+    "$@"
 
 printf 'Wrote smoke manifest: %s\n' "$OUTPUT"
