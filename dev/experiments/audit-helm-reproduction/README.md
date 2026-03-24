@@ -64,10 +64,22 @@ dev/experiments/audit-helm-reproduction/scripts/check_env.sh
 dev/experiments/audit-helm-reproduction/scripts/make_smoke_manifest.sh
 ```
 
+To materialize the first apples-to-apples control manifest instead:
+
+```bash
+dev/experiments/audit-helm-reproduction/scripts/make_apples_manifest.sh
+```
+
 By default this writes:
 
 ```text
 dev/experiments/audit-helm-reproduction/configs/generated/smoke_manifest.generated.yaml
+```
+
+And the apples-to-apples variant writes:
+
+```text
+dev/experiments/audit-helm-reproduction/configs/generated/apples_manifest.generated.yaml
 ```
 
 3. Launch the smoke-test batch on the GPU machine:
@@ -126,6 +138,7 @@ Fields:
 See:
 
 - `configs/smoke_manifest.yaml`
+- `configs/apples_manifest.yaml`
 - `configs/manifest_template.yaml`
 
 ## Smoke-Test Batch
@@ -151,6 +164,18 @@ Defaults:
 - `max_eval_instances=100`
 - low worker count
 - no custom deployment override YAML
+
+## Apples-To-Apples Smoke Batch
+
+The first apples-to-apples control batch reuses the same 6 smoke entries, but
+aligns `max_eval_instances` with the historic public bundle for those entries:
+
+- `max_eval_instances=1000`
+- experiment name: `audit-smoke-apples`
+- suite: `audit-smoke-apples`
+
+This is the preferred first batch when the goal is reproduction fidelity rather
+than just workflow validation.
 
 ## Scaling Up
 
