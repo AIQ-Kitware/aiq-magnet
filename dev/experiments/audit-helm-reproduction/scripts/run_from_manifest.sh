@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+set +x
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
@@ -34,6 +35,7 @@ printf 'tmux_workers: %s\n' "$TMUX_WORKERS"
 
 QUEUE_NAME="$(printf 'audit-%s' "$EXPERIMENT_NAME" | tr -c 'A-Za-z0-9._-' '-')"
 printf 'queue_name: %s\n' "$QUEUE_NAME"
+printf 'Schedule params:\n%s\n' "$PARAMS"
 
 kwdagger schedule \
     --queue_name="$QUEUE_NAME" \
