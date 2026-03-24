@@ -12,9 +12,6 @@ def env_defaults() -> dict[str, str]:
         "AIQ_MAGNET_ROOT": os.environ.get(
             "AIQ_MAGNET_ROOT", "/home/joncrall/code/aiq-magnet"
         ),
-        "HELM_EDITABLE_ROOT": os.environ.get(
-            "HELM_EDITABLE_ROOT", "/home/joncrall/code/helm"
-        ),
         "AIQ_PYTHON": os.environ.get("AIQ_PYTHON", "python"),
         "HELM_PRECOMPUTED_ROOT": os.environ.get(
             "HELM_PRECOMPUTED_ROOT", "/data/crfm-helm-public"

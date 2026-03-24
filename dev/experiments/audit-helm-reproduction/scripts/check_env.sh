@@ -11,7 +11,7 @@ printf '=================\n'
 audit::print_env
 printf '\n'
 
-for path_var in AIQ_MAGNET_ROOT HELM_EDITABLE_ROOT HELM_PRECOMPUTED_ROOT; do
+for path_var in AIQ_MAGNET_ROOT HELM_PRECOMPUTED_ROOT; do
     path="${!path_var}"
     if [[ ! -e "$path" ]]; then
         printf '%s does not exist: %s\n' "$path_var" "$path" >&2
