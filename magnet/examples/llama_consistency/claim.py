@@ -1,9 +1,8 @@
 import json
 
-import ubelt as ub
 import scriptconfig as scfg
-import rich
-from rich.markup import escape
+import ubelt as ub
+
 
 class ConsistencyClaimCLI(scfg.DataConfig):
     """
@@ -12,19 +11,26 @@ class ConsistencyClaimCLI(scfg.DataConfig):
     In lieu of the Claim definition in evaluation.py, this offers a more flexible injest -> evaluate -> write option.
     """
 
-    symbols_fpath = scfg.Value('None', required=True, help=ub.paragraph(
-        '''
+    symbols_fpath = scfg.Value(
+        'None',
+        required=True,
+        help=ub.paragraph(
+            """
         Default path to resolved symbol values.
-        '''
+        """
         ),
-        tags=['in_path'])
+        tags=['in_path'],
+    )
 
-    verdict_fpath = scfg.Value('verdict.json', help=ub.paragraph(
-        '''
+    verdict_fpath = scfg.Value(
+        'verdict.json',
+        help=ub.paragraph(
+            """
         Output path for claim verdict. 
-        '''
+        """
         ),
-        tags=['out_path', 'primary'])
+        tags=['out_path', 'primary'],
+    )
 
     @classmethod
     def main(cls, argv=None, **kwargs):
@@ -35,25 +41,27 @@ class ConsistencyClaimCLI(scfg.DataConfig):
         }
 
         claim_str = "assert abs(comp_score - base_score) < threshold, f'{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})'"
-        status = "UNVERIFIED"
-        out_msg = ""
+        status = 'UNVERIFIED'
+        out_msg = ''
 
-        model_scores = json.loads(ub.Path(config.symbols_fpath).read_text())['result']
+        model_scores = json.loads(ub.Path(config.symbols_fpath).read_text())[
+            'result'
+        ]
 
         # Copied from magnet.evaluation.Claim evaluate
         try:
             exec(claim_str, model_scores)
-            status = "VERIFIED"
+            status = 'VERIFIED'
         except AssertionError as e:
-            status = "FALSIFIED"
-            out_msg = f"Assertion does not hold: {e}"
+            status = 'FALSIFIED'
+            out_msg = f'Assertion does not hold: {e}'
         except NameError as e:
-            status = "INCONCLUSIVE"
+            status = 'INCONCLUSIVE'
             # This doesn't guarantee the missing variable is a symbol
-            out_msg = f"SymbolNotResolved: {e}"
+            out_msg = f'SymbolNotResolved: {e}'
         except Exception as e:
-            status = "INCONCLUSIVE"
-            out_msg = f"ERROR evaluating claim: {e}"
+            status = 'INCONCLUSIVE'
+            out_msg = f'ERROR evaluating claim: {e}'
 
         verdict_json['result'] = {
             'status': status,

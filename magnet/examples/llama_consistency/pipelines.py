@@ -3,10 +3,10 @@ Two node pipeline for llama-consistency example card
 """
 
 import kwdagger
-import ubelt as ub
 
-from .llama_predict import ExampleLlamaEndpointCLI
 from .claim import ConsistencyClaimCLI
+from .llama_predict import ExampleLlamaEndpointCLI
+
 
 class ExampleLlamaEndpoint(kwdagger.ProcessNode):
     """Run the HELM results gathering step."""
@@ -23,11 +23,12 @@ class ConsistencyClaim(kwdagger.ProcessNode):
     """Score predictions against labels and expose metrics for aggregation."""
 
     name = 'claim_eval'
-    executable = f'python -m magnet.examples.llama_consistency.claim'
+    executable = 'python -m magnet.examples.llama_consistency.claim'
     params = ConsistencyClaimCLI
 
     def load_result(self, node_dpath):
         pass
+
 
 def llama_pipeline():
     """Create the prediction pipeline."""

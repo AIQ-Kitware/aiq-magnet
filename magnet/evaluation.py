@@ -1,23 +1,23 @@
-import argparse
 import builtins
-from graphlib import TopologicalSorter
-from itertools import product
 import json
 import sys
-from typing import Any, Dict, List, Self, Tuple, get_origin, get_args
+from graphlib import TopologicalSorter
+from itertools import product
+from typing import Any, Dict, List, Self, Tuple, get_args, get_origin
 
-from kwdagger import ProcessNode, Pipeline
-from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
-from rich import print
 import scriptconfig as scfg
 import ubelt as ub
 import yaml
+from kwdagger import Pipeline, ProcessNode
+from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
+from rich import print
 
 
 class EvaluationConfig(scfg.DataConfig):
     """
     Resolve an Evaluation Card
     """
+
     __epilog__ = """
     Usage:
       ./evaluation.py <evaluation_card_path>
@@ -53,25 +53,26 @@ class EvaluationCard:
         >>> card.evaluate()
         'VERIFIED'
     """
+
     def __init__(self, path, results_path):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
 
         self.results_path = ub.Path(results_path)
 
-        self.title = cfg.get("title", "")
-        self.description = cfg.get("description", "")
+        self.title = cfg.get('title', '')
+        self.description = cfg.get('description', '')
 
-        self.claim = Claim(cfg.get("claim"))
-        self.symbols = cfg.get("symbols", {})
+        self.claim = Claim(cfg.get('claim'))
+        self.symbols = cfg.get('symbols', {})
 
         # explicit kwdagger spec
-        self.has_kwdagger = "kwdagger" in cfg
-        self.kwdagger = cfg.get("kwdagger")
+        self.has_kwdagger = 'kwdagger' in cfg
+        self.kwdagger = cfg.get('kwdagger')
 
         # populate ProcessNode(s) programmatically
-        self.has_pipeline = "pipeline" in cfg
-        self.pipeline = cfg.get("pipeline")
+        self.has_pipeline = 'pipeline' in cfg
+        self.pipeline = cfg.get('pipeline')
 
         self.evaluations = []
 
@@ -79,16 +80,21 @@ class EvaluationCard:
         """
         Declaration of card state, whether not started, in progress, or complete
         """
-        if self.claim.status == "UNVERIFIED" and len(self.evaluations) > 0:
-            not_evaluated_count = sum([evaluation.claim.status == "UNVERIFIED" for evaluation in self.evaluations])
+        if self.claim.status == 'UNVERIFIED' and len(self.evaluations) > 0:
+            not_evaluated_count = sum(
+                [
+                    evaluation.claim.status == 'UNVERIFIED'
+                    for evaluation in self.evaluations
+                ]
+            )
             percent_not_evaluated = not_evaluated_count / len(self.evaluations)
 
             if percent_not_evaluated == 0:
-                return "EVALUATED"
+                return 'EVALUATED'
             else:
-                return f"{percent_not_evaluated:.2f} REMAINING"
+                return f'{percent_not_evaluated:.2f} REMAINING'
         else:
-            return "EVALUATED"
+            return 'EVALUATED'
 
     def evaluate(self):
         """
@@ -103,27 +109,35 @@ class EvaluationCard:
         if self.has_kwdagger:
             # Explicit kwdagger pipeline defined
             # Claim node handles symbols outside of EvaluationCard
-            results = KWDaggerProcessor(self.kwdagger, root_dpath=self.results_path).collect_results()
+            results = KWDaggerProcessor(
+                self.kwdagger, root_dpath=self.results_path
+            ).collect_results()
 
         elif self.has_pipeline:
             # Implicit pipeline definition needs parsing
-            pipeline_runs = GenericPipelineProcessor(self.pipeline, root_dpath=self.results_path).collect_symbols()
-            
+            pipeline_runs = GenericPipelineProcessor(
+                self.pipeline, root_dpath=self.results_path
+            ).collect_symbols()
+
             # Claim resolution
             results = []
 
             for run in pipeline_runs:
                 run_symbols = pipeline_runs[run]
                 self.symbols.update(run_symbols)
-                self.evaluations.extend(self.dispatch(Symbols.decompose_symbol_defs(self.symbols)))
+                self.evaluations.extend(
+                    self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
+                )
 
             for evaluation in self.evaluations:
                 status, _ = evaluation.execute()
                 results.append(status)
-            
+
         else:
             # Serial Evaluation Card
-            self.evaluations = self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
+            self.evaluations = self.dispatch(
+                Symbols.decompose_symbol_defs(self.symbols)
+            )
 
             results = []
             for evaluation in self.evaluations:
@@ -137,12 +151,12 @@ class EvaluationCard:
         falsified_count = results.count('FALSIFIED')
         inconclusive_count = results.count('INCONCLUSIVE')
 
-        print("================================")
-        print(f"Settings Evaluated: {total}")
-        print(f"  Verified:     {percentage(verified_count):.2f}")
-        print(f"  Falsified:    {percentage(falsified_count):.2f}")
-        print(f"  Inconclusive: {percentage(inconclusive_count):.2f}")
-        print("================================")
+        print('================================')
+        print(f'Settings Evaluated: {total}')
+        print(f'  Verified:     {percentage(verified_count):.2f}')
+        print(f'  Falsified:    {percentage(falsified_count):.2f}')
+        print(f'  Inconclusive: {percentage(inconclusive_count):.2f}')
+        print('================================')
         print('\n')
 
         card_result = ''
@@ -157,36 +171,43 @@ class EvaluationCard:
         return card_result
 
     def dispatch(self, flattened_sweep):
-        return [EvaluationTask(Claim({'python': self.claim.claim}), symbols) for symbols in flattened_sweep]
+        return [
+            EvaluationTask(Claim({'python': self.claim.claim}), symbols)
+            for symbols in flattened_sweep
+        ]
 
     def summarize(self):
         """
         Human-readable summary of card in its current state
         """
-        print(f"[bold]Title:[/bold]       {self.title}")
-        print(f"[bold]Description:[/bold] {self.description}")
-        print("================================")
-        #print(f"SYMBOLS:     {self.symbols()}")
-        print(f"[bold]CLAIM:[/bold]       \n{self.claim}")
+        print(f'[bold]Title:[/bold]       {self.title}')
+        print(f'[bold]Description:[/bold] {self.description}')
+        print('================================')
+        # print(f"SYMBOLS:     {self.symbols()}")
+        print(f'[bold]CLAIM:[/bold]       \n{self.claim}')
 
         status = self.status()
         if self.claim.status == 'VERIFIED':
-            claim_status_color = "green"
+            claim_status_color = 'green'
         elif self.claim.status == 'FALSIFIED':
-            claim_status_color = "red"
+            claim_status_color = 'red'
         else:
-            claim_status_color = "yellow"
+            claim_status_color = 'yellow'
 
         if status == 'EVALUATED':
-            print("================================")
-            print(f"[bold]RESULT:[/bold]      [bold][{claim_status_color}]{self.claim.status}[/{claim_status_color}][/bold]""")
+            print('================================')
+            print(
+                f'[bold]RESULT:[/bold]      [bold][{claim_status_color}]{self.claim.status}[/{claim_status_color}][/bold]'
+                ''
+            )
 
-        print("================================")
-        print(f"[bold]CARD STATUS:[/bold] {status}""")
+        print('================================')
+        print(f'[bold]CARD STATUS:[/bold] {status}')
+
 
 class GenericPipelineProcessor:
-    '''
-    Handler for yaml-based pipeline specification 
+    """
+    Handler for yaml-based pipeline specification
 
     *possibly merge with KWDaggerProcessor*
     Example:
@@ -197,8 +218,8 @@ class GenericPipelineProcessor:
         >>>         'predict_node': {
         >>>             'executable': "python -m magnet.examples.llama_consistency.llama_predict",
         >>>             'algo_params': {
-        >>>                 'base_model' : ["meta/llama-2-13b", "meta/llama-2-70b"], 
-        >>>                 'comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"], 
+        >>>                 'base_model' : ["meta/llama-2-13b", "meta/llama-2-70b"],
+        >>>                 'comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"],
         >>>             },
         >>>             'out_paths': {
         >>>                 'results_fpath': "./llama_results.json",
@@ -234,7 +255,8 @@ class GenericPipelineProcessor:
         >>> pipeline.matrix
         {'predict_node.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
         'predict_node.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
-    '''
+    """
+
     def __init__(self, pipeline_def, root_dpath):
         self.pipeline = pipeline_def
         self.root_dpath = root_dpath
@@ -243,19 +265,21 @@ class GenericPipelineProcessor:
         self.symbols = {}
 
     def define_kwdagger(self):
-        '''
+        """
         Construct kwdagger pipeline programmatically
 
         *only verified for one-stage pipeline, needs 'connector' handling*
-        '''
+        """
         nodes = {}
 
         for node_name in self.pipeline:
             # collect nodes
             node_params = self.pipeline[node_name]
-        
+
             # FIXME: should update matrix for full pipeline
-            node_params, self.matrix = self._parse_params(node_name, node_params)
+            node_params, self.matrix = self._parse_params(
+                node_name, node_params
+            )
 
             node = ProcessNode(name=node_name, **node_params)
             nodes[node_name] = node
@@ -269,7 +293,7 @@ class GenericPipelineProcessor:
         kwdagger_params = {'pipeline': self.dag, 'matrix': self.matrix}
 
         kwd_config = ScheduleEvaluationConfig(
-            params=kwdagger_params, #includes pipeline and additional params
+            params=kwdagger_params,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
             backend=backend,
             skip_existing=skip_existing,
@@ -279,14 +303,16 @@ class GenericPipelineProcessor:
         dag, queue = build_schedule(kwd_config)
 
     def collect_symbols(self):
-        '''
+        """
         Collect results (Evaluation Card 'symbols') in place of 'load_result' in the ProcessNode definition
-        '''
+        """
         if not self.symbols:
             self.dispatch()
-        
+
         # Glob all results json (only one node in pipeline)
-        paths = self.root_dpath.glob(f"**/{self.dag.nodes[next(iter(self.dag.nodes))].out_paths['results_fpath']}")
+        paths = self.root_dpath.glob(
+            f'**/{self.dag.nodes[next(iter(self.dag.nodes))].out_paths["results_fpath"]}'
+        )
 
         for symbol_resolution in paths:
             symbols = json.load(open(symbol_resolution, 'r'))
@@ -298,27 +324,29 @@ class GenericPipelineProcessor:
                     if parent_dir not in self.symbols:
                         self.symbols[parent_dir] = {}
 
-                    self.symbols[parent_dir][symbol] = {'value': symbols['result'][symbol]}
+                    self.symbols[parent_dir][symbol] = {
+                        'value': symbols['result'][symbol]
+                    }
 
         return self.symbols
-    
+
     def _parse_params(self, node_name, node_cfg):
-        '''
+        """
         Parse sweepable parameters from definition
-        '''
+        """
         matrix = {}
         for k in node_cfg:
-            if isinstance(node_cfg[k], dict) and "_params" in k: 
+            if isinstance(node_cfg[k], dict) and '_params' in k:
                 # TODO: Construct a more robust validator
                 for param, v in node_cfg[k].items():
-                    matrix[f"{node_name}.{param}"] = v
+                    matrix[f'{node_name}.{param}'] = v
                 # decompose yaml
                 node_cfg[k] = list(node_cfg[k].keys())
         return node_cfg, matrix
 
 
 class KWDaggerProcessor:
-    '''
+    """
     Handler for full kwdagger pipeline specification
 
     Example
@@ -329,8 +357,8 @@ class KWDaggerProcessor:
         >>>     'kwdagger': {
         >>>         'pipeline': "magnet.examples.llama_consistency.pipelines.llama_pipeline()",
         >>>         'matrix': {
-        >>>             'llama_predict.base_model': ["meta/llama-2-13b", "meta/llama-2-70b"], 
-        >>>             'llama_predict.comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"], 
+        >>>             'llama_predict.base_model': ["meta/llama-2-13b", "meta/llama-2-70b"],
+        >>>             'llama_predict.comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"],
         >>>         }
         >>>     }
         >>> }
@@ -359,13 +387,14 @@ class KWDaggerProcessor:
             claim_eval
             ╽
             verdict_fpath
-        
+
         >>> #
         >>> # Parameters matrix
         >>> pipeline.spec['matrix']
         {'llama_predict.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
         'llama_predict.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
-    '''
+    """
+
     def __init__(self, pipeline_def, root_dpath):
         self.spec = pipeline_def
         self.root_dpath = root_dpath
@@ -373,29 +402,29 @@ class KWDaggerProcessor:
 
     def dispatch(self, backend='serial', skip_existing=True, **kwargs):
         kwd_config = ScheduleEvaluationConfig(
-            params=self.spec, #includes pipeline and additional params
+            params=self.spec,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
             backend=backend,
             skip_existing=skip_existing,
             run=True,
-            **kwargs
+            **kwargs,
         )
 
         self.dag, queue = build_schedule(kwd_config)
-    
+
     def collect_results(self):
         if not self.results:
             self.dispatch()
-        
+
         # Glob all Claim node json files recursively
-        paths = self.root_dpath.glob(f'**/verdict.json')
+        paths = self.root_dpath.glob('**/verdict.json')
 
         # Assumes {result: {status: value}} output format
         for claim_json in paths:
             claim_result = json.load(open(claim_json, 'r'))
             if 'result' in claim_result and 'status' in claim_result['result']:
                 self.results.append(claim_result['result']['status'])
-        
+
         return self.results
 
 
@@ -403,6 +432,7 @@ class EvaluationTask:
     """
     Singular submission from an Evaluation Card
     """
+
     def __init__(self, claim, symbols):
         self.claim = claim
         self.symbols = symbols
@@ -419,6 +449,7 @@ class EvaluationTask:
         # Could log requests from here (i.e. timestamps), I think this was done in other code segments
         # timestamp, symbol value, claim result
         raise NotImplementedError
+
 
 class Claim:
     """
@@ -441,11 +472,12 @@ class Claim:
         >>> print(self.status)
         VERIFIED
     """
+
     def __init__(self, raw):
         self.claim = raw.get('python')
-        self.status = "UNVERIFIED"
+        self.status = 'UNVERIFIED'
 
-    def evaluate(self, symbols: Dict[str, Any]={}):
+    def evaluate(self, symbols: Dict[str, Any] = {}):
         """
         Execute the claim subject to symbols definitions
 
@@ -457,19 +489,19 @@ class Claim:
             INCONCLUSIVE
         """
         try:
-            out_msg = ""
+            out_msg = ''
             exec(self.claim, symbols)
-            self.status = "VERIFIED"
+            self.status = 'VERIFIED'
         except AssertionError as e:
-            self.status = "FALSIFIED"
-            out_msg = f"Assertion does not hold: {e}"
+            self.status = 'FALSIFIED'
+            out_msg = f'Assertion does not hold: {e}'
         except NameError as e:
-            self.status = "INCONCLUSIVE"
+            self.status = 'INCONCLUSIVE'
             # This doesn't guarantee the missing variable is a symbol
-            out_msg = f"SymbolNotResolved: {e}"
+            out_msg = f'SymbolNotResolved: {e}'
         except Exception as e:
-            self.status = "INCONCLUSIVE"
-            out_msg = f"ERROR evaluating claim: {e}"
+            self.status = 'INCONCLUSIVE'
+            out_msg = f'ERROR evaluating claim: {e}'
         finally:
             if out_msg:
                 print(out_msg)
@@ -477,6 +509,7 @@ class Claim:
 
     def __repr__(self) -> str:
         return self.claim
+
 
 class Symbol:
     """
@@ -488,6 +521,7 @@ class Symbol:
         >>> x.eval()
         [10]
     """
+
     def __init__(self, name, spec):
         self.name = name
         self.value = spec.get('value')
@@ -496,19 +530,21 @@ class Symbol:
         self.definition = spec.get('python', '')
         self.dependencies = spec.get('depends_on', [])
 
-    def eval(self, context: Dict[str, Any]= {}) -> Any:
+    def eval(self, context: Dict[str, Any] = {}) -> Any:
         """
         Resolve symbol definition
 
         FIXME: type verification is currently limited and hacky
         """
         if self.value is None:
-            print(f"Resolving: {self.name}")
+            print(f'Resolving: {self.name}')
             exec(self.definition, context)
             if self._check_type(self.type, context[self.name]):
                 self.value = context[self.name]
             else:
-                raise TypeError(f'{self.name}: {context[self.name]} is not {self.type}')
+                raise TypeError(
+                    f'{self.name}: {context[self.name]} is not {self.type}'
+                )
 
         return self.value
 
@@ -531,21 +567,29 @@ class Symbol:
         match collection_type:
             case builtins.list:
                 if isinstance(value, list):
-                    return all(self._check_collections(members[0], entry) for entry in value)
+                    return all(
+                        self._check_collections(members[0], entry)
+                        for entry in value
+                    )
             case builtins.dict:
                 if isinstance(value, dict):
                     return all(
-                        self._check_collections(members[0], key_entry) and self._check_collections(members[1], value_entry)
+                        self._check_collections(members[0], key_entry)
+                        and self._check_collections(members[1], value_entry)
                         for key_entry, value_entry in value.items()
                     )
             case builtins.tuple:
                 if isinstance(value, tuple) and len(value) == len(members):
-                    return all(self._check_collections(type, val) for type, val in zip(members, value))
+                    return all(
+                        self._check_collections(type, val)
+                        for type, val in zip(members, value)
+                    )
             case None:
                 # Any or primative
                 return target_type is Any or isinstance(value, target_type)
             case _:
                 return False
+
 
 class Symbols:
     """
@@ -560,8 +604,12 @@ class Symbols:
         >>> symbols()
         {'x': [10]}
     """
+
     def __init__(self, symbol_specs) -> None:
-        self.symbols = {symbol: Symbol(symbol, definition) for symbol, definition in symbol_specs.items()}
+        self.symbols = {
+            symbol: Symbol(symbol, definition)
+            for symbol, definition in symbol_specs.items()
+        }
 
     @classmethod
     def decompose_symbol_defs(cls, symbol_definitions) -> List[Self]:
@@ -577,9 +625,11 @@ class Symbols:
             combinations = product(*sweep_values)
 
             for combo in combinations:
-                sweep_fill = dict(zip([symbol.name for symbol in sweep_symbols], combo))
+                sweep_fill = dict(
+                    zip([symbol.name for symbol in sweep_symbols], combo)
+                )
                 flattened_symbols = cls(symbol_definitions)
-                for k,v in sweep_fill.items():
+                for k, v in sweep_fill.items():
                     flattened_symbols.symbols[k].value = v
                 configurations.append(flattened_symbols)
         else:
@@ -596,7 +646,9 @@ class Symbols:
         symbol_definitions = {}
 
         for symbol in self._construct_dependency_order():
-            symbol_definitions[symbol] = self.symbols[symbol].eval(symbol_definitions.copy())
+            symbol_definitions[symbol] = self.symbols[symbol].eval(
+                symbol_definitions.copy()
+            )
 
     def _find_sweep_symbols(self) -> List[Symbol]:
         return [symbol for symbol in self.symbols.values() if symbol.sweep]
@@ -605,7 +657,9 @@ class Symbols:
         """
         Construct dependency order
         """
-        dependency_graph = {name: symbol.dependencies for name, symbol in self.symbols.items()}
+        dependency_graph = {
+            name: symbol.dependencies for name, symbol in self.symbols.items()
+        }
         sorter = TopologicalSorter(dependency_graph)
         return list(sorter.static_order())
 
@@ -615,7 +669,11 @@ class Symbols:
 
 def main(argv=None, **kwargs):
     args = EvaluationConfig.cli(
-        argv=argv, data=kwargs, strict=True, verbose='auto', special_options=False
+        argv=argv,
+        data=kwargs,
+        strict=True,
+        verbose='auto',
+        special_options=False,
     )
 
     card = EvaluationCard(args.path, args.results_path)
