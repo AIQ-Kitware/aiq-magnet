@@ -211,24 +211,24 @@ class GenericPipelineProcessor:
     """
     Handler for yaml-based pipeline specification
 
-    *possibly merge with KWDaggerProcessor*
+    NOTE:
+        *possibly merge with KWDaggerProcessor*
+
     Example:
         >>> from magnet.evaluation import GenericPipelineProcessor
+        >>> import kwutil
         >>> # Example snippet of an Evaluation Card
-        >>> example_cfg = {
-        >>>     'pipeline': {
-        >>>         'predict_node': {
-        >>>             'executable': "python -m magnet.examples.llama_consistency.llama_predict",
-        >>>             'algo_params': {
-        >>>                 'base_model' : ["meta/llama-2-13b", "meta/llama-2-70b"],
-        >>>                 'comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"],
-        >>>             },
-        >>>             'out_paths': {
-        >>>                 'results_fpath': "./llama_results.json",
-        >>>             }
-        >>>         },
-        >>>     }
-        >>> }
+        >>> example_cfg = kwutil.Yaml.coerce(
+            '''
+            pipeline:
+              predict_node:
+                executable: python -m magnet.examples.llama_consistency.llama_predict
+                algo_params:
+                  base_model: ["meta/llama-2-13b", "meta/llama-2-70b"]
+                  comp_model: ["meta/llama-2-7b", "meta/llama-3-70b"]
+                out_paths:
+                  results_fpath: ./llama_results.json
+            ''')
         >>> root_dpath = "."
         >>> pipeline_def = example_cfg['pipeline']
         >>> pipeline = GenericPipelineProcessor(pipeline_def, root_dpath)
@@ -354,16 +354,16 @@ class KWDaggerProcessor:
     Example
         >>> from magnet.evaluation import KWDaggerProcessor
         >>> from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
+        >>> import kwutil
         >>> # Example snippet of an Evaluation Card (related to GenericPipelineProcessor example)
-        >>> example_cfg = {
-        >>>     'kwdagger': {
-        >>>         'pipeline': "magnet.examples.llama_consistency.pipelines.llama_pipeline()",
-        >>>         'matrix': {
-        >>>             'llama_predict.base_model': ["meta/llama-2-13b", "meta/llama-2-70b"],
-        >>>             'llama_predict.comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"],
-        >>>         }
-        >>>     }
-        >>> }
+        >>> example_cfg = kwutil.Yaml.coerce(
+            '''
+            kwdagger:
+              pipeline: magnet.examples.llama_consistency.pipelines.llama_pipeline()
+              matrix:
+                llama_predict.base_model: ["meta/llama-2-13b", "meta/llama-2-70b"]
+                llama_predict.comp_model:  ["meta/llama-2-7b", "meta/llama-3-70b"]
+            ''')
         >>> root_dpath = "."
         >>> kwdagger_def = example_cfg['kwdagger']
         >>> pipeline = KWDaggerProcessor(kwdagger_def, root_dpath)
