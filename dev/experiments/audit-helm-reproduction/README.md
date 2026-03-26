@@ -185,6 +185,52 @@ aligns `max_eval_instances` with the historic public bundle for those entries:
 This is the preferred first batch when the goal is reproduction fidelity rather
 than just workflow validation.
 
+Suggested operator flow:
+
+```bash
+dev/experiments/audit-helm-reproduction/scripts/make_apples_manifest.sh \
+  dev/experiments/audit-helm-reproduction/configs/generated/apples_manifest.generated.yaml \
+  --devices 0,1
+
+dev/experiments/audit-helm-reproduction/scripts/run_from_manifest.sh \
+  dev/experiments/audit-helm-reproduction/configs/generated/apples_manifest.generated.yaml
+
+dev/experiments/audit-helm-reproduction/scripts/compare_batch.sh \
+  dev/experiments/audit-helm-reproduction/configs/generated/apples_manifest.generated.yaml
+```
+
+Raw reproduced outputs are written to:
+
+```text
+/data/crfm-helm-audit/audit-smoke-apples/
+```
+
+Comparison reports are written to:
+
+```text
+dev/experiments/audit-helm-reproduction/reports/audit-smoke-apples/
+```
+
+Files to inspect first:
+
+- `management_summary_<timestamp>.txt`
+- `compare_summary_<timestamp>.txt`
+- `compare_cases_<timestamp>.jsonl`
+
+Files to transfer back for local analysis:
+
+- the entire report directory
+- optionally the entire raw results directory if deeper run-by-run inspection is needed
+
+Example transfer commands depend on your setup, but a simple pattern is:
+
+```bash
+ls -td dev/experiments/audit-helm-reproduction/reports/audit-smoke-apples/*
+ls -td /data/crfm-helm-audit/audit-smoke-apples/*
+```
+
+Then transfer the newest report files and, if needed, the raw experiment root.
+
 ## Scaling Up
 
 For larger experiments:

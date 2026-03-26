@@ -533,9 +533,11 @@ def main() -> None:
                 try:
                     helm_run = HelmRun.coerce(helm_row["run_dir"])
                     kwdg_run = kwrow["run"]
-                    kwdg_run_spec = kwdg_run.run_spec().iloc[0].to_dict()
-                    case_row["kwdg_requested_max_eval_instances"] = kwdg_run_spec.get(
-                        "adapter_spec.max_eval_instances", None
+                    kwdg_run_spec = load_run_spec_json(kwdg_run.path)
+                    case_row["kwdg_requested_max_eval_instances"] = (
+                        kwdg_run_spec.get("adapter_spec", {}) or {}
+                    ).get(
+                        "max_eval_instances", None
                     )
                     rd = HelmRunDiff(
                         run_a=helm_run,
