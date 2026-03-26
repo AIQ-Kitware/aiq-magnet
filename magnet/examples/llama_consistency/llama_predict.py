@@ -1,53 +1,69 @@
 import json
 
-import ubelt as ub
 import kwutil
-import rich
-from rich.markup import escape
 import scriptconfig as scfg
+import ubelt as ub
 
-from magnet import HelmOutputs
-from magnet.helm_outputs import HelmSuiteRuns
+from magnet.backends.helm.helm_outputs import HelmOutputs
+from magnet.backends.helm.helm_outputs import HelmSuiteRuns
+
 
 class ExampleLlamaEndpointCLI(scfg.DataConfig):
     """
     Stub for a prediction algorithm that grabs relevant scores from HELM precomputed results
     """
 
-    base_model = scfg.Value(None, required=True, help=ub.paragraph(
-        '''
+    base_model = scfg.Value(
+        None,
+        required=True,
+        help=ub.paragraph(
+            """
         String corresponding to the model common name (run_spec.adapter_spec.model) in HELM results.
-        '''
+        """
         ),
-        tags=['algo_param'])
+        tags=['algo_param'],
+    )
 
-    comp_model = scfg.Value(None, required=True, help=ub.paragraph(
-        '''
+    comp_model = scfg.Value(
+        None,
+        required=True,
+        help=ub.paragraph(
+            """
         String corresponding to the model common name (run_spec.adapter_spec.model) in HELM results.
-        '''
+        """
         ),
-        tags=['algo_param'])
-    
-    threshold = scfg.Value(0.1, help=ub.paragraph(
-        '''
+        tags=['algo_param'],
+    )
+
+    threshold = scfg.Value(
+        0.1,
+        help=ub.paragraph(
+            """
         Float indicating the consistency threshold used in resolving the claim
-        '''
+        """
         ),
-        tags=['algo_param'])
-    
-    helm_runs_path = scfg.Value('./data/crfm-helm-public/lite/benchmark_output', help=ub.paragraph(
-        '''
-        Default path to precomputed HELM results.
-        '''
-        ),
-        tags=['algo_param'])
+        tags=['algo_param'],
+    )
 
-    results_fpath = scfg.Value('results.json', help=ub.paragraph(
-        '''
-        Default output path to store sweep parameters. 
-        '''
+    helm_runs_path = scfg.Value(
+        './data/crfm-helm-public/lite/benchmark_output',
+        help=ub.paragraph(
+            """
+        Default path to precomputed HELM results.
+        """
         ),
-        tags=['out_path', 'primary'])
+        tags=['algo_param'],
+    )
+
+    results_fpath = scfg.Value(
+        'results.json',
+        help=ub.paragraph(
+            """
+        Default output path to store sweep parameters.
+        """
+        ),
+        tags=['out_path', 'primary'],
+    )
 
     @classmethod
     def main(cls, argv=None, **kwargs):
@@ -70,44 +86,60 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         # ----------------------------------------------
         ## run_specs Symbol Resolution
 
-        # Load all HELM Lite releases 
+        # Load all HELM Lite releases
         helm_data = HelmOutputs(ub.Path(config.helm_runs_path))
 
         # Collect runs from each release
         helm_lite_runs = []
         for suite in helm_data.suites():
             # unix glob filter runs for llama models evaluated on MMLU
-            helm_lite_runs.extend(suite.runs("mmlu*model=meta_*llama*").paths)
+            helm_lite_runs.extend(suite.runs('mmlu*model=meta_*llama*').paths)
 
         # Create an aggregate view of all HELM Lite runs used for latest leaderboard
         run_specs = HelmSuiteRuns.coerce(helm_lite_runs)
 
         ## exact_match_scores Symbol Resolution
-        
+
         run_stats = run_specs.stats()
         # filter to benchmark stats per https://github.com/stanford-crfm/helm/issues/2362
         run_stats = run_stats[
-            (run_stats['stats.name.name'] == 'exact_match') & 
-            (run_stats['stats.name.perturbation.computed_on'].isna()) &
-            (run_stats['stats.name.split'] == 'test')]
+            (run_stats['stats.name.name'] == 'exact_match')
+            & (run_stats['stats.name.perturbation.computed_on'].isna())
+            & (run_stats['stats.name.split'] == 'test')
+        ]
 
         # extract HELM model common names
-        helm_models = run_specs.run_spec().set_index('run_spec.name')['run_spec.adapter_spec.model'].to_dict()
+        helm_models = (
+            run_specs.run_spec()
+            .set_index('run_spec.name')['run_spec.adapter_spec.model']
+            .to_dict()
+        )
         run_stats['model'] = run_stats['run_spec.name'].map(helm_models)
 
         # only specific models
-        run_stats = run_stats[(run_stats['model'] == config.base_model) | (run_stats['model'] == config.comp_model)]
+        run_stats = run_stats[
+            (run_stats['model'] == config.base_model)
+            | (run_stats['model'] == config.comp_model)
+        ]
 
         # average exact_match scores across subjects
         exact_match_scores_df = run_stats.groupby('model')['stats.mean'].mean()
 
         exact_match_scores = list(exact_match_scores_df.items())
-        
+
         ## base_score Symbol Resolution
-        base_score = [(name, score) for name, score in exact_match_scores if name == config.base_model][0][1]
+        base_score = [
+            (name, score)
+            for name, score in exact_match_scores
+            if name == config.base_model
+        ][0][1]
 
         ## comp_score Symbol Resolution
-        comp_score = [(name, score) for name, score in exact_match_scores if name == config.comp_model][0][1]
+        comp_score = [
+            (name, score)
+            for name, score in exact_match_scores
+            if name == config.comp_model
+        ][0][1]
 
         # Write comp_score and base_score to results file
 
