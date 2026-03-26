@@ -28,12 +28,18 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         ),
         tags=['algo_param'])
     
-    helm_runs_path = scfg.Value('/home/bfenelon/AIQ-project/aiq-magnet/data/crfm-helm-public/lite/benchmark_output', help=ub.paragraph(
+    threshold = scfg.Value(0.1, help=ub.paragraph(
+        '''
+        Float indicating the consistency threshold used in resolving the claim
+        '''
+        ),
+        tags=['algo_param'])
+    
+    helm_runs_path = scfg.Value('./data/crfm-helm-public/lite/benchmark_output', help=ub.paragraph(
         '''
         Default path to precomputed HELM results.
         '''
         ),)
-        #tags=['in_path'])
 
     results_fpath = scfg.Value('results.json', help=ub.paragraph(
         '''
@@ -44,16 +50,14 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
 
     @classmethod
     def main(cls, argv=None, **kwargs):
-        config = cls.cli(argv=argv, data=kwargs, strict=True)
-        rich.print('config = ' + escape(ub.urepr(config, nl=1)))
+        config = cls.cli(argv=argv, data=kwargs, strict=True, verbose=True)
 
         run_data = {
-            #'info': [], FIXME REMOVE for now to limit output
             'result': None,
         }
 
         proc_context = kwutil.ProcessContext(
-            name='evaluate_consistency',
+            name='consistency_example',
             type='process',
             config=kwutil.Json.ensure_serializable(dict(config)),
             track_emissions=False,
@@ -112,11 +116,10 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
             'base_score': base_score,
             'comp_model': config.comp_model,
             'comp_score': comp_score,
-            'threshold': 0.1,
+            'threshold': config.threshold,
         }
 
         obj = proc_context.stop()
-        # FIXME data['info'].append(obj)
 
         dst_fpath = ub.Path(config.results_fpath)
         dst_fpath.parent.ensuredir()
@@ -131,9 +134,9 @@ if __name__ == '__main__':
 
     r"""
     CommandLine:
-        python ./cards/llama_consistency/cli/llama_predict.py \
+        python ./magnet/examples/llama_consistency/llama_predict.py \
             --base_model meta/llama-2-70b \
             --comp_model meta/llama-3-70b \
             --helm_runs_path ./data/crfm-helm-public/lite/benchmark_output \
-            --results_fpath ./data/llama-example-runs
+            --results_fpath ./results.json
     """

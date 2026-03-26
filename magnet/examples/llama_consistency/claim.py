@@ -12,14 +12,14 @@ class ConsistencyClaimCLI(scfg.DataConfig):
     In lieu of the Claim definition in evaluation.py, this offers a more flexible injest -> evaluate -> write option.
     """
 
-    symbols_fpath = scfg.Value('./data/llama-consistency/results.json', required=True, help=ub.paragraph(
+    symbols_fpath = scfg.Value('results.json', required=True, help=ub.paragraph(
         '''
         Default path to resolved symbol values.
         '''
         ),
         tags=['in_path'])
 
-    verdict_fpath = scfg.Value('./data/llama-consistency/verdict.json', help=ub.paragraph(
+    verdict_fpath = scfg.Value('verdict.json', help=ub.paragraph(
         '''
         Output path for claim verdict. 
         '''
@@ -28,8 +28,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
 
     @classmethod
     def main(cls, argv=None, **kwargs):
-        config = cls.cli(argv=argv, data=kwargs, strict=True)
-        rich.print('config = ' + escape(ub.urepr(config, nl=1)))
+        config = cls.cli(argv=argv, data=kwargs, strict=True, verbose=True)
 
         verdict_json = {
             'result': None,
@@ -74,7 +73,7 @@ if __name__ == '__main__':
 
     r"""
     CommandLine:
-        python ./cards/llama_consistency/cli/claim.py \
-            --symbols_fpath ./data/llama-example-runs/results.json \
-            --verdict_fpath ./data/llama-example-runs/verdict.json
+        python ./magnet/examples/llama_consistency/claim.py \
+            --symbols_fpath results.json \
+            --verdict_fpath verdict.json
     """

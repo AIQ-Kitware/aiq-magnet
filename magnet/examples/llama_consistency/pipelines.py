@@ -5,34 +5,15 @@ Two node pipeline for llama-consistency example card
 import kwdagger
 import ubelt as ub
 
-from .cli.llama_predict import ExampleLlamaEndpointCLI
-from .cli.claim import ConsistencyClaimCLI
-
-try:
-    MODULE_DPATH = ub.Path(__file__).parent
-except NameError:
-    # for developer convenience
-    MODULE_DPATH = ub.Path(".").resolve()
-
+from .llama_predict import ExampleLlamaEndpointCLI
+from .claim import ConsistencyClaimCLI
 
 class ExampleLlamaEndpoint(kwdagger.ProcessNode):
     """Run the HELM results gathering step."""
 
     name = 'llama_predict'
-    executable = f'python {MODULE_DPATH}/cli/llama_predict.py'
+    executable = 'python -m magnet.examples.llama_consistency.llama_predict'
     params = ExampleLlamaEndpointCLI
-    
-    # FIXME: added manual tags to fix issue finding paths
-    out_paths = {
-        'results_fpath': 'results.json',
-    }
-
-    primary_out_key = 'results_fpath'
-
-    algo_params = {
-        'base_model',
-        'comp_model',
-    }
 
     def load_result(self, node_dpath):
         pass
@@ -42,18 +23,8 @@ class ConsistencyClaim(kwdagger.ProcessNode):
     """Score predictions against labels and expose metrics for aggregation."""
 
     name = 'claim_eval'
-    executable = f'python {MODULE_DPATH}/cli/claim.py'
+    executable = f'python -m magnet.examples.llama_consistency.claim'
     params = ConsistencyClaimCLI
-
-    in_paths = {
-        'symbols_fpath',
-    }
-
-    out_paths = {
-        'verdict_fpath': 'verdict.json',
-    }
-
-    primary_out_key = 'verdict_fpath'
 
     def load_result(self, node_dpath):
         pass

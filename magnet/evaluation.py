@@ -48,7 +48,8 @@ class EvaluationCard:
         >>> from magnet.evaluation import EvaluationCard
         >>> card_name = 'simple.yaml'
         >>> card_path = files('magnet') / 'cards' / card_name
-        >>> card = EvaluationCard(card_path)
+        >>> results_path = './results'
+        >>> card = EvaluationCard(card_path), results_path)
         >>> card.evaluate()
         VERIFIED
     """
@@ -65,10 +66,12 @@ class EvaluationCard:
         self.symbols = cfg.get("symbols", {})
 
         # explicit kwdagger spec
-        self.kwdagger = cfg.get('kwdagger', {})
+        self.has_kwdagger = "kwdagger" in cfg
+        self.kwdagger = cfg.get("kwdagger")
 
         # populate ProcessNode(s) programmatically
-        self.pipeline = cfg.get("pipeline", {})
+        self.has_pipeline = "pipeline" in cfg
+        self.pipeline = cfg.get("pipeline")
 
         self.evaluations = []
 
@@ -97,11 +100,13 @@ class EvaluationCard:
         """
         results = []
 
-        if self.kwdagger:
+        if self.has_kwdagger:
+            # Explicit kwdagger pipeline defined
             # Claim node handles symbols outside of EvaluationCard
             results = KWDaggerProcessor(self.kwdagger, root_dpath=self.results_path).collect_results()
 
-        if self.pipeline:
+        elif self.has_pipeline:
+            # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(self.pipeline, root_dpath=self.results_path).collect_symbols()
             
             # Claim resolution
@@ -117,6 +122,7 @@ class EvaluationCard:
                 results.append(status)
             
         else:
+            # Serial Evaluation Card
             self.evaluations = self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
 
             results = []
@@ -283,7 +289,7 @@ class KWDaggerProcessor:
             **kwargs
         )
 
-        dag, queue = build_schedule(kwd_config)
+        self.dag, queue = build_schedule(kwd_config)
     
     def collect_results(self):
         if not self.results:
