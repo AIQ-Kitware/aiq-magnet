@@ -4,8 +4,8 @@ import kwutil
 import scriptconfig as scfg
 import ubelt as ub
 
-from magnet import HelmOutputs
-from magnet.helm_outputs import HelmSuiteRuns
+from magnet.backends.helm.helm_outputs import HelmOutputs
+from magnet.backends.helm.helm_outputs import HelmSuiteRuns
 
 
 class ExampleLlamaEndpointCLI(scfg.DataConfig):
@@ -59,7 +59,7 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         'results.json',
         help=ub.paragraph(
             """
-        Default output path to store sweep parameters. 
+        Default output path to store sweep parameters.
         """
         ),
         tags=['out_path', 'primary'],

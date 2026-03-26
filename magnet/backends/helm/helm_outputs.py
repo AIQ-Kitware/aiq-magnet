@@ -1046,7 +1046,7 @@ class _HelmRunDataFrameView:
         # Add a prefix to enable joins for join keys
         flat_table = flat_table.insert_prefix('per_instance_stats')
         # Enrich with contextual metadata (primary key for run_spec joins)
-        flat_table['run_spec.name'] = self.parent.name
+        flat_table['run_spec.name'] = self.parent.json.run_spec()['name']
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
 
@@ -1093,7 +1093,7 @@ class _HelmRunDataFrameView:
         # Add a prefix to enable joins for join keys
         flat_table = flat_table.insert_prefix('scenario_state')
         # Enrich with contextual metadata (primary key for run_spec joins)
-        flat_table['run_spec.name'] = self.parent.name
+        flat_table['run_spec.name'] = self.parent.json.run_spec()['name']
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
 
@@ -1116,7 +1116,7 @@ class _HelmRunDataFrameView:
         # Add a prefix to enable joins for join keys
         flat_table = flat_table.insert_prefix('stats')
         # Enrich with contextual metadata (primary key for run_spec joins)
-        flat_table['run_spec.name'] = self.parent.name
+        flat_table['run_spec.name'] = self.parent.json.run_spec()['name']
         flat_table = flat_table.reorder(head=['run_spec.name'], axis=1)
         return flat_table
 
