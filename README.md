@@ -134,7 +134,7 @@ the `"exact_match"` stat:
                           mean=prediction)]
 ```
 
-Where `split` should reflect dataset split at the HELM level (each record in the `*_scenario_states_df` dataframes indiciates which split it belongs to).  And `mean` should be the predicted metric value mean.  The fields included above are the only required fields for a `RunPrediction`.
+Where `split` should reflect dataset split at the HELM level (each record in the `*_scenario_states_df` dataframes indicates which split it belongs to).  And `mean` should be the predicted metric value mean.  The fields included above are the only required fields for a `RunPrediction`.
 
 The arguments passed into the `predict` method are Pandas dataframes corresponding to the HELM data (flattened from it's nested form) for the relevant runs.  We've included an IPython notebook file here ([predict_inputs_exploration.ipynb](./predict_inputs_exploration.ipynb)) showing the exact form of the inputs to `predict`.
 
@@ -145,7 +145,7 @@ We also recommend looking at the `magnet/example_random_predictor.py` and/or `ma
 Verifiable empirical claims with symbol definitions are specified in Python and stored in structured `yaml` files called Evaluation Cards. Examples are provided in `magnet/cards`, including a simple dataset of integers and a particular benchmark from the latest HELM Lite runs.
 
 ## Simple Arithmetic Card
-A basic example for getting familar with the structure of an evaluation card is available at `magnet/cards/simple.yaml`. The claim tests the commutative property of consecutive integers on the range `[-10, 10]`. This maps to the symbol-based assertion `x + y = y + x`, when `x` is even integers `[-10, 10]` and `y` is odd integers `[-9, 11]`. An example usage of this card is provided in the `EvaluationCard` docstring:
+A basic example for getting familiar with the structure of an evaluation card is available at `magnet/cards/simple.yaml`. The claim tests the commutative property of consecutive integers on the range `[-10, 10]`. This maps to the symbol-based assertion `x + y = y + x`, when `x` is even integers `[-10, 10]` and `y` is odd integers `[-9, 11]`. An example usage of this card is provided in the `EvaluationCard` docstring:
 ```
     """
     Specification of an empirical claim with resolvable symbols and metadata
@@ -223,7 +223,7 @@ An example demonstration is provided below (assuming you've downloaded helm-lite
     Assertion does not hold: meta/llama-3-70b score (0.69) exceeds consistency bound on meta/llama-2-13b (0.51)
     FALSIFIED
 ```
-At least one pair of models in the llama family do not satisify the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
+At least one pair of models in the llama family do not satisfy the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
 
 Optionally, you could evaluate this card using the `magnet evaluate` command as follows:
 
@@ -359,7 +359,7 @@ magnet evaluate magnet/cards/llama_kwdagger.yaml --results_path './results_kwdag
 ```
 A results file for each unique sweep of parameters will be created in a subdirectory of `{results_path}/{node_name}/.`.
 
-Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` shoud all yield `FALSIFIED` cards with output similar to below: 
+Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield `FALSIFIED` cards with output similar to below: 
 ```
 ================================
 Settings Evaluated: 36
