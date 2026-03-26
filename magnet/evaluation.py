@@ -10,6 +10,7 @@ import ubelt as ub
 import yaml
 from kwdagger import Pipeline, ProcessNode
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
+from loguru import logger
 from rich import print
 
 
@@ -648,9 +649,21 @@ class Symbols:
         symbol_definitions = {}
 
         for symbol in self._construct_dependency_order():
-            symbol_definitions[symbol] = self.symbols[symbol].eval(
-                symbol_definitions.copy()
-            )
+            symbol_value = self.symbols[symbol]
+            symbol_definitions_ = symbol_definitions.copy()
+            try:
+                symbol_definitions[symbol] = symbol_value.eval(symbol_definitions_)
+            except Exception as ex:
+                error_message = ub.codeblock(
+                    f'''
+                    Error in resolve. ex={ex}
+
+                    {symbol=!r}
+                    {symbol_value=!r}
+                    {symbol_definitions_=!r}
+                    ''')
+                logger.error(error_message)
+                raise
 
     def _find_sweep_symbols(self) -> List[Symbol]:
         return [symbol for symbol in self.symbols.values() if symbol.sweep]
