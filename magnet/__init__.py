@@ -72,11 +72,6 @@ __getattr__, __dir__, __all__ = lazy_loader.attach(
     __module_properties__=__module_properties__,
 )
 
-<<<<<<< HEAD
-__all__ = ['HelmOutputs', 'HelmInferenceEngine', 'demo',
-           'example_random_predictor', 'helm_outputs', 'loaders', 'predictor',
-           'utils']
-=======
-__all__ = ['HelmOutputs', 'HelmInferenceEngine', 'demo', 'example_random_predictor', 'helm_outputs',
-           'loaders', 'predictor', 'utils', 'examples']
->>>>>>> 70b9c3b (Create examples submodule)
+__all__ = ['HelmOutputs', 'HelmInferenceEngine', 'demo', 
+           'example_random_predictor', 'helm_outputs','loaders', 'predictor', 
+           'utils', 'examples']
