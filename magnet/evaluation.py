@@ -145,7 +145,9 @@ class EvaluationCard:
                 results.append(status)
 
         total = len(results)
-        percentage = lambda count: count / total
+
+        def percentage(count):
+            return count / total
 
         verified_count = results.count('VERIFIED')
         falsified_count = results.count('FALSIFIED')
