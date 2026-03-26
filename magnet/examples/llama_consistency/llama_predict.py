@@ -39,7 +39,8 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         '''
         Default path to precomputed HELM results.
         '''
-        ),)
+        ),
+        tags=['algo_param'])
 
     results_fpath = scfg.Value('results.json', help=ub.paragraph(
         '''

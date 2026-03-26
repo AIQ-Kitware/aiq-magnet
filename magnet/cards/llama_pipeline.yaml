@@ -10,26 +10,26 @@ claim:
      assert abs(comp_score - base_score) < threshold,f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
 
 pipeline:
-  - llama_predict:
-      executable: 'python magnet/llama_consistency/llama_consistency.py'
-      algo_params:
-        helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'           
-        base_model:
-            - meta/llama-2-13b
-            - meta/llama-2-70b
-            - meta/llama-2-7b
-            - meta/llama-3-70b
-            - meta/llama-3-8b
-            - meta/llama-65b
-        comp_model:
-            - meta/llama-2-13b
-            - meta/llama-2-70b
-            - meta/llama-2-7b
-            - meta/llama-3-70b
-            - meta/llama-3-8b
-            - meta/llama-65b
-      out_paths:
-        results_fpath: './llama_results.json'
+  llama_predict:
+    executable: 'python magnet/examples/llama_consistency/llama_predict.py'
+    algo_params:
+      helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'           
+      base_model:
+          - meta/llama-2-13b
+          - meta/llama-2-70b
+          - meta/llama-2-7b
+          - meta/llama-3-70b
+          - meta/llama-3-8b
+          - meta/llama-65b
+      comp_model:
+          - meta/llama-2-13b
+          - meta/llama-2-70b
+          - meta/llama-2-7b
+          - meta/llama-3-70b
+          - meta/llama-3-8b
+          - meta/llama-65b
+    out_paths:
+      results_fpath: 'results.json'
     
 symbols:
   threshold:

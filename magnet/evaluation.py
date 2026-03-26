@@ -49,9 +49,9 @@ class EvaluationCard:
         >>> card_name = 'simple.yaml'
         >>> card_path = files('magnet') / 'cards' / card_name
         >>> results_path = './results'
-        >>> card = EvaluationCard(card_path), results_path)
+        >>> card = EvaluationCard(card_path, results_path)
         >>> card.evaluate()
-        VERIFIED
+        'VERIFIED'
     """
     def __init__(self, path, results_path):
         with open(path, 'r') as f:
@@ -189,6 +189,51 @@ class GenericPipelineProcessor:
     Handler for yaml-based pipeline specification 
 
     *possibly merge with KWDaggerProcessor*
+    Example:
+        >>> from magnet.evaluation import GenericPipelineProcessor
+        >>> # Example snippet of an Evaluation Card
+        >>> example_cfg = {
+        >>>     'pipeline': {
+        >>>         'predict_node': {
+        >>>             'executable': "python -m magnet.examples.llama_consistency.llama_predict",
+        >>>             'algo_params': {
+        >>>                 'base_model' : ["meta/llama-2-13b", "meta/llama-2-70b"], 
+        >>>                 'comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"], 
+        >>>             },
+        >>>             'out_paths': {
+        >>>                 'results_fpath': "./llama_results.json",
+        >>>             }
+        >>>         },
+        >>>     }
+        >>> }
+        >>> root_dpath = "."
+        >>> pipeline_def = example_cfg['pipeline']
+        >>> pipeline = GenericPipelineProcessor(pipeline_def, root_dpath)
+        >>> #
+        >>> # Construct One Node Pipeline
+        >>> pipeline.define_kwdagger()
+        ...
+        >>> pipeline.dag.print_graphs()
+
+        Process Graph
+        ╙── predict_node
+
+        IO Graph
+        ╙── predict_node
+            ╽
+            results_fpath
+
+        >>> for attr in ['name', 'executable', 'algo_params', 'out_paths']:
+        >>>    print(getattr(pipeline.dag.nodes['predict_node'], attr))
+        predict_node
+        python -m magnet.examples.llama_consistency.llama_predict
+        ['base_model', 'comp_model']
+        {'results_fpath': './llama_results.json'}
+        >>> #
+        >>> # Parameters matrix
+        >>> pipeline.matrix
+        {'predict_node.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
+        'predict_node.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
     '''
     def __init__(self, pipeline_def, root_dpath):
         self.pipeline = pipeline_def
@@ -205,16 +250,15 @@ class GenericPipelineProcessor:
         '''
         nodes = {}
 
-        for node_def in self.pipeline:
+        for node_name in self.pipeline:
             # collect nodes
-            name = next(iter(node_def))
-            node_params = node_def[name]
+            node_params = self.pipeline[node_name]
         
             # FIXME: should update matrix for full pipeline
-            node_params, self.matrix = self._parse_params(name, node_params)
+            node_params, self.matrix = self._parse_params(node_name, node_params)
 
-            node = ProcessNode(name=name, **node_params)
-            nodes[name] = node
+            node = ProcessNode(name=node_name, **node_params)
+            nodes[node_name] = node
 
         self.dag = Pipeline(nodes)
         self.dag.build_nx_graphs()
@@ -235,6 +279,9 @@ class GenericPipelineProcessor:
         dag, queue = build_schedule(kwd_config)
 
     def collect_symbols(self):
+        '''
+        Collect results (Evaluation Card 'symbols') in place of 'load_result' in the ProcessNode definition
+        '''
         if not self.symbols:
             self.dispatch()
         
@@ -273,6 +320,51 @@ class GenericPipelineProcessor:
 class KWDaggerProcessor:
     '''
     Handler for full kwdagger pipeline specification
+
+    Example
+        >>> from magnet.evaluation import KWDaggerProcessor
+        >>> from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
+        >>> # Example snippet of an Evaluation Card (related to GenericPipelineProcessor example)
+        >>> example_cfg = {
+        >>>     'kwdagger': {
+        >>>         'pipeline': "magnet.examples.llama_consistency.pipelines.llama_pipeline()",
+        >>>         'matrix': {
+        >>>             'llama_predict.base_model': ["meta/llama-2-13b", "meta/llama-2-70b"], 
+        >>>             'llama_predict.comp_model' : ["meta/llama-2-7b", "meta/llama-3-70b"], 
+        >>>         }
+        >>>     }
+        >>> }
+        >>> root_dpath = "."
+        >>> kwdagger_def = example_cfg['kwdagger']
+        >>> pipeline = KWDaggerProcessor(kwdagger_def, root_dpath)
+        >>> #
+        >>> # Construct Two Node Pipeline (llama_predict -> claim)
+        >>> kwdagger_spec = ScheduleEvaluationConfig(params=pipeline.spec, run=False)
+        >>> dag, queue = build_schedule(kwdagger_spec)
+        ...
+        >>> dag.print_graphs()
+
+        Process Graph
+        ╙── llama_predict
+            ╽
+            claim_eval
+
+        IO Graph
+        ╙── llama_predict
+            ╽
+            results_fpath
+            ╽
+            symbols_fpath
+            ╽
+            claim_eval
+            ╽
+            verdict_fpath
+        
+        >>> #
+        >>> # Parameters matrix
+        >>> pipeline.spec['matrix']
+        {'llama_predict.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
+        'llama_predict.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
     '''
     def __init__(self, pipeline_def, root_dpath):
         self.spec = pipeline_def

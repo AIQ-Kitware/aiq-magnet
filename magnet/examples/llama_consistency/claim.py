@@ -12,7 +12,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
     In lieu of the Claim definition in evaluation.py, this offers a more flexible injest -> evaluate -> write option.
     """
 
-    symbols_fpath = scfg.Value('results.json', required=True, help=ub.paragraph(
+    symbols_fpath = scfg.Value('None', required=True, help=ub.paragraph(
         '''
         Default path to resolved symbol values.
         '''
