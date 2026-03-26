@@ -225,15 +225,15 @@ An example demonstration is provided below (assuming you've downloaded helm-lite
 ```
 At least one pair of models in the llama family do not satisfy the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
 
+(NOTE: If to run the following command you need data from the helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
+```
+magnet download helm --download_dir ./data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
+```
+
 Optionally, you could evaluate this card using the `magnet evaluate` command as follows:
 
 ```
 magnet evaluate magnet/cards/llama.yaml
-```
-
-(If you have not downloaded the entire helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
-```
-python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
 ```
 
 ## Writing your own Evaluation Card
