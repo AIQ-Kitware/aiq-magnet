@@ -42,7 +42,7 @@ dependencies = [
     "typing-extensions>=4.0.0",
     "ruamel.yaml>=0.17.22",
     "loguru>=0.7.3",
-    "kwdagger>=0.2.1",
+    "kwdagger>=0.2.3",
 ]
 
 [project.optional-dependencies]
