@@ -78,6 +78,22 @@ def _safe_float(x: Any) -> float | None:
         return None
 
 
+def _quantile(values: list[float], q: float) -> float | None:
+    if not values:
+        return None
+    if q <= 0:
+        return values[0]
+    if q >= 1:
+        return values[-1]
+    pos = (len(values) - 1) * q
+    lo = math.floor(pos)
+    hi = math.ceil(pos)
+    if lo == hi:
+        return values[lo]
+    alpha = pos - lo
+    return values[lo] * (1 - alpha) + values[hi] * alpha
+
+
 def _walker_diff(a: Any, b: Any, *, max_paths: int = 12) -> dict[str, Any]:
     """
 
@@ -1687,6 +1703,93 @@ class HelmRunDiff(ub.NiceRepr):
         self._cache[cache_key] = out
         return out
 
+    def value_distance_profile(
+        self,
+        *,
+        top_n: int = 12,
+    ) -> dict[str, Any]:
+        """Programmatic raw distance summary for intersecting run-level stats.
+
+        Unlike :meth:`_value_agreement_summary`, this does not threshold values
+        into matched / mismatched. It reports absolute / relative deltas and
+        their distributions so tolerance policies can be applied later without
+        recomputing the underlying joins.
+        """
+        cache_key = ('value_distance_profile', top_n, self.short_hash)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        idx_a = self.a.stat_index(
+            drop_zero_count=True, require_mean=True, short_hash=self.short_hash
+        )
+        idx_b = self.b.stat_index(
+            drop_zero_count=True, require_mean=True, short_hash=self.short_hash
+        )
+        keys = set(idx_a.keys()) & set(idx_b.keys())
+
+        by_class: dict[str, list[dict[str, Any]]] = {
+            'core': [],
+            'bookkeeping': [],
+            'untracked': [],
+        }
+        all_rows: list[dict[str, Any]] = []
+        for k in keys:
+            a = idx_a[k]
+            b = idx_b[k]
+            if a.mean is None or b.mean is None:
+                continue
+            abs_delta = abs(a.mean - b.mean)
+            denom = max(abs(a.mean), abs(b.mean), 1e-12)
+            rel_delta = abs_delta / denom
+            row = {
+                'key': k,
+                'a': a.mean,
+                'b': b.mean,
+                'abs_delta': abs_delta,
+                'rel_delta': rel_delta,
+                'metric_class': a.metric_class,
+            }
+            all_rows.append(row)
+            by_class.setdefault(a.metric_class, []).append(row)
+
+        def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
+            if not rows:
+                return {
+                    'count': 0,
+                    'abs_delta': {'min': None, 'p50': None, 'p90': None, 'p99': None, 'max': None},
+                    'rel_delta': {'min': None, 'p50': None, 'p90': None, 'p99': None, 'max': None},
+                    'top_abs_deltas': [],
+                }
+            abs_vals = sorted(float(r['abs_delta']) for r in rows)
+            rel_vals = sorted(float(r['rel_delta']) for r in rows)
+            top = sorted(rows, key=lambda r: r['abs_delta'], reverse=True)[:top_n]
+            return {
+                'count': len(rows),
+                'abs_delta': {
+                    'min': abs_vals[0],
+                    'p50': _quantile(abs_vals, 0.50),
+                    'p90': _quantile(abs_vals, 0.90),
+                    'p99': _quantile(abs_vals, 0.99),
+                    'max': abs_vals[-1],
+                },
+                'rel_delta': {
+                    'min': rel_vals[0],
+                    'p50': _quantile(rel_vals, 0.50),
+                    'p90': _quantile(rel_vals, 0.90),
+                    'p99': _quantile(rel_vals, 0.99),
+                    'max': rel_vals[-1],
+                },
+                'top_abs_deltas': top,
+            }
+
+        out = {
+            'overall': summarize(all_rows),
+            'by_class': {cls: summarize(rows) for cls, rows in by_class.items()},
+        }
+        out = _json_compatible(out)
+        self._cache[cache_key] = out
+        return out
+
     # ---------------------------------------------------------------------
     # Instance-level agreement / drilldowns
 
@@ -1908,6 +2011,349 @@ class HelmRunDiff(ub.NiceRepr):
         out = _json_compatible(out)
         self._cache[cache_key] = out
         return out
+
+    def instance_distance_profile(
+        self,
+        *,
+        top_n: int = 10,
+    ) -> dict[str, Any]:
+        """Programmatic raw distance summary for per-instance stat means."""
+        cache_key = ('instance_distance_profile', top_n, self.short_hash)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        joined_a = self.a.joined_instance_stat_table(
+            assert_assumptions=False, short_hash=self.short_hash
+        )
+        joined_b = self.b.joined_instance_stat_table(
+            assert_assumptions=False, short_hash=self.short_hash
+        )
+        map_a = getattr(joined_a, 'row_by_key', None)
+        map_b = getattr(joined_b, 'row_by_key', None)
+
+        def _iter_rows(joined) -> Iterable[Any]:
+            if map_a is not None and joined is joined_a:
+                return map_a.values()
+            if map_b is not None and joined is joined_b:
+                return map_b.values()
+            if isinstance(joined, dict):
+                return joined.values()
+            if hasattr(joined, '__iter__'):
+                return joined
+            return []
+
+        def _row_key(row: Any) -> Any:
+            return (
+                getattr(row, 'key', None)
+                or getattr(row, 'stat_key', None)
+                or getattr(row, 'row_key', None)
+                or row
+            )
+
+        if map_a is None:
+            map_a = {_row_key(r): r for r in _iter_rows(joined_a)}
+        if map_b is None:
+            map_b = {_row_key(r): r for r in _iter_rows(joined_b)}
+
+        all_rows: list[dict[str, Any]] = []
+        by_group: dict[tuple[str, str | None], list[dict[str, Any]]] = {}
+        for k in set(map_a) & set(map_b):
+            ra = map_a[k]
+            rb = map_b[k]
+            sa = (
+                getattr(ra, 'stat', None)
+                if hasattr(ra, 'stat')
+                else (ra.get('stat', None) if isinstance(ra, dict) else None)
+            )
+            sb = (
+                getattr(rb, 'stat', None)
+                if hasattr(rb, 'stat')
+                else (rb.get('stat', None) if isinstance(rb, dict) else None)
+            )
+            ma = _safe_float(
+                (sa or {}).get('mean', None)
+                if isinstance(sa, dict)
+                else getattr(sa, 'mean', None)
+            )
+            mb = _safe_float(
+                (sb or {}).get('mean', None)
+                if isinstance(sb, dict)
+                else getattr(sb, 'mean', None)
+            )
+            ca = (
+                int((sa or {}).get('count', 0) or 0)
+                if isinstance(sa, dict)
+                else int(getattr(sa, 'count', 0) or 0)
+            )
+            cb = (
+                int((sb or {}).get('count', 0) or 0)
+                if isinstance(sb, dict)
+                else int(getattr(sb, 'count', 0) or 0)
+            )
+            if ma is None or mb is None or ca == 0 or cb == 0:
+                continue
+            name_obj = (
+                (sa or {}).get('name', None)
+                if isinstance(sa, dict)
+                else getattr(sa, 'name_obj', None)
+            )
+            metric = (
+                name_obj.get('name', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
+            if metric is None and sa is not None and not isinstance(sa, dict):
+                metric = getattr(sa, 'metric', None)
+            metric_class, _ = helm_metrics.classify_metric(metric)
+            abs_delta = abs(ma - mb)
+            denom = max(abs(ma), abs(mb), 1e-12)
+            rel_delta = abs_delta / denom
+            item = {
+                'key': _key_to_serializable(k),
+                'a': ma,
+                'b': mb,
+                'abs_delta': abs_delta,
+                'rel_delta': rel_delta,
+                'signed_delta': (mb - ma),
+                'metric_class': metric_class,
+                'metric': metric,
+            }
+            all_rows.append(item)
+            by_group.setdefault((metric_class, metric), []).append(item)
+
+        def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
+            if not items:
+                return {
+                    'count': 0,
+                    'abs_delta': {'min': None, 'p50': None, 'p90': None, 'p99': None, 'max': None},
+                    'rel_delta': {'min': None, 'p50': None, 'p90': None, 'p99': None, 'max': None},
+                }
+            abs_vals = sorted(float(r['abs_delta']) for r in items)
+            rel_vals = sorted(float(r['rel_delta']) for r in items)
+            return {
+                'count': len(items),
+                'abs_delta': {
+                    'min': abs_vals[0],
+                    'p50': _quantile(abs_vals, 0.50),
+                    'p90': _quantile(abs_vals, 0.90),
+                    'p99': _quantile(abs_vals, 0.99),
+                    'max': abs_vals[-1],
+                },
+                'rel_delta': {
+                    'min': rel_vals[0],
+                    'p50': _quantile(rel_vals, 0.50),
+                    'p90': _quantile(rel_vals, 0.90),
+                    'p99': _quantile(rel_vals, 0.99),
+                    'max': rel_vals[-1],
+                },
+            }
+
+        grouped_rows = []
+        for (metric_class, metric), items in sorted(by_group.items()):
+            items = sorted(items, key=lambda r: r['abs_delta'], reverse=True)
+            grouped_rows.append(
+                {
+                    'metric_class': metric_class,
+                    'metric': metric,
+                    'summary': summarize(items),
+                    'top_abs_deltas': items[:top_n],
+                }
+            )
+        out = {
+            'overall': summarize(all_rows),
+            'by_metric': grouped_rows,
+        }
+        out = _json_compatible(out)
+        self._cache[cache_key] = out
+        return out
+
+    def instance_agreement_profile(
+        self,
+        *,
+        abs_tol: float = 0.0,
+        rel_tol: float = 0.0,
+    ) -> dict[str, Any]:
+        """Programmatic agreement summary grouped by per-instance metric."""
+        cache_key = ('instance_agreement_profile', abs_tol, rel_tol, self.short_hash)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        joined_a = self.a.joined_instance_stat_table(
+            assert_assumptions=False, short_hash=self.short_hash
+        )
+        joined_b = self.b.joined_instance_stat_table(
+            assert_assumptions=False, short_hash=self.short_hash
+        )
+        map_a = getattr(joined_a, 'row_by_key', None)
+        map_b = getattr(joined_b, 'row_by_key', None)
+
+        def _iter_rows(joined) -> Iterable[Any]:
+            if map_a is not None and joined is joined_a:
+                return map_a.values()
+            if map_b is not None and joined is joined_b:
+                return map_b.values()
+            if isinstance(joined, dict):
+                return joined.values()
+            if hasattr(joined, '__iter__'):
+                return joined
+            return []
+
+        def _row_key(row: Any) -> Any:
+            return (
+                getattr(row, 'key', None)
+                or getattr(row, 'stat_key', None)
+                or getattr(row, 'row_key', None)
+                or row
+            )
+
+        if map_a is None:
+            map_a = {_row_key(r): r for r in _iter_rows(joined_a)}
+        if map_b is None:
+            map_b = {_row_key(r): r for r in _iter_rows(joined_b)}
+
+        def agrees(x: float, y: float) -> bool:
+            if abs_tol == 0.0 and rel_tol == 0.0:
+                return x == y
+            return abs(x - y) <= max(abs_tol, rel_tol * max(abs(x), abs(y)))
+
+        overall = {'comparable': 0, 'mismatched': 0}
+        by_group: dict[tuple[str, str | None], dict[str, Any]] = {}
+
+        for k in set(map_a) & set(map_b):
+            ra = map_a[k]
+            rb = map_b[k]
+            sa = (
+                getattr(ra, 'stat', None)
+                if hasattr(ra, 'stat')
+                else (ra.get('stat', None) if isinstance(ra, dict) else None)
+            )
+            sb = (
+                getattr(rb, 'stat', None)
+                if hasattr(rb, 'stat')
+                else (rb.get('stat', None) if isinstance(rb, dict) else None)
+            )
+            ma = _safe_float(
+                (sa or {}).get('mean', None)
+                if isinstance(sa, dict)
+                else getattr(sa, 'mean', None)
+            )
+            mb = _safe_float(
+                (sb or {}).get('mean', None)
+                if isinstance(sb, dict)
+                else getattr(sb, 'mean', None)
+            )
+            ca = (
+                int((sa or {}).get('count', 0) or 0)
+                if isinstance(sa, dict)
+                else int(getattr(sa, 'count', 0) or 0)
+            )
+            cb = (
+                int((sb or {}).get('count', 0) or 0)
+                if isinstance(sb, dict)
+                else int(getattr(sb, 'count', 0) or 0)
+            )
+            if ma is None or mb is None or ca == 0 or cb == 0:
+                continue
+            name_obj = (
+                (sa or {}).get('name', None)
+                if isinstance(sa, dict)
+                else getattr(sa, 'name_obj', None)
+            )
+            metric = (
+                name_obj.get('name', None)
+                if isinstance(name_obj, dict)
+                else None
+            )
+            if metric is None and sa is not None and not isinstance(sa, dict):
+                metric = getattr(sa, 'metric', None)
+            metric_class, _ = helm_metrics.classify_metric(metric)
+            key = (metric_class, metric)
+            group = by_group.setdefault(
+                key,
+                {
+                    'metric_class': metric_class,
+                    'metric': metric,
+                    'comparable': 0,
+                    'mismatched': 0,
+                },
+            )
+            overall['comparable'] += 1
+            group['comparable'] += 1
+            if not agrees(ma, mb):
+                overall['mismatched'] += 1
+                group['mismatched'] += 1
+
+        grouped_rows = []
+        for _, group in sorted(by_group.items()):
+            grouped_rows.append(
+                {
+                    'metric_class': group['metric_class'],
+                    'metric': group['metric'],
+                    'comparable': group['comparable'],
+                    'mismatched': group['mismatched'],
+                    'agree_ratio': ratio(group['comparable'], group['mismatched']),
+                }
+            )
+
+        out = {
+            'overall': {
+                'comparable': overall['comparable'],
+                'mismatched': overall['mismatched'],
+                'agree_ratio': ratio(overall['comparable'], overall['mismatched']),
+            },
+            'by_metric': grouped_rows,
+        }
+        out = _json_compatible(out)
+        self._cache[cache_key] = out
+        return out
+
+    def tolerance_sweep_summary(
+        self,
+        *,
+        run_tolerances: list[dict[str, Any]] | None = None,
+        instance_tolerances: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Evaluate multiple tolerance policies without recomputing run loading."""
+        if run_tolerances is None:
+            run_tolerances = [
+                {'name': 'strict', 'abs_tol': 0.0, 'rel_tol': 0.0},
+                {'name': 'tiny', 'abs_tol': 1e-12, 'rel_tol': 1e-6},
+                {'name': 'small', 'abs_tol': 1e-9, 'rel_tol': 1e-4},
+                {'name': 'medium', 'abs_tol': 1e-6, 'rel_tol': 1e-3},
+                {'name': 'loose', 'abs_tol': 1e-3, 'rel_tol': 1e-2},
+            ]
+        if instance_tolerances is None:
+            instance_tolerances = list(run_tolerances)
+
+        run_results = []
+        for cfg in run_tolerances:
+            summary = self._value_agreement_summary(
+                abs_tol=float(cfg.get('abs_tol', 0.0) or 0.0),
+                rel_tol=float(cfg.get('rel_tol', 0.0) or 0.0),
+            )
+            run_results.append({
+                'name': cfg.get('name', 'unnamed'),
+                'abs_tol': float(cfg.get('abs_tol', 0.0) or 0.0),
+                'rel_tol': float(cfg.get('rel_tol', 0.0) or 0.0),
+                'summary': summary,
+            })
+
+        instance_results = []
+        for cfg in instance_tolerances:
+            summary = self.instance_summary_dict(
+                abs_tol=float(cfg.get('abs_tol', 0.0) or 0.0),
+                rel_tol=float(cfg.get('rel_tol', 0.0) or 0.0),
+            )
+            instance_results.append({
+                'name': cfg.get('name', 'unnamed'),
+                'abs_tol': float(cfg.get('abs_tol', 0.0) or 0.0),
+                'rel_tol': float(cfg.get('rel_tol', 0.0) or 0.0),
+                'summary': summary,
+            })
+        return _json_compatible({
+            'run_level': run_results,
+            'instance_level': instance_results,
+        })
 
     def summarize_instances(
         self,
