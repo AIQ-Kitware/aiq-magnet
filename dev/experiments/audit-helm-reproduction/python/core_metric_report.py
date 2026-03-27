@@ -465,6 +465,53 @@ def _write_text(report: dict[str, Any], out_fpath: Path) -> None:
     out_fpath.write_text('\n'.join(lines) + '\n')
 
 
+def _find_curve_value(rows: list[dict[str, Any]], abs_tol: float) -> float | None:
+    for row in rows:
+        if float(row.get('abs_tol', float('nan'))) == float(abs_tol):
+            return row.get('agree_ratio')
+    return None
+
+
+def _write_management_summary(report: dict[str, Any], out_fpath: Path) -> None:
+    left, right = report['pairs']
+    lines = []
+    lines.append('Core Metric Executive Summary')
+    lines.append('')
+    lines.append(f"generated_utc: {report['generated_utc']}")
+    lines.append(f"core_metrics: {', '.join(left.get('core_metrics', []))}")
+    lines.append('')
+    lines.append(f"{left['label']}:")
+    lines.append(f"  diagnosis: {left['diagnosis'].get('label')}")
+    lines.append(
+        f"  instance agreement at abs_tol=0.0: {_find_curve_value(left['instance_level']['agreement_vs_abs_tol'], 0.0)}"
+    )
+    lines.append(
+        f"  run-level abs delta max: {left['run_level']['overall_quantiles']['abs_delta']['max']}"
+    )
+    lines.append(
+        f"  instance-level abs delta max: {left['instance_level']['overall_quantiles']['abs_delta']['max']}"
+    )
+    lines.append('')
+    lines.append(f"{right['label']}:")
+    lines.append(f"  diagnosis: {right['diagnosis'].get('label')}")
+    for tol in [0.0, 1e-3, 1e-2, 1e-1, 1.0]:
+        lines.append(
+            f"  instance agreement at abs_tol={tol}: "
+            f"{_find_curve_value(right['instance_level']['agreement_vs_abs_tol'], tol)}"
+        )
+    lines.append(
+        f"  run-level abs delta p90/max: "
+        f"{right['run_level']['overall_quantiles']['abs_delta']['p90']} / "
+        f"{right['run_level']['overall_quantiles']['abs_delta']['max']}"
+    )
+    lines.append(
+        f"  instance-level abs delta p99/max: "
+        f"{right['instance_level']['overall_quantiles']['abs_delta']['p99']} / "
+        f"{right['instance_level']['overall_quantiles']['abs_delta']['max']}"
+    )
+    out_fpath.write_text('\n'.join(lines) + '\n')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--left-run-a', required=True)
@@ -491,6 +538,7 @@ def main() -> None:
 
     json_fpath = report_dpath / f'core_metric_report_{stamp}.json'
     txt_fpath = report_dpath / f'core_metric_report_{stamp}.txt'
+    mgmt_fpath = report_dpath / f'core_metric_management_summary_{stamp}.txt'
     fig_fpath = report_dpath / f'core_metric_report_{stamp}.png'
     dist_fig_fpath = _plot_metric_distributions(report_dpath, stamp, left, right)
     three_run_dist_fpath = _plot_three_run_metric_distributions(
@@ -511,6 +559,7 @@ def main() -> None:
     report = kwutil.Json.ensure_serializable(_strip_private(report))
     json_fpath.write_text(json.dumps(report, indent=2))
     _write_text(report, txt_fpath)
+    _write_management_summary(report, mgmt_fpath)
 
     sns.set_theme(style='whitegrid', context='talk')
     fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
@@ -525,6 +574,7 @@ def main() -> None:
 
     print(f'Wrote core metric report: {json_fpath}')
     print(f'Wrote core metric text: {txt_fpath}')
+    print(f'Wrote core metric management summary: {mgmt_fpath}')
     print(f'Wrote core metric plot: {fig_fpath}')
     print(f'Wrote core metric distributions: {dist_fig_fpath}')
     print(f'Wrote core metric three-run distributions: {three_run_dist_fpath}')
