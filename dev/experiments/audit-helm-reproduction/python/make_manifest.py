@@ -115,10 +115,41 @@ def build_apples_manifest(args: argparse.Namespace) -> dict:
     )
 
 
+def build_single_manifest(args: argparse.Namespace) -> dict:
+    defaults = env_defaults()
+    if not args.run_entry:
+        raise SystemExit('--run-entry is required for --manifest-type single')
+    max_eval_instances = (
+        args.max_eval_instances
+        if args.max_eval_instances is not None
+        else int(defaults["AUDIT_DEFAULT_MAX_EVAL_INSTANCES"])
+    )
+    tmux_workers = (
+        args.tmux_workers
+        if args.tmux_workers is not None
+        else int(defaults["AUDIT_DEFAULT_TMUX_WORKERS"])
+    )
+    devices = args.devices if args.devices is not None else "0"
+    description = (
+        args.description
+        if args.description is not None
+        else f"Single-run audit manifest for {args.run_entry}"
+    )
+    return _build_manifest(
+        experiment_name=args.experiment_name,
+        description=description,
+        run_entries=[args.run_entry],
+        max_eval_instances=max_eval_instances,
+        suite=args.suite,
+        tmux_workers=tmux_workers,
+        devices=devices,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--manifest-type", default="smoke", choices=["smoke", "apples"]
+        "--manifest-type", default="smoke", choices=["smoke", "apples", "single"]
     )
     parser.add_argument("--output", required=True)
     parser.add_argument("--experiment-name", default="audit-smoke")
@@ -126,12 +157,16 @@ def main() -> None:
     parser.add_argument("--max-eval-instances", type=int, default=None)
     parser.add_argument("--tmux-workers", type=int, default=None)
     parser.add_argument("--devices", default=None)
+    parser.add_argument("--run-entry", default=None)
+    parser.add_argument("--description", default=None)
     args = parser.parse_args()
 
     if args.manifest_type == "smoke":
         manifest = build_smoke_manifest(args)
     elif args.manifest_type == "apples":
         manifest = build_apples_manifest(args)
+    elif args.manifest_type == "single":
+        manifest = build_single_manifest(args)
     else:
         raise NotImplementedError(args.manifest_type)
     out_fpath = Path(args.output)
