@@ -134,7 +134,7 @@ the `"exact_match"` stat:
                           mean=prediction)]
 ```
 
-Where `split` should reflect dataset split at the HELM level (each record in the `*_scenario_states_df` dataframes indiciates which split it belongs to).  And `mean` should be the predicted metric value mean.  The fields included above are the only required fields for a `RunPrediction`.
+Where `split` should reflect dataset split at the HELM level (each record in the `*_scenario_states_df` dataframes indicates which split it belongs to).  And `mean` should be the predicted metric value mean.  The fields included above are the only required fields for a `RunPrediction`.
 
 The arguments passed into the `predict` method are Pandas dataframes corresponding to the HELM data (flattened from it's nested form) for the relevant runs.  We've included an IPython notebook file here ([predict_inputs_exploration.ipynb](./predict_inputs_exploration.ipynb)) showing the exact form of the inputs to `predict`.
 
@@ -145,7 +145,7 @@ We also recommend looking at the `magnet/example_random_predictor.py` and/or `ma
 Verifiable empirical claims with symbol definitions are specified in Python and stored in structured `yaml` files called Evaluation Cards. Examples are provided in `magnet/cards`, including a simple dataset of integers and a particular benchmark from the latest HELM Lite runs.
 
 ## Simple Arithmetic Card
-A basic example for getting familar with the structure of an evaluation card is available at `magnet/cards/simple.yaml`. The claim tests the commutative property of consecutive integers on the range `[-10, 10]`. This maps to the symbol-based assertion `x + y = y + x`, when `x` is even integers `[-10, 10]` and `y` is odd integers `[-9, 11]`. An example usage of this card is provided in the `EvaluationCard` docstring:
+A basic example for getting familiar with the structure of an evaluation card is available at `magnet/cards/simple.yaml`. The claim tests the commutative property of consecutive integers on the range `[-10, 10]`. This maps to the symbol-based assertion `x + y = y + x`, when `x` is even integers `[-10, 10]` and `y` is odd integers `[-9, 11]`. An example usage of this card is provided in the `EvaluationCard` docstring:
 ```
     """
     Specification of an empirical claim with resolvable symbols and metadata
@@ -223,17 +223,17 @@ An example demonstration is provided below (assuming you've downloaded helm-lite
     Assertion does not hold: meta/llama-3-70b score (0.69) exceeds consistency bound on meta/llama-2-13b (0.51)
     FALSIFIED
 ```
-At least one pair of models in the llama family do not satisify the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
+At least one pair of models in the llama family do not satisfy the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
+
+(NOTE: If to run the following command you need data from the helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
+```
+magnet download helm --download_dir ./data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
+```
 
 Optionally, you could evaluate this card using the `magnet evaluate` command as follows:
 
 ```
 magnet evaluate magnet/cards/llama.yaml
-```
-
-(If you have not downloaded the entire helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
-```
-python -m magnet.backends.helm.download_helm_results /data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
 ```
 
 ## Writing your own Evaluation Card
@@ -286,7 +286,88 @@ Or evaluate from the command line using:
 magnet evaluate path/to/mycard.yaml
 ```
 
+### Resolving Symbols as a Pipeline (kwdagger)
+In the example above, symbols are explicitly defined in Python as code blocks, values, or sweeps (list) of values. [kwdagger]([https://github.com/AIQ-Kitware/kwdagger) offers an alternative flexible approach to resolving symbols as pipelines of user scripts with a variety of backends (see [tutorials](https://github.com/AIQ-Kitware/kwdagger/tree/main/docs/source/manual/tutorials) for example definitions). MAGNET can dispatch these explicitly, by referencing a fully-defined pipeline, or generate from user-provided scaffolding in the Evaluation Card.
 
+The example python module (`magnet/examples/llama_consistency`) represents how a user may structure their code for testing the claim seen in `magnet/cards/llama.yaml`. Each potential 'node', or script, of a pipeline satisfies the following conditions:
+ 1. defines a Python class with key, value (input, output) arguments
+ 2. writes relevant results to a file
+ 3. can run as a python script with its key, value pairs: `$ python ./code/script.py --key1 value1 ...`
+
+#### Generated Pipeline (llama_consistency example)
+ As a familiar example, `llama_predict.py` resolves `base_score` and `comp_score` by the same logic defined in the `llama.yaml` card. These symbols (along with `helm_runs_path`, `base_model`, `comp_model`, and `threshold`) are written to a unique and hashed result path for each particular setting of run arguments. An example command line usage is provided at the bottom of the file. 
+ 
+ The `magnet/cards/llama_pipeline.yaml` card defines a one-node pipeline that invokes the `llama_predict.py` script directly with sweep combinations constructed from the provided parameter list. Each node will populate a `kwdagger.ProcessNode` definition and can accept suitable inputs (see `algo_params`, `perf_params`, and other tags in `kwdagger` docs) in the Evaluation Card. The format of an Evaluation Card to generate a pipeline from a script is outlined below: 
+
+ ```
+ ...
+# Same fields as example card above with claim
+...
+pipeline:
+  # Each unique key is a node
+  first_node:
+    # specify how code is called without arguments
+    executable: 'python path/to/code/module/script.py'
+    # performance dependent variables/arguments
+    algo_params:
+      dataset_name:
+          - unique_benchmark
+      # lists of parameters will expand into singular run combinations
+      model_name:
+          - openai/gpt-4o
+          - meta/llama-3.3-70b
+    # output filename
+    out_paths:
+      results_fpath: 'results.json'
+...
+symbols: # define any remaining values
+  valid_python_variable:
+    ...
+```
+Example output can be observed by running the example card `llama_pipeline.yaml`:
+```
+magnet evaluate magnet/cards/llama_pipeline.yaml --results_path './results'
+```
+A subdirectory for each unique sweep will be created in `{results_path}`.
+
+
+#### Explicit kwdagger Pipeline (llama_consistency example)
+Alternatively, for users that want the most flexibility an Evaluation Card can be populated with a reference to an existing `kwdagger` pipeline. An example two-node pipeline is defined in `magnet/examples/llama_consistency/pipelines.py`. There, the output filepaths of `llama_predict.py` are connected as input paths to `claim.py`. This circumvents the existing `Claim` resolution process by defining a node to aggregate the symbols. An example card is available in `magnet/cards/llama_kwdagger.yaml`.
+
+The format of an Evaluation Card that references a `kwdagger` pipeline is similar to above, but instead of `pipeline`, the key to populate is `kwdagger`. 
+
+```
+ ...
+# Same fields as original example card above with claim
+...
+kwdagger:
+  # pipeline definition
+  pipeline: 'importable.python.path.pipeline_definition()'
+  # node specific parameters
+  matrix:
+      first_node.dataset_name:
+          - unique_benchmark
+      first_node.model_name:
+          - openai/gpt-4o
+          - meta/llama-3.3-70b
+      second_node.epsilon: 0.01
+...
+```
+Example output for a kwdagger card be observed by running the example `llama_kwdagger.yaml`:
+```
+magnet evaluate magnet/cards/llama_kwdagger.yaml --results_path './results_kwdagger'
+```
+A results file for each unique sweep of parameters will be created in a subdirectory of `{results_path}/{node_name}/.`.
+
+Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield `FALSIFIED` cards with output similar to below: 
+```
+================================
+Settings Evaluated: 36
+  Verified:     0.61
+  Falsified:    0.39
+  Inconclusive: 0.00
+================================
+```
 ## Downloading HELM results
 
 We provide a utility to download precomputed HELM results. 
