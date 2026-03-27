@@ -18,6 +18,12 @@ SMOKE_RUN_ENTRIES = [
     "narrative_qa:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical",
 ]
 
+VICUNA_NOCHAT_RUN_ENTRIES = [
+    "mmlu:subject=us_foreign_policy,method=multiple_choice_joint,model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical",
+    "boolq:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical",
+    "narrative_qa:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical",
+]
+
 
 def _validate_entries_exist(run_entries: list[str]) -> list[str]:
     fpath = repo_run_specs_fpath()
@@ -146,10 +152,44 @@ def build_single_manifest(args: argparse.Namespace) -> dict:
     )
 
 
+def build_vicuna_nochat_manifest(args: argparse.Namespace) -> dict:
+    defaults = env_defaults()
+    max_eval_instances = (
+        args.max_eval_instances
+        if args.max_eval_instances is not None
+        else 1000
+    )
+    tmux_workers = (
+        args.tmux_workers
+        if args.tmux_workers is not None
+        else 1
+    )
+    devices = args.devices if args.devices is not None else "0"
+    manifest = _build_manifest(
+        experiment_name=args.experiment_name,
+        description=(
+            "Overnight Vicuna batch with chat templating explicitly disabled "
+            "via a model_deployments override."
+        ),
+        run_entries=VICUNA_NOCHAT_RUN_ENTRIES,
+        max_eval_instances=max_eval_instances,
+        suite=args.suite,
+        tmux_workers=tmux_workers,
+        devices=devices,
+    )
+    manifest["model_deployments_fpath"] = (
+        "dev/experiments/audit-helm-reproduction/configs/debug/"
+        "vicuna_no_chat_template.yaml"
+    )
+    return manifest
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--manifest-type", default="smoke", choices=["smoke", "apples", "single"]
+        "--manifest-type",
+        default="smoke",
+        choices=["smoke", "apples", "single", "vicuna_nochat"],
     )
     parser.add_argument("--output", required=True)
     parser.add_argument("--experiment-name", default="audit-smoke")
@@ -167,6 +207,8 @@ def main() -> None:
         manifest = build_apples_manifest(args)
     elif args.manifest_type == "single":
         manifest = build_single_manifest(args)
+    elif args.manifest_type == "vicuna_nochat":
+        manifest = build_vicuna_nochat_manifest(args)
     else:
         raise NotImplementedError(args.manifest_type)
     out_fpath = Path(args.output)
