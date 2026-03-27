@@ -12,7 +12,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
     """
 
     symbols_fpath = scfg.Value(
-        'None',
+        None,
         required=True,
         help=ub.paragraph(
             """
