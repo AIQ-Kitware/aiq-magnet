@@ -1,5 +1,7 @@
-from importlib.resources import files
 import pytest
+pytest.importorskip('gcsfs')
+
+from importlib.resources import files
 
 from magnet.backends.helm.cli import download_helm_results
 from magnet.evaluation import EvaluationCard
