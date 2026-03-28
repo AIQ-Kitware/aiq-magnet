@@ -259,6 +259,177 @@ This writes a compact experiment-level summary under:
 
 - `reports/experiment-analysis-<slugified-experiment-name>/`
 
+## Building Larger Historic Reproduction Batches
+
+The repo-root files:
+
+- `run_specs.yaml`
+- `run_details.yaml`
+
+are the curated historic candidate list produced from:
+
+- `dev/poc/inspect_historic_helm_runs.py`
+
+You can regenerate them with:
+
+```bash
+python dev/poc/inspect_historic_helm_runs.py \
+  /data/crfm-helm-public \
+  --out_fpath run_specs.yaml \
+  --out_detail_fpath run_details.yaml
+```
+
+To build a larger refreshed kwdagger manifest from those historic candidates:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/make_historic_grid_manifest.sh \
+  dev/experiments/audit-helm-reproduction/configs/generated/historic_grid.generated.yaml \
+  --experiment-name audit-historic-grid \
+  --suite audit-historic-grid \
+  --devices 0,1 \
+  --tmux-workers 2 \
+  --max-eval-instances 1000
+```
+
+This also writes a sidecar selection file:
+
+- `.../historic_grid.generated.yaml.selection.yaml`
+
+The selection sidecar records:
+
+- exactly which `run_entry` values were selected
+- machine/shard settings
+- any model override file that was applied
+- matching metadata from `run_details.yaml` when available
+
+### Filtering The Historic Grid
+
+The larger builder supports shell-style pattern filtering and model/benchmark
+selection. For example, a Vicuna-only slice over three benchmarks:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/make_historic_grid_manifest.sh \
+  dev/experiments/audit-helm-reproduction/configs/generated/historic_vicuna_focus.generated.yaml \
+  --experiment-name audit-historic-vicuna-focus \
+  --suite audit-historic-vicuna-focus \
+  --model lmsys/vicuna-7b-v1.3 \
+  --include-pattern 'boolq:*' \
+  --include-pattern 'mmlu:*' \
+  --include-pattern 'narrative_qa:*' \
+  --devices 0 \
+  --tmux-workers 1 \
+  --max-eval-instances 1000
+```
+
+If any selected entries use `lmsys/vicuna-7b-v1.3`, the builder automatically
+applies:
+
+- `dev/experiments/audit-helm-reproduction/configs/debug/vicuna_no_chat_template.yaml`
+
+so the fixed no-chat-template configuration is used.
+
+### Deterministic One-GPU Shards For Multiple Machines
+
+To split the same filtered candidate set deterministically across multiple
+machines, use the shard builder. This is useful for `namek` and `yardrat`,
+where only one GPU is available.
+
+Example: build 2 shards from the same filtered historic set.
+
+For `namek`:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/make_machine_shard_manifest.sh \
+  namek \
+  0 \
+  2 \
+  dev/experiments/audit-helm-reproduction/configs/generated/namek.generated.yaml \
+  --model lmsys/vicuna-7b-v1.3 \
+  --include-pattern 'boolq:*' \
+  --include-pattern 'mmlu:*' \
+  --include-pattern 'narrative_qa:*' \
+  --max-eval-instances 1000
+```
+
+For `yardrat`:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/make_machine_shard_manifest.sh \
+  yardrat \
+  1 \
+  2 \
+  dev/experiments/audit-helm-reproduction/configs/generated/yardrat.generated.yaml \
+  --model lmsys/vicuna-7b-v1.3 \
+  --include-pattern 'boolq:*' \
+  --include-pattern 'mmlu:*' \
+  --include-pattern 'narrative_qa:*' \
+  --max-eval-instances 1000
+```
+
+These manifests default to:
+
+- `devices: 0`
+- `tmux_workers: 1`
+
+so they are safe for single-GPU machines unless explicitly overridden.
+
+### Same Subset On Multiple Machines For Hardware Comparison
+
+If the goal is to compare reproducibility across different hardware, both
+machines should run the same subset rather than different shards.
+
+For `namek`:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/make_machine_subset_manifest.sh \
+  namek \
+  dev/experiments/audit-helm-reproduction/configs/generated/namek.subset.generated.yaml \
+  --model lmsys/vicuna-7b-v1.3 \
+  --include-pattern 'boolq:*' \
+  --include-pattern 'mmlu:*us_foreign_policy*' \
+  --include-pattern 'narrative_qa:*' \
+  --max-eval-instances 1000
+```
+
+For `yardrat`, use the same filters:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/make_machine_subset_manifest.sh \
+  yardrat \
+  dev/experiments/audit-helm-reproduction/configs/generated/yardrat.subset.generated.yaml \
+  --model lmsys/vicuna-7b-v1.3 \
+  --include-pattern 'boolq:*' \
+  --include-pattern 'mmlu:*us_foreign_policy*' \
+  --include-pattern 'narrative_qa:*' \
+  --max-eval-instances 1000
+```
+
+These produce two manifests with the same selected `run_entry` set but distinct
+`experiment_name` / `suite` values, which makes later indexing and
+cross-machine analysis easier.
+
+### Running The Larger Batch
+
+Once a manifest has been generated, launch it the same way as the smaller
+batches:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/run_from_manifest.sh \
+  dev/experiments/audit-helm-reproduction/configs/generated/historic_grid.generated.yaml
+```
+
+After raw results are synced back, rebuild the index and analyze the specific
+experiment:
+
+```bash
+AUDIT_FALLBACK_HOST=aiq-gpu \
+bash dev/experiments/audit-helm-reproduction/scripts/index_results.sh
+
+bash dev/experiments/audit-helm-reproduction/scripts/analyze_experiment_from_index.sh \
+  --experiment-name audit-historic-grid \
+  --allow-single-repeat
+```
+
 Note:
 
 - this experiment analyzer uses the kwdagger results index

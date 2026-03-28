@@ -32,10 +32,16 @@ def _coerce_float(x):
         return float('-inf')
 
 
-def matching_rows(rows: list[dict[str, Any]], run_entry: str) -> list[dict[str, Any]]:
+def matching_rows(
+    rows: list[dict[str, Any]],
+    run_entry: str,
+    experiment_name: str | None = None,
+) -> list[dict[str, Any]]:
     out = []
     for row in rows:
         if row.get('run_entry') != run_entry:
+            continue
+        if experiment_name is not None and row.get('experiment_name') != experiment_name:
             continue
         if row.get('status') not in {'computed', 'reused', 'unknown', ''}:
             continue
@@ -125,6 +131,7 @@ def main() -> None:
     parser.add_argument('--left-label', default='kwdagger_repeat')
     parser.add_argument('--right-label', default='official_vs_kwdagger')
     parser.add_argument('--allow-single-repeat', action='store_true')
+    parser.add_argument('--experiment-name', default=None)
     args = parser.parse_args()
 
     index_fpath = (
@@ -133,8 +140,13 @@ def main() -> None:
         latest_index_csv(Path(args.index_dpath).expanduser().resolve())
     )
     rows = load_rows(index_fpath)
-    matches = matching_rows(rows, args.run_entry)
+    matches = matching_rows(rows, args.run_entry, experiment_name=args.experiment_name)
     if not matches:
+        if args.experiment_name is not None:
+            raise SystemExit(
+                f'No indexed kwdagger runs found for run_entry={args.run_entry!r} '
+                f'within experiment_name={args.experiment_name!r}'
+            )
         raise SystemExit(f'No indexed kwdagger runs found for run_entry={args.run_entry!r}')
 
     if len(matches) >= 2:
@@ -193,6 +205,7 @@ def main() -> None:
         'left_label': args.left_label,
         'right_label': args.right_label,
         'report_dpath': str(report_dpath),
+        'experiment_name': args.experiment_name,
         'historic_info': info,
     }
     selection_fpath = _write_latest_selection(report_dpath, selection)

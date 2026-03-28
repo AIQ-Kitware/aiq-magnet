@@ -15,10 +15,6 @@ from common import audit_root, default_report_root, env_defaults
 from rebuild_core_report_from_index import latest_index_csv, load_rows, slugify
 
 
-def _report_dir_for_run_entry(run_entry: str) -> Path:
-    return default_report_root() / f'core-metrics-{slugify(run_entry)}'
-
-
 def _load_json(fpath: Path) -> dict[str, Any]:
     return json.loads(fpath.read_text())
 
@@ -42,19 +38,27 @@ def main() -> None:
         raise SystemExit(f'No rows found for experiment_name={args.experiment_name!r}')
     run_entries = sorted({r.get('run_entry') for r in experiment_rows if r.get('run_entry')})
 
+    out_dpath = default_report_root() / f'experiment-analysis-{slugify(args.experiment_name)}'
+    out_dpath.mkdir(parents=True, exist_ok=True)
+    reports_dpath = out_dpath / 'core-reports'
+    reports_dpath.mkdir(parents=True, exist_ok=True)
+
     rebuild_script = audit_root() / 'python' / 'rebuild_core_report_from_index.py'
     built_report_paths = []
     for run_entry in run_entries:
+        report_dpath = reports_dpath / f'core-metrics-{slugify(run_entry)}'
         cmd = [
             env_defaults()['AIQ_PYTHON'],
             str(rebuild_script),
             '--run-entry', str(run_entry),
             '--index-fpath', str(index_fpath),
+            '--experiment-name', str(args.experiment_name),
+            '--report-dpath', str(report_dpath),
         ]
         if args.allow_single_repeat:
             cmd.append('--allow-single-repeat')
         subprocess.run(cmd, check=True)
-        built_report_paths.append(_report_dir_for_run_entry(run_entry) / 'core_metric_report.latest.json')
+        built_report_paths.append(report_dpath / 'core_metric_report.latest.json')
 
     summary_rows = []
     for report_json in built_report_paths:
@@ -68,6 +72,11 @@ def main() -> None:
             'run_spec_name': report.get('run_spec_name'),
             'report_dir': str(report_json.parent),
             'generated_utc': report.get('generated_utc'),
+            'diagnostic_flags': report.get('diagnostic_flags', []),
+            'kwdagger_a_empty_completion_rate': (((report.get('run_diagnostics') or {}).get('kwdagger_a') or {}).get('empty_completion_rate')),
+            'kwdagger_a_mean_output_tokens': ((((report.get('run_diagnostics') or {}).get('kwdagger_a') or {}).get('output_token_count') or {}).get('mean')),
+            'official_empty_completion_rate': (((report.get('run_diagnostics') or {}).get('official') or {}).get('empty_completion_rate')),
+            'official_mean_output_tokens': ((((report.get('run_diagnostics') or {}).get('official') or {}).get('output_token_count') or {}).get('mean')),
             'repeat_instance_agree_0': _find_curve_value(repeat.get('instance_level', {}).get('agreement_vs_abs_tol', []), 0.0),
             'official_instance_agree_0': _find_curve_value(official.get('instance_level', {}).get('agreement_vs_abs_tol', []), 0.0),
             'official_instance_agree_01': _find_curve_value(official.get('instance_level', {}).get('agreement_vs_abs_tol', []), 0.1),
@@ -77,8 +86,6 @@ def main() -> None:
             'official_runlevel_max': (((official.get('run_level') or {}).get('overall_quantiles') or {}).get('abs_delta') or {}).get('max'),
         })
 
-    out_dpath = default_report_root() / f'experiment-analysis-{slugify(args.experiment_name)}'
-    out_dpath.mkdir(parents=True, exist_ok=True)
     stamp = datetime_mod.datetime.now(datetime_mod.UTC).strftime('%Y%m%dT%H%M%SZ')
     history_dpath = out_dpath / '.history' / stamp[:8]
     history_dpath.mkdir(parents=True, exist_ok=True)
@@ -115,6 +122,11 @@ def main() -> None:
     for row in summary_rows:
         lines.append(f"  - run_spec_name: {row['run_spec_name']}")
         lines.append(f"    report_dir: {row['report_dir']}")
+        lines.append(f"    diagnostic_flags: {row['diagnostic_flags']}")
+        lines.append(f"    kwdagger_a_empty_completion_rate: {row['kwdagger_a_empty_completion_rate']}")
+        lines.append(f"    kwdagger_a_mean_output_tokens: {row['kwdagger_a_mean_output_tokens']}")
+        lines.append(f"    official_empty_completion_rate: {row['official_empty_completion_rate']}")
+        lines.append(f"    official_mean_output_tokens: {row['official_mean_output_tokens']}")
         lines.append(f"    repeat_instance_agree_0: {row['repeat_instance_agree_0']}")
         lines.append(f"    official_instance_agree_0: {row['official_instance_agree_0']}")
         lines.append(f"    official_instance_agree_01: {row['official_instance_agree_01']}")
