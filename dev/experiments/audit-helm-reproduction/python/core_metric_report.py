@@ -6,6 +6,7 @@ import json
 import math
 import os
 import shutil
+import statistics
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +71,91 @@ def _run_level_core_rows(diff: HelmRunDiff) -> list[dict[str, Any]]:
             'rel_delta': rel_delta,
         })
     return rows
+
+
+def _load_json(fpath: Path) -> Any:
+    return json.loads(fpath.read_text())
+
+
+def _collect_stat_means(stats: list[dict[str, Any]], metric_name: str) -> dict[str, float]:
+    found = {}
+    for row in stats:
+        name = row.get('name')
+        if not isinstance(name, dict):
+            continue
+        if name.get('name') != metric_name:
+            continue
+        split = name.get('split')
+        found[str(split)] = row.get('mean')
+    return found
+
+
+def _run_diagnostics(run_path: str) -> dict[str, Any]:
+    run_path = str(Path(run_path).expanduser().resolve())
+    run_dpath = Path(run_path)
+    scenario_state = _load_json(run_dpath / 'scenario_state.json')
+    stats = _load_json(run_dpath / 'stats.json')
+    reqs = scenario_state.get('request_states', [])
+
+    token_counts = []
+    empty_completion_count = 0
+    nonempty_completion_count = 0
+    completion_count = 0
+    for rs in reqs:
+        comps = (rs.get('result') or {}).get('completions') or []
+        if not comps:
+            continue
+        completion_count += 1
+        c0 = comps[0] or {}
+        text = c0.get('text', '')
+        toklist = c0.get('tokens') or []
+        token_counts.append(len(toklist))
+        if text == '':
+            empty_completion_count += 1
+        else:
+            nonempty_completion_count += 1
+
+    mean_tokens = statistics.mean(token_counts) if token_counts else None
+    return {
+        'run_path': run_path,
+        'run_name': run_dpath.name,
+        'n_request_states': len(reqs),
+        'n_with_completions': completion_count,
+        'empty_completion_count': empty_completion_count,
+        'nonempty_completion_count': nonempty_completion_count,
+        'empty_completion_rate': (
+            empty_completion_count / completion_count if completion_count else None
+        ),
+        'output_token_count': {
+            'mean': mean_tokens,
+            'p50': _quantile(token_counts, 0.5),
+            'p90': _quantile(token_counts, 0.9),
+            'max': _quantile(token_counts, 1.0),
+        },
+        'stats_means': {
+            'num_output_tokens': _collect_stat_means(stats, 'num_output_tokens'),
+            'num_completion_tokens': _collect_stat_means(stats, 'num_completion_tokens'),
+            'finish_reason_unknown': _collect_stat_means(stats, 'finish_reason_unknown'),
+        },
+    }
+
+
+def _diagnostic_flags(run_diagnostics: dict[str, dict[str, Any]]) -> list[str]:
+    flags = []
+    for label, diag in run_diagnostics.items():
+        rate = diag.get('empty_completion_rate')
+        mean_tokens = (diag.get('output_token_count') or {}).get('mean')
+        if rate is not None and rate > 0.1:
+            flags.append(f'{label}:high_empty_completion_rate')
+        if mean_tokens is not None and mean_tokens < 1.0:
+            flags.append(f'{label}:near_zero_mean_output_tokens')
+    official = run_diagnostics.get('official', {})
+    kwdagger_a = run_diagnostics.get('kwdagger_a', {})
+    off_rate = official.get('empty_completion_rate')
+    kwa_rate = kwdagger_a.get('empty_completion_rate')
+    if off_rate is not None and kwa_rate is not None and off_rate < 0.01 and kwa_rate > 0.1:
+        flags.append('official_vs_kwdagger_a:empty_completion_pathology')
+    return flags
 
 
 def _iter_joined_rows(joined, row_by_key):
@@ -620,12 +706,24 @@ def _write_text(report: dict[str, Any], out_fpath: Path) -> None:
     lines.append('Core Metric Report')
     lines.append('')
     lines.append(f"generated_utc: {report['generated_utc']}")
+    lines.append(f"run_spec_name: {report['run_spec_name']}")
     lines.append(f"left_label: {left['label']}")
     lines.append(f"right_label: {right['label']}")
+    lines.append(f"diagnostic_flags: {report.get('diagnostic_flags', [])}")
     lines.append('')
     lines.append('core_metrics:')
     for metric in left['core_metrics']:
         lines.append(f'  - {metric}')
+    lines.append('')
+    lines.append('run_diagnostics:')
+    for label, diag in report.get('run_diagnostics', {}).items():
+        lines.append(f'  {label}:')
+        lines.append(f"    n_request_states: {diag.get('n_request_states')}")
+        lines.append(f"    n_with_completions: {diag.get('n_with_completions')}")
+        lines.append(f"    empty_completion_count: {diag.get('empty_completion_count')}")
+        lines.append(f"    empty_completion_rate: {diag.get('empty_completion_rate')}")
+        lines.append(f"    output_token_count: {json.dumps(diag.get('output_token_count'))}")
+        lines.append(f"    stats_means: {json.dumps(diag.get('stats_means'))}")
     lines.append('')
     for pair in report['pairs']:
         lines.append(f"pair: {pair['label']}")
@@ -667,6 +765,7 @@ def _write_management_summary(report: dict[str, Any], out_fpath: Path) -> None:
     lines.append(f"generated_utc: {report['generated_utc']}")
     lines.append(f"run_spec_name: {report['run_spec_name']}")
     lines.append(f"core_metrics: {', '.join(left.get('core_metrics', []))}")
+    lines.append(f"diagnostic_flags: {report.get('diagnostic_flags', [])}")
     lines.append('')
     lines.append('metric_descriptions:')
     for metric in left.get('core_metrics', []):
@@ -674,6 +773,18 @@ def _write_management_summary(report: dict[str, Any], out_fpath: Path) -> None:
         lines.append(
             f"  - {metric}: {desc['kind']}; {desc['range']}; {desc['direction']}"
         )
+    lines.append('')
+    lines.append('run_diagnostics:')
+    for label, diag in report.get('run_diagnostics', {}).items():
+        lines.append(f'  {label}:')
+        lines.append(f"    n_request_states: {diag.get('n_request_states')}")
+        lines.append(f"    n_with_completions: {diag.get('n_with_completions')}")
+        lines.append(f"    empty_completion_count: {diag.get('empty_completion_count')}")
+        lines.append(f"    empty_completion_rate: {diag.get('empty_completion_rate')}")
+        lines.append(f"    mean_output_tokens_from_state: {(diag.get('output_token_count') or {}).get('mean')}")
+        lines.append(f"    p90_output_tokens_from_state: {(diag.get('output_token_count') or {}).get('p90')}")
+        lines.append(f"    num_output_tokens_from_stats: {(diag.get('stats_means') or {}).get('num_output_tokens')}")
+        lines.append(f"    finish_reason_unknown_from_stats: {(diag.get('stats_means') or {}).get('finish_reason_unknown')}")
     lines.append('')
     lines.append(f"{left['label']}:")
     lines.append(f"  diagnosis: {left['diagnosis'].get('label')}")
@@ -741,11 +852,18 @@ def main() -> None:
 
     left = _build_pair(args.left_run_a, args.left_run_b, args.left_label, thresholds)
     right = _build_pair(args.right_run_a, args.right_run_b, args.right_label, thresholds)
+    run_diagnostics = {
+        'kwdagger_a': _run_diagnostics(args.left_run_a),
+        'kwdagger_b': _run_diagnostics(args.left_run_b),
+        'official': _run_diagnostics(args.right_run_a),
+    }
     report = {
         'generated_utc': stamp,
         'run_spec_name': run_spec_name,
         'thresholds': thresholds,
         'pairs': [left, right],
+        'run_diagnostics': run_diagnostics,
+        'diagnostic_flags': _diagnostic_flags(run_diagnostics),
     }
 
     json_fpath = history_dpath / f'core_metric_report_{stamp}.json'

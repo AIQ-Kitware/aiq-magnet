@@ -408,3 +408,79 @@ Implications for the audit:
   - high empty-completion rate
   - near-zero `num_output_tokens`
   - pervasive `finish_reason_unknown`
+
+## Server Batch Logging Validation
+
+The latest rsynced server-side experiment artifacts confirmed that the new per-job HELM logging capture is working as intended.
+
+Observed in:
+
+- `/data/crfm-helm-audit/audit-vicuna-nochat-server/helm/helm_id_dijo03bfux6g/`
+- `/data/crfm-helm-audit/audit-vicuna-nochat-server/helm/helm_id_obr7gu9kxuql/`
+- `/data/crfm-helm-audit/audit-vicuna-nochat-server/helm/helm_id_s2ez33ko97jb/`
+
+Each failed job now preserves:
+
+- `helm-run.log`
+- `helm-run.debug.log`
+- `process_context.json`
+- `helm_log_config.yaml`
+- `job_config.json`
+
+These logs show that the latest server failures were not new reproducibility failures. All three jobs failed during local Hugging Face model load with the same infrastructure error:
+
+- `torch.OutOfMemoryError`
+- attempted allocation: about `172 MiB`
+- GPU `0` free memory at failure: about `143.50 MiB`
+- competing process `696468` already using about `89.43 GiB`
+
+Interpretation:
+
+- the `audit-vicuna-nochat-server` run failed due to GPU occupancy / infrastructure contention
+- this does **not** currently count as evidence for or against HELM reproducibility
+- the new logging path is useful and should remain part of all future materialized job outputs
+
+## Cross-Machine Vicuna No-Chat Confirmation
+
+After clearing the server-side GPU occupancy issue, the `audit-vicuna-nochat-server` batch completed successfully and matched the earlier `audit-vicuna-nochat-overnight` batch.
+
+High-level result:
+
+- for the three fixed-config Vicuna runs we tested, the server results were numerically identical to the earlier run on the other machine at the run-level metric summaries we inspected
+- this is a meaningful positive signal for cross-machine reproducibility once the chat-template confounder is removed
+
+Benchmarks:
+
+- `boolq:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical`
+- `mmlu:subject=us_foreign_policy,method=multiple_choice_joint,model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical`
+- `narrative_qa:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical`
+
+Observed diagnostics from the successful server run:
+
+- BoolQ:
+  - `N = 5000`
+  - empty completions: `0`
+  - mean output tokens: `1.0064`
+- MMLU:
+  - `N = 327`
+  - empty completions: `0`
+  - mean output tokens: `1.0`
+- NarrativeQA:
+  - `N = 2350`
+  - empty completions: `0`
+  - mean output tokens: `11.9498`
+  - output token quantiles:
+    - `p50 = 6`
+    - `p90 = 26`
+    - `max = 100`
+
+Comparison to official public HELM:
+
+- BoolQ correctness metrics match exactly; the remaining visible drift is shorter output length
+- MMLU core metrics match exactly
+- NarrativeQA remains very close to official on core metrics, with the main residual difference in answer length rather than answer quality
+
+Interpretation:
+
+- the fixed Vicuna/HuggingFace path appears independently reproducible on the tested core metrics
+- at least for these experiments, the newer server run supports a positive cross-machine reproducibility result rather than revealing a hardware-specific failure mode

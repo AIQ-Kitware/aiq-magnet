@@ -10,8 +10,6 @@ audit::set_defaults
 MANIFEST="${1:-${AUDIT_ROOT}/configs/smoke_manifest.yaml}"
 audit::require_file "$MANIFEST"
 
-"${AUDIT_ROOT}/scripts/check_env.sh" >/dev/null
-
 EXPERIMENT_NAME="$("$AIQ_PYTHON" "${AUDIT_ROOT}/python/render_schedule_params.py" \
     --manifest "$MANIFEST" --mode experiment_name)"
 RESULT_DPATH="$("$AIQ_PYTHON" "${AUDIT_ROOT}/python/render_schedule_params.py" \
@@ -24,6 +22,14 @@ TMUX_WORKERS="$("$AIQ_PYTHON" "${AUDIT_ROOT}/python/render_schedule_params.py" \
     --manifest "$MANIFEST" --mode tmux_workers)"
 DEVICES="$("$AIQ_PYTHON" "${AUDIT_ROOT}/python/render_schedule_params.py" \
     --manifest "$MANIFEST" --mode devices)"
+PRECOMPUTED_ROOT="$("$AIQ_PYTHON" "${AUDIT_ROOT}/python/render_schedule_params.py" \
+    --manifest "$MANIFEST" --mode precomputed_root)"
+
+if [[ -n "$PRECOMPUTED_ROOT" ]]; then
+    AUDIT_REQUIRE_PRECOMPUTED_ROOT=1 "${AUDIT_ROOT}/scripts/check_env.sh" >/dev/null
+else
+    AUDIT_REQUIRE_PRECOMPUTED_ROOT=0 "${AUDIT_ROOT}/scripts/check_env.sh" >/dev/null
+fi
 
 mkdir -p "$RESULT_DPATH"
 

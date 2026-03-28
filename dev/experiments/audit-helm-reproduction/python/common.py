@@ -40,6 +40,10 @@ def repo_run_specs_fpath() -> Path:
     return aiq_root() / "run_specs.yaml"
 
 
+def repo_run_details_fpath() -> Path:
+    return aiq_root() / "run_details.yaml"
+
+
 def default_report_root() -> Path:
     return audit_root() / "reports"
 
@@ -62,4 +66,3 @@ def experiment_result_dpath(manifest: dict[str, Any]) -> Path:
 
 def experiment_report_dpath(manifest: dict[str, Any]) -> Path:
     return default_report_root() / str(manifest["experiment_name"])
-

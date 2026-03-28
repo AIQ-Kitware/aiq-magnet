@@ -94,6 +94,11 @@ def main() -> None:
             'run_spec_name': report.get('run_spec_name'),
             'generated_utc': report.get('generated_utc'),
             'n_core_metrics': len((_find_pair(report, 'kwdagger_repeat').get('core_metrics') or [])),
+            'diagnostic_flags': report.get('diagnostic_flags', []),
+            'kwdagger_a_empty_completion_rate': (((report.get('run_diagnostics') or {}).get('kwdagger_a') or {}).get('empty_completion_rate')),
+            'kwdagger_a_mean_output_tokens': ((((report.get('run_diagnostics') or {}).get('kwdagger_a') or {}).get('output_token_count') or {}).get('mean')),
+            'official_empty_completion_rate': (((report.get('run_diagnostics') or {}).get('official') or {}).get('empty_completion_rate')),
+            'official_mean_output_tokens': ((((report.get('run_diagnostics') or {}).get('official') or {}).get('output_token_count') or {}).get('mean')),
             'repeat_instance_agree_0': repeat_agree_0,
             'official_instance_agree_0': official_agree_0,
             'official_instance_agree_01': official_agree_01,
@@ -138,6 +143,11 @@ def main() -> None:
     for row in rows:
         lines.append(f"  - run_spec_name: {row['run_spec_name']}")
         lines.append(f"    assessment_label: {row['assessment_label']}")
+        lines.append(f"    diagnostic_flags: {row['diagnostic_flags']}")
+        lines.append(f"    kwdagger_a_empty_completion_rate: {row['kwdagger_a_empty_completion_rate']}")
+        lines.append(f"    kwdagger_a_mean_output_tokens: {row['kwdagger_a_mean_output_tokens']}")
+        lines.append(f"    official_empty_completion_rate: {row['official_empty_completion_rate']}")
+        lines.append(f"    official_mean_output_tokens: {row['official_mean_output_tokens']}")
         lines.append(f"    repeat_instance_agree_0: {row['repeat_instance_agree_0']}")
         lines.append(f"    official_instance_agree_0: {row['official_instance_agree_0']}")
         lines.append(f"    official_instance_agree_01: {row['official_instance_agree_01']}")

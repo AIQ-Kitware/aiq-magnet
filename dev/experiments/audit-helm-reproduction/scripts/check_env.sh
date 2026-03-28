@@ -11,13 +11,21 @@ printf '=================\n'
 audit::print_env
 printf '\n'
 
-for path_var in AIQ_MAGNET_ROOT HELM_PRECOMPUTED_ROOT; do
+for path_var in AIQ_MAGNET_ROOT; do
     path="${!path_var}"
     if [[ ! -e "$path" ]]; then
         printf '%s does not exist: %s\n' "$path_var" "$path" >&2
         exit 1
     fi
 done
+
+REQUIRE_PRECOMPUTED_ROOT="${AUDIT_REQUIRE_PRECOMPUTED_ROOT:-1}"
+if [[ "$REQUIRE_PRECOMPUTED_ROOT" == "1" ]]; then
+    if [[ ! -e "$HELM_PRECOMPUTED_ROOT" ]]; then
+        printf '%s does not exist: %s\n' "HELM_PRECOMPUTED_ROOT" "$HELM_PRECOMPUTED_ROOT" >&2
+        exit 1
+    fi
+fi
 
 if [[ ! -d "$AUDIT_RESULTS_ROOT" ]]; then
     if mkdir -p "$AUDIT_RESULTS_ROOT" 2>/dev/null; then

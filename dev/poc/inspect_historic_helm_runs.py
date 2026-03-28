@@ -56,7 +56,7 @@ from loguru import logger
 from magnet.backends.helm.helm_outputs import HelmOutputs, HelmRun
 
 # Reuse your existing discovery + inference logic
-from magnet.backends.helm.materialize_helm_run import (
+from magnet.backends.helm.cli.materialize_helm_run import (
     discover_benchmark_output_dirs,
     infer_num_instances,
     is_complete_run_dir,
