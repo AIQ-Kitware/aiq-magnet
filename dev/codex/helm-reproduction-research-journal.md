@@ -314,3 +314,97 @@ Therefore:
   - it is not enough for a stable p-value estimate
 - Run a minimal Together-backed control on a representative case
   - this should help separate provider/deployment effects from general HELM evolution
+
+## Direct NarrativeQA/Vicuna Debug Run
+
+We ran a focused local debug job outside kwdagger scheduling:
+
+- suite: `debug-narrative-vicuna-direct`
+- run entry: `narrative_qa:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical`
+- max_eval_instances: `20`
+
+Main result:
+
+- The direct run reproduces the same failure mode as the larger local NarrativeQA/Vicuna runs.
+- This strongly argues against the issue being a kwdagger scheduling/orchestration bug.
+
+Observed from the raw run:
+
+- request count: `100`
+- empty completions: `99`
+- non-empty completions: `1`
+- mean output token count: `0.13`
+- token count histogram:
+  - `0`: `99`
+  - `13`: `1`
+
+Observed from `stats.json`:
+
+- `num_completion_tokens` mean on `test`: `0.0`
+- `num_output_tokens` mean on `test`: `0.0`
+- `finish_reason_unknown` mean on `test`: `1.0`
+- `exact_match`, `quasi_exact_match`, `f1_score`, `rouge_l`: all `0.0`
+
+Relevant log clues:
+
+- HELM automatically set `apply_chat_template=True`
+- HELM removed 4 in-context examples to fit the context window
+- HELM logged stop/truncation warnings:
+  - `truncate_sequence needs to strip "\\n"`
+  - `truncate_sequence needs to strip "</s>"`
+
+Current interpretation:
+
+- Most likely this is a local HELM Hugging Face Vicuna execution/configuration issue.
+- The strongest current suspect is chat-template application on a non-chat-style NarrativeQA prompt.
+- Secondary suspects are newline stop-sequence handling and/or immediate EOS/empty-generation behavior in the HF Vicuna path.
+
+Current follow-up experiment:
+
+- rerun the same benchmark with a custom `model_deployments.yaml` override that sets:
+  - `apply_chat_template: false`
+
+## NarrativeQA/Vicuna Root Cause Update
+
+The `apply_chat_template: false` rerun strongly supports a root-cause diagnosis.
+
+Run:
+
+- suite: `debug-narrative-vicuna-nochat`
+- same benchmark/model family as the failing debug run
+- same local Hugging Face deployment name
+- overridden deployment config:
+  - `client_spec.args.apply_chat_template: false`
+
+Observed:
+
+- request count: `500`
+- empty completions: `0`
+- non-empty completions: `500`
+- mean output token count: `12.894`
+
+Aggregate test metrics from the corrected local run:
+
+- `exact_match`: `0.2727`
+- `quasi_exact_match`: `0.4026`
+- `f1_score`: `0.6422`
+- `rouge_l`: `0.6442`
+- `bleu_1`: `0.5138`
+- `bleu_4`: `0.0722`
+
+These are now close to the official public HELM run for the same benchmark/model pair.
+
+Conclusion:
+
+- The prior NarrativeQA/Vicuna failure was **not** good evidence of irreproducibility.
+- It was caused by a local HELM/HuggingFace configuration issue.
+- The main culprit appears to be automatic chat-template application for this run.
+
+Implications for the audit:
+
+- For local Hugging Face reproductions, `apply_chat_template` must be treated as an explicit controlled setting.
+- Some earlier "failed reproductions" may need to be reinterpreted or rerun if they depended on HELM's automatic chat-template inference.
+- The audit/reporting system should surface suspicious signals such as:
+  - high empty-completion rate
+  - near-zero `num_output_tokens`
+  - pervasive `finish_reason_unknown`

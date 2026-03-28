@@ -1194,6 +1194,63 @@ def prepare_local_helm_config(
     return local_path_abs
 
 
+def write_helm_log_config(out_dpath: Path) -> Path:
+    """
+    Write a HELM logging config file into ``out_dpath``.
+
+    This keeps the ``helm-run`` console logs and file logs colocated with the
+    kwdagger node outputs so they survive rsync / artifact transfer.
+    """
+    log_fpath = out_dpath / 'helm-run.log'
+    debug_log_fpath = out_dpath / 'helm-run.debug.log'
+    config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'console': {
+                'datefmt': '%Y-%m-%dT%H:%M:%S',
+                'format': '%(asctime)s %(levelname)-8s %(message)s',
+            },
+            'detailed': {
+                'datefmt': '%Y-%m-%dT%H:%M:%S',
+                'format': '%(asctime)s %(levelname)-8s %(name)s %(message)s',
+            },
+        },
+        'handlers': {
+            'stdout': {
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stdout',
+                'formatter': 'console',
+                'level': 'INFO',
+            },
+            'file_info': {
+                'class': 'logging.FileHandler',
+                'filename': os.fspath(log_fpath),
+                'formatter': 'detailed',
+                'level': 'INFO',
+                'mode': 'w',
+            },
+            'file_debug': {
+                'class': 'logging.FileHandler',
+                'filename': os.fspath(debug_log_fpath),
+                'formatter': 'detailed',
+                'level': 'DEBUG',
+                'mode': 'w',
+            },
+        },
+        'loggers': {
+            'helm': {
+                'handlers': ['stdout', 'file_info', 'file_debug'],
+                'level': 'DEBUG',
+                'propagate': False,
+            }
+        },
+    }
+    config_fpath = out_dpath / 'helm_log_config.yaml'
+    config_fpath.write_text(kwutil.Yaml.dumps(config))
+    return config_fpath
+
+
 def run_helm(
     requested_desc: str,
     suite: str,
@@ -1218,6 +1275,8 @@ def run_helm(
         suite,
         '--local-path',
         os.fspath(local_path),
+        '--log-config',
+        os.fspath(write_helm_log_config(out_dpath)),
     ]
     if max_eval_instances is not None:
         cmd += ['--max-eval-instances', str(max_eval_instances)]
