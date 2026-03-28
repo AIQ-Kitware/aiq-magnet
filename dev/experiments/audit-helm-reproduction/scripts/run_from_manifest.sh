@@ -10,8 +10,6 @@ audit::set_defaults
 MANIFEST="${1:-${AUDIT_ROOT}/configs/smoke_manifest.yaml}"
 audit::require_file "$MANIFEST"
 
-"${AUDIT_ROOT}/scripts/check_env.sh" >/dev/null
-
 EXPERIMENT_NAME="$("$AIQ_PYTHON" "${AUDIT_ROOT}/python/render_schedule_params.py" \
     --manifest "$MANIFEST" --mode experiment_name)"
 RESULT_DPATH="$("$AIQ_PYTHON" "${AUDIT_ROOT}/python/render_schedule_params.py" \
