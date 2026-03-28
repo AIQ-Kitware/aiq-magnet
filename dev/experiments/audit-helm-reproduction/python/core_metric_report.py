@@ -4,6 +4,8 @@ import argparse
 import datetime as datetime_mod
 import json
 import math
+import os
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +160,43 @@ def _metric_quantiles(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def _metric_descriptor(metric: str) -> dict[str, str]:
+    if metric in {
+        'exact_match',
+        'prefix_exact_match',
+        'quasi_exact_match',
+        'quasi_prefix_exact_match',
+        'exact_match@5',
+        'prefix_exact_match@5',
+        'quasi_exact_match@5',
+        'quasi_prefix_exact_match@5',
+    }:
+        return {
+            'kind': 'binary',
+            'range': '0 to 1',
+            'direction': 'higher is better',
+        }
+    if metric in {'bleu_1', 'bleu_4', 'f1_score', 'rouge_l'}:
+        return {
+            'kind': 'bounded overlap score',
+            'range': '0 to 1',
+            'direction': 'higher is better',
+        }
+    return {
+        'kind': 'score',
+        'range': 'metric-dependent',
+        'direction': 'higher is better unless documented otherwise',
+    }
+
+
+def _should_treat_as_discrete(values) -> bool:
+    values = [float(v) for v in values if v is not None]
+    unique_values = sorted(set(values))
+    if not unique_values:
+        return False
+    return len(unique_values) <= 8 and all(v in {0.0, 1.0} for v in unique_values)
+
+
 def _agreement_curve(rows: list[dict[str, Any]], thresholds: list[float]) -> list[dict[str, Any]]:
     if not rows:
         return []
@@ -174,6 +213,17 @@ def _agreement_curve(rows: list[dict[str, Any]], thresholds: list[float]) -> lis
     return out
 
 
+def _infer_run_spec_name(*run_paths: str) -> str:
+    names = [Path(p).name for p in run_paths if p]
+    names = [n for n in names if n]
+    if not names:
+        return 'unknown_run_spec'
+    unique = sorted(set(names))
+    if len(unique) == 1:
+        return unique[0]
+    return unique[0]
+
+
 def _build_pair(run_a: str, run_b: str, label: str, thresholds: list[float]) -> dict[str, Any]:
     diff = HelmRunDiff(HelmRun.coerce(run_a), HelmRun.coerce(run_b), a_name=f'{label}:A', b_name=f'{label}:B')
     run_rows = _run_level_core_rows(diff)
@@ -187,11 +237,13 @@ def _build_pair(run_a: str, run_b: str, label: str, thresholds: list[float]) -> 
         'diagnosis': diff.summary_dict(level=20).get('diagnosis', {}),
         'core_metrics': sorted({str(r['metric']) for r in inst_rows}),
         'run_level': {
+            'n_rows': len(run_rows),
             'overall_quantiles': _group_quantiles(run_rows),
             'by_metric': _metric_quantiles(run_rows),
             'agreement_vs_abs_tol': _agreement_curve(run_rows, thresholds),
         },
         'instance_level': {
+            'n_rows': len(inst_rows),
             'overall_quantiles': _group_quantiles(inst_rows),
             'by_metric': _metric_quantiles(inst_rows),
             'agreement_vs_abs_tol': _agreement_curve(inst_rows, thresholds),
@@ -227,8 +279,8 @@ def _plot_distribution(ax, pair_a: dict[str, Any], pair_b: dict[str, Any], level
     )
     ax.set_xscale('symlog', linthresh=1e-12)
     ax.set_ylim(0, 1.02)
-    ax.set_xlabel('Absolute tolerance')
-    ax.set_ylabel('Agreement ratio')
+    ax.set_xlabel('Absolute Tolerance Threshold for Core Metric Difference')
+    ax.set_ylabel('Fraction of Core Metric Comparisons in Agreement')
     ax.legend(title='')
 
 
@@ -242,7 +294,8 @@ def _plot_quantiles(ax, pair_a: dict[str, Any], pair_b: dict[str, Any], level_ke
     ax.set_xticks(x, labels)
     ax.set_yscale('symlog', linthresh=1e-12)
     ax.set_title(title)
-    ax.set_ylabel('Absolute delta quantile')
+    ax.set_xlabel('Quantile')
+    ax.set_ylabel('Absolute Difference in Core Metric Value')
     ax.legend()
 
 
@@ -264,14 +317,19 @@ def _distribution_rows(pair: dict[str, Any]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _plot_metric_distributions(fig_dpath: Path, stamp: str, left: dict[str, Any], right: dict[str, Any]) -> Path:
+def _plot_metric_distributions(fig_dpath: Path, stamp: str, left: dict[str, Any], right: dict[str, Any], run_spec_name: str) -> Path:
     df = pd.concat([
         _distribution_rows(left),
         _distribution_rows(right),
     ], ignore_index=True)
     metrics = sorted(df['metric'].dropna().unique().tolist())
     pair_order = [left['label'], right['label']]
-    fig, axes = plt.subplots(len(pair_order), len(metrics), figsize=(4 * len(metrics), 3.5 * len(pair_order)), constrained_layout=True)
+    fig, axes = plt.subplots(
+        len(pair_order),
+        len(metrics),
+        figsize=(5.2 * len(metrics), 4.2 * len(pair_order)),
+        constrained_layout=True,
+    )
     if len(pair_order) == 1 and len(metrics) == 1:
         axes = [[axes]]
     elif len(pair_order) == 1:
@@ -282,15 +340,17 @@ def _plot_metric_distributions(fig_dpath: Path, stamp: str, left: dict[str, Any]
         for col_idx, metric in enumerate(metrics):
             ax = axes[row_idx][col_idx]
             sub = df[(df['pair'] == pair_label) & (df['metric'] == metric)]
+            discrete = _should_treat_as_discrete(sub['value'].tolist())
             sns.histplot(
                 data=sub,
                 x='value',
                 hue='side',
                 stat='probability',
                 common_norm=False,
-                discrete=True,
+                discrete=discrete,
                 multiple='dodge',
                 shrink=0.8,
+                bins=None if discrete else 20,
                 ax=ax,
             )
             ax.set_title(f'{pair_label}\n{metric}')
@@ -299,6 +359,12 @@ def _plot_metric_distributions(fig_dpath: Path, stamp: str, left: dict[str, Any]
             legend = ax.get_legend()
             if legend is not None:
                 legend.set_title('')
+    fig.suptitle(
+        'Core Metric Score Distributions Within Each Comparison Pair\n'
+        f'Run Spec: {run_spec_name}\n'
+        'Each panel shows the per-instance score distribution for side A vs side B.',
+        fontsize=16,
+    )
     out_fpath = fig_dpath / f'core_metric_distributions_{stamp}.png'
     fig.savefig(out_fpath, dpi=180)
     plt.close(fig)
@@ -335,6 +401,7 @@ def _plot_three_run_metric_distributions(
     kwdagger_a_run: str,
     kwdagger_b_run: str,
     official_run: str,
+    run_spec_name: str,
 ) -> Path:
     df = pd.concat([
         _single_run_instance_core_rows(kwdagger_a_run, 'kwdagger A'),
@@ -346,7 +413,7 @@ def _plot_three_run_metric_distributions(
     fig, axes = plt.subplots(
         len(metrics),
         len(run_order),
-        figsize=(4 * len(run_order), 2.8 * len(metrics)),
+        figsize=(5.0 * len(run_order), 3.2 * len(metrics)),
         constrained_layout=True,
     )
     if len(metrics) == 1 and len(run_order) == 1:
@@ -359,12 +426,14 @@ def _plot_three_run_metric_distributions(
         for col_idx, run_label in enumerate(run_order):
             ax = axes[row_idx][col_idx]
             sub = df[(df['metric'] == metric) & (df['run'] == run_label)]
+            discrete = _should_treat_as_discrete(sub['value'].tolist())
             sns.histplot(
                 data=sub,
                 x='value',
                 stat='probability',
-                discrete=True,
+                discrete=discrete,
                 shrink=0.8,
+                bins=None if discrete else 20,
                 ax=ax,
                 color='#4C72B0',
             )
@@ -372,7 +441,123 @@ def _plot_three_run_metric_distributions(
                 ax.set_title(run_label)
             ax.set_xlabel('Core metric value')
             ax.set_ylabel(metric if col_idx == 0 else '')
+    fig.suptitle(
+        'Per-Run Instance-Level Core Metric Score Distributions\n'
+        f'Run Spec: {run_spec_name}\n'
+        'Columns are kwdagger repeat A, kwdagger repeat B, and the official HELM run.',
+        fontsize=16,
+    )
     out_fpath = fig_dpath / f'core_metric_three_run_distributions_{stamp}.png'
+    fig.savefig(out_fpath, dpi=180)
+    plt.close(fig)
+    return out_fpath
+
+
+def _plot_overlay_metric_distributions(
+    fig_dpath: Path,
+    stamp: str,
+    kwdagger_a_run: str,
+    kwdagger_b_run: str,
+    official_run: str,
+    run_spec_name: str,
+) -> Path:
+    df = pd.concat([
+        _single_run_instance_core_rows(kwdagger_a_run, 'kwdagger A'),
+        _single_run_instance_core_rows(kwdagger_b_run, 'kwdagger B'),
+        _single_run_instance_core_rows(official_run, 'official'),
+    ], ignore_index=True)
+    metrics = sorted(df['metric'].dropna().unique().tolist())
+    fig, axes = plt.subplots(
+        len(metrics),
+        1,
+        figsize=(10, 3.2 * len(metrics)),
+        constrained_layout=True,
+    )
+    if len(metrics) == 1:
+        axes = [axes]
+    for ax, metric in zip(axes, metrics):
+        sub = df[df['metric'] == metric].copy()
+        discrete = _should_treat_as_discrete(sub['value'].tolist())
+        sns.histplot(
+            data=sub,
+            x='value',
+            hue='run',
+            stat='probability',
+            common_norm=False,
+            element='step',
+            fill=False,
+            multiple='layer',
+            discrete=discrete,
+            bins=None if discrete else 20,
+            ax=ax,
+        )
+        desc = _metric_descriptor(metric)
+        ax.set_title(
+            f"{metric} ({desc['kind']}, {desc['range']}, {desc['direction']})"
+        )
+        ax.set_xlabel('Instance-level metric value')
+        ax.set_ylabel('Probability')
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.set_title('')
+    fig.suptitle(
+        'Overlay of Per-Instance Core Metric Score Distributions by Run\n'
+        f'Run Spec: {run_spec_name}\n'
+        'This shows the raw score distributions for each core metric across kwdagger repeats and the official HELM run.',
+        fontsize=16,
+    )
+    out_fpath = fig_dpath / f'core_metric_overlay_distributions_{stamp}.png'
+    fig.savefig(out_fpath, dpi=180)
+    plt.close(fig)
+    return out_fpath
+
+
+def _plot_overlay_metric_ecdfs(
+    fig_dpath: Path,
+    stamp: str,
+    kwdagger_a_run: str,
+    kwdagger_b_run: str,
+    official_run: str,
+    run_spec_name: str,
+) -> Path:
+    df = pd.concat([
+        _single_run_instance_core_rows(kwdagger_a_run, 'kwdagger A'),
+        _single_run_instance_core_rows(kwdagger_b_run, 'kwdagger B'),
+        _single_run_instance_core_rows(official_run, 'official'),
+    ], ignore_index=True)
+    metrics = sorted(df['metric'].dropna().unique().tolist())
+    fig, axes = plt.subplots(
+        len(metrics),
+        1,
+        figsize=(10, 3.2 * len(metrics)),
+        constrained_layout=True,
+    )
+    if len(metrics) == 1:
+        axes = [axes]
+    for ax, metric in zip(axes, metrics):
+        sub = df[df['metric'] == metric].copy()
+        sns.ecdfplot(
+            data=sub,
+            x='value',
+            hue='run',
+            ax=ax,
+        )
+        desc = _metric_descriptor(metric)
+        ax.set_title(
+            f"{metric} ECDF ({desc['kind']}, {desc['range']}, {desc['direction']})"
+        )
+        ax.set_xlabel('Instance-level metric value')
+        ax.set_ylabel('Cumulative fraction of instances')
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.set_title('')
+    fig.suptitle(
+        'ECDF of Per-Instance Core Metric Scores by Run\n'
+        f'Run Spec: {run_spec_name}\n'
+        'This often communicates sparse or zero-heavy metric distributions more clearly than histograms.',
+        fontsize=16,
+    )
+    out_fpath = fig_dpath / f'core_metric_ecdfs_{stamp}.png'
     fig.savefig(out_fpath, dpi=180)
     plt.close(fig)
     return out_fpath
@@ -446,6 +631,8 @@ def _write_text(report: dict[str, Any], out_fpath: Path) -> None:
         lines.append(f"pair: {pair['label']}")
         lines.append(f"  diagnosis: {pair['diagnosis'].get('label')}")
         lines.append(f"  primary_reason_names: {pair['diagnosis'].get('primary_reason_names')}")
+        lines.append(f"  run_level_n: {pair['run_level']['n_rows']}")
+        lines.append(f"  instance_level_n: {pair['instance_level']['n_rows']}")
         lines.append(f"  run_level_quantiles: {json.dumps(pair['run_level']['overall_quantiles']['abs_delta'])}")
         lines.append(f"  instance_level_quantiles: {json.dumps(pair['instance_level']['overall_quantiles']['abs_delta'])}")
         lines.append('  by_metric:')
@@ -478,10 +665,20 @@ def _write_management_summary(report: dict[str, Any], out_fpath: Path) -> None:
     lines.append('Core Metric Executive Summary')
     lines.append('')
     lines.append(f"generated_utc: {report['generated_utc']}")
+    lines.append(f"run_spec_name: {report['run_spec_name']}")
     lines.append(f"core_metrics: {', '.join(left.get('core_metrics', []))}")
+    lines.append('')
+    lines.append('metric_descriptions:')
+    for metric in left.get('core_metrics', []):
+        desc = _metric_descriptor(metric)
+        lines.append(
+            f"  - {metric}: {desc['kind']}; {desc['range']}; {desc['direction']}"
+        )
     lines.append('')
     lines.append(f"{left['label']}:")
     lines.append(f"  diagnosis: {left['diagnosis'].get('label')}")
+    lines.append(f"  run-level N: {left['run_level']['n_rows']}")
+    lines.append(f"  instance-level N: {left['instance_level']['n_rows']}")
     lines.append(
         f"  instance agreement at abs_tol=0.0: {_find_curve_value(left['instance_level']['agreement_vs_abs_tol'], 0.0)}"
     )
@@ -494,7 +691,9 @@ def _write_management_summary(report: dict[str, Any], out_fpath: Path) -> None:
     lines.append('')
     lines.append(f"{right['label']}:")
     lines.append(f"  diagnosis: {right['diagnosis'].get('label')}")
-    for tol in [0.0, 1e-3, 1e-2, 1e-1, 1.0]:
+    lines.append(f"  run-level N: {right['run_level']['n_rows']}")
+    lines.append(f"  instance-level N: {right['instance_level']['n_rows']}")
+    for tol in [0.0, 1e-3, 1e-2, 1e-1, 2.5e-1, 5e-1, 1.0]:
         lines.append(
             f"  instance agreement at abs_tol={tol}: "
             f"{_find_curve_value(right['instance_level']['agreement_vs_abs_tol'], tol)}"
@@ -512,6 +711,15 @@ def _write_management_summary(report: dict[str, Any], out_fpath: Path) -> None:
     out_fpath.write_text('\n'.join(lines) + '\n')
 
 
+def _write_latest_alias(src: Path, latest_root: Path, latest_name: str) -> Path:
+    latest_fpath = latest_root / latest_name
+    if latest_fpath.exists() or latest_fpath.is_symlink():
+        latest_fpath.unlink()
+    rel_src = os.path.relpath(src, start=latest_fpath.parent)
+    os.symlink(rel_src, latest_fpath)
+    return latest_fpath
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument('--left-run-a', required=True)
@@ -523,33 +731,54 @@ def main() -> None:
     parser.add_argument('--report-dpath', required=True)
     args = parser.parse_args()
 
-    thresholds = [0.0, 1e-12, 1e-9, 1e-6, 1e-4, 1e-3, 1e-2, 2e-2, 5e-2, 1e-1, 5e-1, 1.0]
+    thresholds = [0.0, 1e-12, 1e-9, 1e-6, 1e-4, 1e-3, 1e-2, 2e-2, 5e-2, 1e-1, 2.5e-1, 5e-1, 1.0]
     report_dpath = Path(args.report_dpath).expanduser().resolve()
     report_dpath.mkdir(parents=True, exist_ok=True)
     stamp = datetime_mod.datetime.now(datetime_mod.UTC).strftime('%Y%m%dT%H%M%SZ')
+    history_dpath = report_dpath / '.history' / stamp[:8]
+    history_dpath.mkdir(parents=True, exist_ok=True)
+    run_spec_name = _infer_run_spec_name(args.left_run_a, args.left_run_b, args.right_run_a)
 
     left = _build_pair(args.left_run_a, args.left_run_b, args.left_label, thresholds)
     right = _build_pair(args.right_run_a, args.right_run_b, args.right_label, thresholds)
     report = {
         'generated_utc': stamp,
+        'run_spec_name': run_spec_name,
         'thresholds': thresholds,
         'pairs': [left, right],
     }
 
-    json_fpath = report_dpath / f'core_metric_report_{stamp}.json'
-    txt_fpath = report_dpath / f'core_metric_report_{stamp}.txt'
-    mgmt_fpath = report_dpath / f'core_metric_management_summary_{stamp}.txt'
-    fig_fpath = report_dpath / f'core_metric_report_{stamp}.png'
-    dist_fig_fpath = _plot_metric_distributions(report_dpath, stamp, left, right)
+    json_fpath = history_dpath / f'core_metric_report_{stamp}.json'
+    txt_fpath = history_dpath / f'core_metric_report_{stamp}.txt'
+    mgmt_fpath = history_dpath / f'core_metric_management_summary_{stamp}.txt'
+    fig_fpath = history_dpath / f'core_metric_report_{stamp}.png'
+    dist_fig_fpath = _plot_metric_distributions(history_dpath, stamp, left, right, run_spec_name)
     three_run_dist_fpath = _plot_three_run_metric_distributions(
-        report_dpath,
+        history_dpath,
         stamp,
         args.left_run_a,
         args.left_run_b,
         args.right_run_a,
+        run_spec_name,
+    )
+    overlay_dist_fpath = _plot_overlay_metric_distributions(
+        history_dpath,
+        stamp,
+        args.left_run_a,
+        args.left_run_b,
+        args.right_run_a,
+        run_spec_name,
+    )
+    ecdf_fig_fpath = _plot_overlay_metric_ecdfs(
+        history_dpath,
+        stamp,
+        args.left_run_a,
+        args.left_run_b,
+        args.right_run_a,
+        run_spec_name,
     )
     runlevel_csv_fpath, runlevel_md_fpath = _write_three_run_runlevel_table(
-        report_dpath,
+        history_dpath,
         stamp,
         args.left_run_a,
         args.left_run_b,
@@ -562,15 +791,56 @@ def main() -> None:
     _write_management_summary(report, mgmt_fpath)
 
     sns.set_theme(style='whitegrid', context='talk')
-    fig, axes = plt.subplots(2, 2, figsize=(12, 8), constrained_layout=True)
-    _plot_quantiles(axes[0, 0], left, right, 'run_level', 'Core Run-Level Abs Delta Quantiles')
-    _plot_quantiles(axes[0, 1], left, right, 'instance_level', 'Core Instance-Level Abs Delta Quantiles')
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10), constrained_layout=True)
+    _plot_quantiles(
+        axes[0, 0],
+        left,
+        right,
+        'run_level',
+        f"Run-Level Core Metric Difference Quantiles\nRun Spec: {run_spec_name}\nN={left['run_level']['n_rows']} vs N={right['run_level']['n_rows']}"
+    )
+    _plot_quantiles(
+        axes[0, 1],
+        left,
+        right,
+        'instance_level',
+        f"Instance-Level Core Metric Difference Quantiles\nRun Spec: {run_spec_name}\nN={left['instance_level']['n_rows']} vs N={right['instance_level']['n_rows']}"
+    )
     _plot_distribution(axes[1, 0], left, right, 'run_level')
-    axes[1, 0].set_title('Core Run-Level Agreement vs Abs Tol')
+    axes[1, 0].set_title(
+        f"Run-Level Core Metric Agreement vs Tolerance\n"
+        f"Run Spec: {run_spec_name}\n"
+        f"{left['label']} N={left['run_level']['n_rows']}, {right['label']} N={right['run_level']['n_rows']}"
+    )
     _plot_distribution(axes[1, 1], left, right, 'instance_level')
-    axes[1, 1].set_title('Core Instance-Level Agreement vs Abs Tol')
+    axes[1, 1].set_title(
+        f"Instance-Level Core Metric Agreement vs Tolerance\n"
+        f"Run Spec: {run_spec_name}\n"
+        f"{left['label']} N={left['instance_level']['n_rows']}, {right['label']} N={right['instance_level']['n_rows']}"
+    )
+    fig.suptitle(
+        'Core Metric Agreement and Difference Summary\n'
+        f'Run Spec: {run_spec_name}\n'
+        'Comparing kwdagger repeatability against official-vs-kwdagger divergence.',
+        fontsize=18,
+    )
     fig.savefig(fig_fpath, dpi=180)
     plt.close(fig)
+
+    latest_map = {
+        json_fpath: 'core_metric_report.latest.json',
+        txt_fpath: 'core_metric_report.latest.txt',
+        mgmt_fpath: 'core_metric_management_summary.latest.txt',
+        fig_fpath: 'core_metric_report.latest.png',
+        dist_fig_fpath: 'core_metric_distributions.latest.png',
+        three_run_dist_fpath: 'core_metric_three_run_distributions.latest.png',
+        overlay_dist_fpath: 'core_metric_overlay_distributions.latest.png',
+        ecdf_fig_fpath: 'core_metric_ecdfs.latest.png',
+        runlevel_csv_fpath: 'core_runlevel_table.latest.csv',
+        runlevel_md_fpath: 'core_runlevel_table.latest.md',
+    }
+    for src, latest_name in latest_map.items():
+        _write_latest_alias(src, report_dpath, latest_name)
 
     print(f'Wrote core metric report: {json_fpath}')
     print(f'Wrote core metric text: {txt_fpath}')
@@ -578,6 +848,8 @@ def main() -> None:
     print(f'Wrote core metric plot: {fig_fpath}')
     print(f'Wrote core metric distributions: {dist_fig_fpath}')
     print(f'Wrote core metric three-run distributions: {three_run_dist_fpath}')
+    print(f'Wrote core metric overlay distributions: {overlay_dist_fpath}')
+    print(f'Wrote core metric ecdfs: {ecdf_fig_fpath}')
     print(f'Wrote core run-level table csv: {runlevel_csv_fpath}')
     print(f'Wrote core run-level table md: {runlevel_md_fpath}')
 

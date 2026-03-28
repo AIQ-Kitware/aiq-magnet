@@ -176,6 +176,81 @@ def _normalize_optional_pathish(value):
     return value
 
 
+def _safe_config_dict(config) -> dict:
+    try:
+        return config.asdict()
+    except Exception:
+        try:
+            return dict(config)
+        except Exception:
+            return {}
+
+
+def _query_nvidia_smi() -> dict | None:
+    """
+    Best-effort GPU query for reproducibility metadata.
+    """
+    try:
+        cmd = [
+            'nvidia-smi',
+            '--query-gpu=index,name,memory.total,driver_version',
+            '--format=csv,noheader,nounits',
+        ]
+        info = ub.cmd(cmd, verbose=0, system=False, check=False)
+        if info.returncode != 0:
+            return None
+        gpus = []
+        for line in info.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) != 4:
+                continue
+            idx, name, mem_total, driver = parts
+            gpus.append({
+                'index': int(idx),
+                'name': name,
+                'memory_total_mb': int(mem_total),
+                'driver_version': driver,
+            })
+        return {'gpus': gpus}
+    except FileNotFoundError:
+        return None
+    except Exception as ex:
+        return {'error': repr(ex)}
+
+
+def _capture_process_context(out_dpath: Path, config) -> dict:
+    from kwutil.process_context import ProcessContext
+
+    process_context_fpath = out_dpath / 'process_context.json'
+    extra = {
+        'env': {
+            'CUDA_VISIBLE_DEVICES': os.environ.get('CUDA_VISIBLE_DEVICES'),
+            'HOSTNAME': os.environ.get('HOSTNAME'),
+        }
+    }
+    ctx = ProcessContext(
+        name='materialize_helm_run',
+        config=_safe_config_dict(config),
+        extra=extra,
+        output_fpath=process_context_fpath,
+    )
+    ctx.start()
+    ctx.stop()
+    try:
+        ctx.add_disk_info(out_dpath)
+    except Exception:
+        pass
+    gpu_info = _query_nvidia_smi()
+    if gpu_info:
+        ctx.properties.setdefault('extra', {})
+        ctx.properties['extra']['nvidia_smi'] = gpu_info
+    try:
+        process_context_fpath.write_text(kwutil.Json.dumps(ctx.obj, indent=2))
+    except Exception:
+        pass
+    return ctx.obj
+
+
 class MaterializeHelmRunConfig(scfg.DataConfig):
     """
     Materialize HELM results either by computing them directly or pulling them
@@ -401,6 +476,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
             'out_dpath': str(out_dpath),
             'timestamp': time.time(),
         }
+        process_context = _capture_process_context(out_dpath, config)
+        manifest['process_context_fpath'] = str(out_dpath / 'process_context.json')
+        manifest['process_context'] = process_context
 
         # 1) Try reuse
         match = None
