@@ -12,6 +12,11 @@ The design goals are:
 - start with a small smoke-test batch,
 - scale later to larger reproduction attempts without redesign.
 
+Remote reproduction-only machines do not need `/data/crfm-helm-public` mounted.
+The public HELM bundle is only required on the analysis machine that will do
+historic comparisons later. If a manifest sets `precomputed_root: null`, the
+runner now skips the `HELM_PRECOMPUTED_ROOT` existence check.
+
 ## Defaults
 
 These defaults are chosen to work in the current environment:

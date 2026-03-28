@@ -47,6 +47,7 @@ def main() -> None:
             "backend",
             "tmux_workers",
             "devices",
+            "precomputed_root",
         ],
     )
     args = parser.parse_args()
@@ -64,6 +65,12 @@ def main() -> None:
         print(manifest.get("tmux_workers", 2))
     elif args.mode == "devices":
         print(manifest.get("devices", "0,1"))
+    elif args.mode == "precomputed_root":
+        value = manifest.get("precomputed_root", None)
+        if value is None:
+            print("")
+        else:
+            print(value)
     else:
         raise AssertionError(args.mode)
 
