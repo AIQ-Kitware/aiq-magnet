@@ -114,9 +114,134 @@ Heavy run outputs are written by default to:
 /data/crfm-helm-audit/<experiment_name>/
 ```
 
+## Refreshing Analysis From Latest Data
+
+When new raw audit runs have landed under `/data/crfm-helm-audit`, the easiest
+way to refresh analysis is:
+
+1. rebuild the audit index
+2. regenerate the specific report you care about from that index
+
+Rebuild the index:
+
+```bash
+AUDIT_FALLBACK_HOST=aiq-gpu \
+dev/experiments/audit-helm-reproduction/scripts/index_results.sh
+```
+
+This writes:
+
+- `dev/experiments/audit-helm-reproduction/reports/indexes/audit_results_index_<timestamp>.jsonl`
+- `dev/experiments/audit-helm-reproduction/reports/indexes/audit_results_index_<timestamp>.csv`
+- `dev/experiments/audit-helm-reproduction/reports/indexes/audit_results_index_<timestamp>.txt`
+
+Use `AUDIT_FALLBACK_HOST` for older runs that predate explicit process
+provenance capture. Newer runs will record machine context directly in each job
+directory via `process_context.json`.
+
+Then rebuild a core metric report for a specific run entry:
+
+```bash
+dev/experiments/audit-helm-reproduction/scripts/rebuild_core_report_from_index.sh \
+  --run-entry 'narrative_qa:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical'
+```
+
+This will:
+
+- pick the newest two indexed kwdagger runs for that exact `run_entry`
+- find the best matching historic HELM run from `/data/crfm-helm-public`
+- regenerate the core metric report bundle automatically
+
+Each stable report directory now stores timestamped artifacts under:
+
+- `.history/<YYYYMMDD>/`
+
+The top-level user-facing files are symlinks to the newest timestamped
+artifacts, for example:
+
+- `core_metric_management_summary.latest.txt`
+- `core_metric_report.latest.txt`
+- `core_metric_report.latest.json`
+- `core_metric_report.latest.png`
+- `core_metric_overlay_distributions.latest.png`
+- `core_metric_ecdfs.latest.png`
+- `core_runlevel_table.latest.csv`
+- `report_selection.latest.json`
+- `instance_samples_kwdagger_repeat.latest.txt`
+- `instance_samples_official_vs_kwdagger.latest.txt`
+- `kwdagger_a.run`
+- `kwdagger_b.run`
+- `official.run`
+- `kwdagger_a.job`
+- `kwdagger_b.job`
+
+This is the preferred way to inspect the newest version of a report without
+guessing which timestamp is current.
+
+The raw-run symlinks make it easy to jump directly from a report bundle back to
+the exact local and historic run directories that were selected for analysis.
+The instance sample reports are text summaries produced from
+`HelmRunDiff.summarize_instances(...)` and are intended as the first stop when
+you want to inspect prompts, completions, references, and the largest per-run
+instance mismatches in a suspicious case.
+
+If only one local run exists and you still want a report, allow reuse of that
+single run on both sides of the repeatability slot:
+
+```bash
+dev/experiments/audit-helm-reproduction/scripts/rebuild_core_report_from_index.sh \
+  --run-entry 'narrative_qa:model=lmsys/vicuna-7b-v1.3,data_augmentation=canonical' \
+  --allow-single-repeat
+```
+
+This is the preferred workflow for fast iteration when we want to keep changing
+what we measure or how we visualize it without manually reconstructing run
+paths.
+
+To rebuild all currently available core reports from the latest index:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/rebuild_all_core_reports_from_index.sh
+```
+
+If you want the tool to emit reports even for entries with only one matching
+kwdagger run, use:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/rebuild_all_core_reports_from_index.sh \
+  --allow-single-repeat
+```
+
+After rebuilding the per-run-spec reports, generate an overall reproducibility
+assessment across all currently available core reports:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/aggregate_core_reports.sh
+```
+
+This writes:
+
+- `reports/overall-reproducibility/.history/<YYYYMMDD>/overall_reproducibility_summary_<timestamp>.*`
+- stable symlinks:
+  - `overall_reproducibility_summary.latest.txt`
+  - `overall_reproducibility_summary.latest.json`
+  - `overall_reproducibility_summary.latest.csv`
+  - `overall_reproducibility_summary.latest.md`
+
 The runner also derives a distinct `kwdagger` queue name from the experiment
 name, which helps avoid interactive tmux collision prompts when multiple audit
 batches have been launched on the same machine.
+
+If you want to inspect a specific pair directly without rebuilding the full
+core report, you can write an instance-sample inspection report with:
+
+```bash
+bash dev/experiments/audit-helm-reproduction/scripts/inspect_pair_samples.sh \
+  --run-a /path/to/run_a \
+  --run-b /path/to/run_b \
+  --label investigation_pair \
+  --report-dpath dev/experiments/audit-helm-reproduction/reports/manual-inspection
+```
 
 ## Reproducibility Checklist
 
@@ -153,6 +278,13 @@ Minimum useful transfer set:
 - report directory only, if you only need summaries
 - report directory plus 1-2 representative raw job directories, if you need direct run artifact inspection
 - full raw experiment directory, if you may need to rerun local comparisons later
+
+For newer runs, also preserve:
+
+- `process_context.json` in each kwdagger HELM job directory
+
+That file records structured host/process provenance and is intended to support
+future cross-machine and cross-hardware analysis.
 
 ## Manifest Schema
 
@@ -417,6 +549,34 @@ Then inspect:
 ls -td dev/experiments/audit-helm-reproduction/reports/pairwise/*
 cat dev/experiments/audit-helm-reproduction/reports/pairwise/pair_report_<timestamp>.txt
 ```
+
+## Indexing Existing Audit Results
+
+The indexer scans all current audit outputs and builds a machine-readable
+inventory of what exists.
+
+Use:
+
+```bash
+AUDIT_FALLBACK_HOST=aiq-gpu \
+dev/experiments/audit-helm-reproduction/scripts/index_results.sh
+```
+
+The index currently records:
+
+- experiment name
+- job id
+- status
+- run entry
+- benchmark / model / method
+- max eval instances
+- resolved run directory
+- machine host
+- GPU fields when recorded
+- provenance source (`recorded` vs `fallback`)
+
+This index is the preferred starting point for rebuilding reports against the
+latest available runs without manually searching the raw results tree.
 
 ## Notes
 
