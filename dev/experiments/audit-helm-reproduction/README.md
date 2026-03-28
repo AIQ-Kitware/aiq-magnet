@@ -243,6 +243,28 @@ bash dev/experiments/audit-helm-reproduction/scripts/inspect_pair_samples.sh \
   --report-dpath dev/experiments/audit-helm-reproduction/reports/manual-inspection
 ```
 
+For a newly synced kwdagger experiment, you can rebuild only the reports
+relevant to that experiment and write a focused summary with:
+
+```bash
+AUDIT_FALLBACK_HOST=aiq-gpu \
+bash dev/experiments/audit-helm-reproduction/scripts/index_results.sh
+
+bash dev/experiments/audit-helm-reproduction/scripts/analyze_experiment_from_index.sh \
+  --experiment-name audit-vicuna-nochat-overnight \
+  --allow-single-repeat
+```
+
+This writes a compact experiment-level summary under:
+
+- `reports/experiment-analysis-<slugified-experiment-name>/`
+
+Note:
+
+- this experiment analyzer uses the kwdagger results index
+- it is intended for indexed kwdagger experiments
+- direct one-off debug runs that were not scheduled as kwdagger jobs will not appear there
+
 ## Reproducibility Checklist
 
 For any experiment you want to cite later, preserve all of the following:
