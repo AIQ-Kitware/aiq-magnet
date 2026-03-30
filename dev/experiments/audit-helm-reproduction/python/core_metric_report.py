@@ -19,6 +19,7 @@ from magnet.backends.helm.helm_outputs import HelmRun
 from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
 from magnet.backends.helm.helm_run_diff import HelmRunDiff
 from magnet.backends.helm.util import helm_metrics
+from paper_labels import load_paper_label_manager
 
 
 def _quantile(values: list[float], q: float) -> float | None:
@@ -75,6 +76,40 @@ def _run_level_core_rows(diff: HelmRunDiff) -> list[dict[str, Any]]:
 
 def _load_json(fpath: Path) -> Any:
     return json.loads(fpath.read_text())
+
+
+def _load_optional_cross_machine_pair(report_dpath: Path) -> dict[str, Any] | None:
+    pair_fpath = report_dpath / 'cross-machine-aiq-gpu' / 'pair_report.latest.json'
+    if not pair_fpath.exists():
+        return None
+    data = _load_json(pair_fpath)
+    display = data.get('display_labels', {}) or {}
+    label_a = (
+        display.get('label_a')
+        or ((data.get('inputs') or {}).get('label_a'))
+        or 'aiq-gpu'
+    )
+    label_b = (
+        display.get('label_b')
+        or ((data.get('inputs') or {}).get('label_b'))
+        or 'other-machine'
+    )
+    highlights = data.get('tolerance_highlights', {}) or {}
+    distance = data.get('distance_summary', {}) or {}
+    strict = data.get('strict_summary', {}) or {}
+    diagnosis = (strict.get('diagnosis') or {})
+    return {
+        'label': f'{label_a}_vs_{label_b}',
+        'diagnosis': diagnosis,
+        'run_level': {
+            'agreement_vs_abs_tol': highlights.get('run_level', []) or [],
+            'overall_quantiles': (distance.get('run_level') or {}).get('overall', {}) or {},
+        },
+        'instance_level': {
+            'agreement_vs_abs_tol': highlights.get('instance_level', []) or [],
+            'overall_quantiles': (distance.get('instance_level') or {}).get('overall', {}) or {},
+        },
+    }
 
 
 def _collect_stat_means(stats: list[dict[str, Any]], metric_name: str) -> dict[str, float]:
@@ -338,9 +373,11 @@ def _build_pair(run_a: str, run_b: str, label: str, thresholds: list[float]) -> 
     }
 
 
-def _agreement_curve_rows(pair_a: dict[str, Any], pair_b: dict[str, Any], level_key: str) -> list[dict[str, Any]]:
+def _agreement_curve_rows(*pairs: dict[str, Any], level_key: str) -> list[dict[str, Any]]:
     rows = []
-    for pair in [pair_a, pair_b]:
+    for pair in pairs:
+        if not pair:
+            continue
         for row in pair[level_key]['agreement_vs_abs_tol']:
             rows.append({
                 'pair': pair['label'],
@@ -350,8 +387,8 @@ def _agreement_curve_rows(pair_a: dict[str, Any], pair_b: dict[str, Any], level_
     return rows
 
 
-def _plot_distribution(ax, pair_a: dict[str, Any], pair_b: dict[str, Any], level_key: str) -> None:
-    rows = pd.DataFrame(_agreement_curve_rows(pair_a, pair_b, level_key))
+def _plot_distribution(ax, *pairs: dict[str, Any], level_key: str) -> None:
+    rows = pd.DataFrame(_agreement_curve_rows(*pairs, level_key=level_key))
     sns.lineplot(
         ax=ax,
         data=rows,
@@ -367,6 +404,7 @@ def _plot_distribution(ax, pair_a: dict[str, Any], pair_b: dict[str, Any], level
     ax.set_ylim(0, 1.02)
     ax.set_xlabel('Absolute Tolerance Threshold for Core Metric Difference')
     ax.set_ylabel('Fraction of Core Metric Comparisons in Agreement')
+    ax.tick_params(axis='x', rotation=28)
     ax.legend(title='')
 
 
@@ -382,7 +420,7 @@ def _plot_quantiles(ax, pair_a: dict[str, Any], pair_b: dict[str, Any], level_ke
     ax.set_title(title)
     ax.set_xlabel('Quantile')
     ax.set_ylabel('Absolute Difference in Core Metric Value')
-    ax.legend()
+    ax.legend(title='')
 
 
 def _distribution_rows(pair: dict[str, Any]) -> pd.DataFrame:
@@ -908,39 +946,42 @@ def main() -> None:
     _write_text(report, txt_fpath)
     _write_management_summary(report, mgmt_fpath)
 
+    extra_pair = _load_optional_cross_machine_pair(report_dpath)
+    paper_labels = load_paper_label_manager(style='paper_short')
+    extra_label = extra_pair['label'] if extra_pair is not None else None
+    pair_line = f'Pairs: {left["label"]} vs {right["label"]}'
+    if extra_label is not None:
+        pair_line += f' + {extra_label}'
+    pair_line = paper_labels.relabel_text(pair_line)
     sns.set_theme(style='whitegrid', context='talk')
-    fig, axes = plt.subplots(2, 2, figsize=(15, 10), constrained_layout=True)
+    fig, axes = plt.subplots(2, 2, figsize=(24, 14.5), constrained_layout=True)
     _plot_quantiles(
         axes[0, 0],
         left,
         right,
         'run_level',
-        f"Run-Level Core Metric Difference Quantiles\nRun Spec: {run_spec_name}\nN={left['run_level']['n_rows']} vs N={right['run_level']['n_rows']}"
+        'Run-Level Delta Quantiles'
     )
     _plot_quantiles(
         axes[0, 1],
         left,
         right,
         'instance_level',
-        f"Instance-Level Core Metric Difference Quantiles\nRun Spec: {run_spec_name}\nN={left['instance_level']['n_rows']} vs N={right['instance_level']['n_rows']}"
+        'Instance-Level Delta Quantiles'
     )
-    _plot_distribution(axes[1, 0], left, right, 'run_level')
-    axes[1, 0].set_title(
-        f"Run-Level Core Metric Agreement vs Tolerance\n"
-        f"Run Spec: {run_spec_name}\n"
-        f"{left['label']} N={left['run_level']['n_rows']}, {right['label']} N={right['run_level']['n_rows']}"
-    )
-    _plot_distribution(axes[1, 1], left, right, 'instance_level')
-    axes[1, 1].set_title(
-        f"Instance-Level Core Metric Agreement vs Tolerance\n"
-        f"Run Spec: {run_spec_name}\n"
-        f"{left['label']} N={left['instance_level']['n_rows']}, {right['label']} N={right['instance_level']['n_rows']}"
-    )
+    _plot_distribution(axes[1, 0], left, right, extra_pair, level_key='run_level')
+    axes[1, 0].set_title('Run-Level Agreement vs Tolerance', fontsize=11)
+    _plot_distribution(axes[1, 1], left, right, extra_pair, level_key='instance_level')
+    axes[1, 1].set_title('Instance-Level Agreement vs Tolerance', fontsize=11)
+    axes[0, 0].title.set_fontsize(11)
+    axes[0, 1].title.set_fontsize(11)
     fig.suptitle(
         'Core Metric Agreement and Difference Summary\n'
         f'Run Spec: {run_spec_name}\n'
-        'Comparing kwdagger repeatability against official-vs-kwdagger divergence.',
-        fontsize=18,
+        f'{pair_line}\n'
+        f'Run-level N: {left["run_level"]["n_rows"]} vs {right["run_level"]["n_rows"]} | '
+        f'Instance-level N: {left["instance_level"]["n_rows"]} vs {right["instance_level"]["n_rows"]}',
+        fontsize=15,
     )
     fig.savefig(fig_fpath, dpi=180)
     plt.close(fig)

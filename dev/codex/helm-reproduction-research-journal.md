@@ -484,3 +484,86 @@ Interpretation:
 
 - the fixed Vicuna/HuggingFace path appears independently reproducible on the tested core metrics
 - at least for these experiments, the newer server run supports a positive cross-machine reproducibility result rather than revealing a hardware-specific failure mode
+
+## Updated Research Goal
+
+The project goal should now be stated more precisely:
+
+- produce a documented recipe for reproducing selected public HELM runs in a repeatable way
+- quantify and bound the small remaining differences that are expected from local execution, hardware variation, and nondeterminism
+- prefer benchmarks, models, and evaluation paths that are runnable with open weights and realistic "consumer-accessible" hardware constraints
+
+Interpretation:
+
+- this does not necessarily mean laptop-only reproduction
+- but it should avoid closed-weight models and giant model families that are not meaningfully checkable by other researchers
+- a practical target is open-weight models that can run on a single large consumer GPU or on a modest multi-GPU workstation
+
+Methodologically, this pushes us toward a reproducibility distribution rather than a single point estimate:
+
+- same-machine repeatability
+- cross-machine repeatability
+- official-vs-local drift
+- benchmark-level and collection-level summaries
+
+## Large Grid Status: Runnable Recipe vs Unrunnable Cases
+
+The larger `audit-historic-grid` batch was informative, but many failures do **not** currently count as evidence against reproducibility.
+
+Observed:
+
+- total jobs: `286`
+- completed jobs: `141`
+- failed or incomplete jobs: `145`
+
+Representative failure buckets:
+
+- dataset loading / access / download issues
+  - RAFT requires `trust_remote_code=True`
+  - MATH failed to resolve `hendrycks/competition_math`
+  - bAbI and Natural Questions failed on direct data downloads via `wget`
+- gated or external-service requirements
+  - `walledai/XSTest` is gated
+  - some annotation-heavy runs require OpenAI credentials
+- model-specific packaging issues
+  - `aisingapore/sea-lion-7b-instruct` failed while resolving dynamic imports such as `flash_attn_triton.py`
+- some broader model families remain insufficiently diagnosed from the raw logs alone and need targeted follow-up
+
+Interpretation:
+
+- the current historic candidate list is too broad to serve directly as a reproducibility benchmark suite
+- we need a stricter "runnable recipe" filter:
+  - open-weight models
+  - locally runnable HF path
+  - datasets that are accessible without custom private credentials
+  - scenarios that do not require external proprietary annotators
+  - configurations that fit the hardware budget we expect others to have
+
+## Namek / Yardrat Subset Check
+
+The small cross-hardware Vicuna subset remains encouraging.
+
+Observed:
+
+- `audit-yardrat-subset`
+  - BoolQ: complete
+  - MMLU: complete
+  - NarrativeQA: complete
+- `audit-namek-subset`
+  - BoolQ: complete
+  - MMLU: complete
+  - NarrativeQA: incomplete / still-running at time of inspection
+
+For the completed subset jobs:
+
+- no empty-completion pathology was observed
+- Yardrat matched the previously successful Vicuna no-chat behavior:
+  - BoolQ core correctness metrics matched official exactly
+  - MMLU core metrics matched official exactly
+  - NarrativeQA remained very close on core metrics, with residual drift mainly in output length rather than correctness
+- Namek BoolQ and MMLU also matched this same pattern
+
+Interpretation:
+
+- the corrected Vicuna recipe appears stable across multiple machines
+- this strengthens the case that our main reproducibility result is positive when the configuration is correct and the task is runnable under the local open-weight recipe

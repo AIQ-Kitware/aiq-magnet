@@ -29,6 +29,9 @@ def main() -> None:
     for run_entry in run_entries:
         matches = matching_rows(rows, run_entry)
         n = len(matches)
+        if n == 0:
+            skipped.append((run_entry, n, 'no_indexed_runs'))
+            continue
         if n < 2 and not args.allow_single_repeat:
             skipped.append((run_entry, n, 'not_enough_matching_runs'))
             continue
