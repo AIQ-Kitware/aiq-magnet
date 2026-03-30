@@ -74,6 +74,9 @@ def write_text_report(report: dict[str, Any], out_fpath: Path) -> None:
     run_dist = report.get('distance_summary', {}).get('run_level', {}) or {}
     inst_dist = report.get('distance_summary', {}).get('instance_level', {}) or {}
     sweep_hits = report.get('tolerance_highlights', {}) or {}
+    display = report.get('display_labels', {}) or {}
+    label_a = display.get('label_a') or report.get('inputs', {}).get('label_a')
+    label_b = display.get('label_b') or report.get('inputs', {}).get('label_b')
 
     lines = []
     lines.append('Audit Pair Comparison')
@@ -81,6 +84,8 @@ def write_text_report(report: dict[str, Any], out_fpath: Path) -> None:
     lines.append(f"generated_utc: {report.get('generated_utc')}")
     lines.append(f"run_a: {report.get('inputs', {}).get('run_a')}")
     lines.append(f"run_b: {report.get('inputs', {}).get('run_b')}")
+    lines.append(f'label_a: {label_a}')
+    lines.append(f'label_b: {label_b}')
     lines.append('')
     lines.append(f"diagnosis_label: {diag.get('label')}")
     lines.append(f"primary_reason_names: {diag.get('primary_reason_names')}")
@@ -124,6 +129,8 @@ def main() -> None:
     parser.add_argument('--run-b', required=True)
     parser.add_argument('--label-a', default='A')
     parser.add_argument('--label-b', default='B')
+    parser.add_argument('--display-label-a', default=None)
+    parser.add_argument('--display-label-b', default=None)
     parser.add_argument('--report-dpath', required=True)
     parser.add_argument('--run-tolerances-yaml', default=None)
     parser.add_argument('--instance-tolerances-yaml', default=None)
@@ -161,6 +168,10 @@ def main() -> None:
             'run_b': str(run_b_dpath),
             'label_a': args.label_a,
             'label_b': args.label_b,
+        },
+        'display_labels': {
+            'label_a': args.display_label_a or args.label_a,
+            'label_b': args.display_label_b or args.label_b,
         },
         'strict_summary': strict_summary,
         'distance_summary': distance_summary,
