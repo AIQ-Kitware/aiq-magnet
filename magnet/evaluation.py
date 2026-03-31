@@ -1,3 +1,4 @@
+from weasel.util.config import _parse_overrides
 import builtins
 import json
 import sys
@@ -5,6 +6,7 @@ from graphlib import TopologicalSorter
 from itertools import product
 from typing import Any, Dict, List, Self, Tuple, get_args, get_origin
 
+import kwutil
 import scriptconfig as scfg
 import ubelt as ub
 import yaml
@@ -39,6 +41,13 @@ class EvaluationConfig(scfg.DataConfig):
         './results', help='Root data path for saved results'
     )
 
+    override = scfg.Value(
+        None,
+        #nargs='*', 
+        type=str,
+        help='Override symbol values (e.g. --override dataset=legalbench, num_replicates=5)',
+    )
+
 
 class EvaluationCard:
     """
@@ -53,6 +62,45 @@ class EvaluationCard:
         >>> card = EvaluationCard(card_path, results_path)
         >>> card.evaluate()
         'VERIFIED'
+        >>> 
+        >>> # Replacement example
+        >>> import kwutil
+        >>> example_symbols = kwutil.Yaml.coerce(
+            '''
+            symbols:
+              data_path:
+                type: str
+                value: './data/runs'
+              confidence:
+                type: float
+                value: 0.1
+              model:
+                sweep:
+                  - llama-2-13b
+                  - gpt-5.4-pro
+            ''')
+        >>> card.symbols = example_symbols.get('symbols')
+        >>> def show_symbol_values(symbols):
+        >>>   # Print out symbol resolution
+        >>>   for symbol in symbols:
+        >>>     if 'sweep' in symbols[symbol]:
+        >>>       print(f"{symbol}: {symbols[symbol]['sweep']}")
+        >>>     else:
+        >>>       print(f"{symbol}: {symbols[symbol]['value']}")
+        >>>
+        >>> show_symbol_values(card.symbols)
+        data_path: ./data/runs
+        confidence: 0.1
+        model: ['llama-2-13b', 'gpt-5.4-pro']
+        >>> override = '''
+            confidence: 0.01 
+            model: [claude-3.5-sonnet, gemini-1.5-pro-001]
+        '''
+        >>> card.replace(override)
+        >>> show_symbol_values(card.symbols)
+        data_path: ./data/runs
+        confidence: 0.01
+        model: ['llama-2-13b', 'gpt-5.4-pro', 'claude-3.5-sonnet', 'gemini-1.5-pro-001']
     """
 
     def __init__(self, path, results_path):
@@ -96,6 +144,25 @@ class EvaluationCard:
                 return f'{percent_not_evaluated:.2f} REMAINING'
         else:
             return 'EVALUATED'
+
+    def replace(self, override_str):
+        """
+        Handle overrides in symbol field by replacing 'value' entries and appending to sweeps
+        """
+        override = kwutil.Yaml.coerce(override_str)
+
+        for key, value in override.items():
+            if key not in self.symbols:
+                raise ValueError(f"Unknown symbol '{key}' -- available: {list(self.symbols.keys())}")
+            if 'value' in self.symbols[key]:
+                # replacement
+                self.symbols[key]['value'] = value
+            elif 'sweep' in self.symbols[key]:
+                # accept n entries
+                if isinstance(value, list):
+                    self.symbols[key]['sweep'].extend(value)
+                else:
+                    self.symbols[key]['sweep'].append(value)
 
     def evaluate(self):
         """
@@ -652,16 +719,19 @@ class Symbols:
             symbol_value = self.symbols[symbol]
             symbol_definitions_ = symbol_definitions.copy()
             try:
-                symbol_definitions[symbol] = symbol_value.eval(symbol_definitions_)
+                symbol_definitions[symbol] = symbol_value.eval(
+                    symbol_definitions_
+                )
             except Exception as ex:
                 error_message = ub.codeblock(
-                    f'''
+                    f"""
                     Error in resolve. ex={ex}
 
                     {symbol=!r}
                     {symbol_value=!r}
                     {symbol_definitions_=!r}
-                    ''')
+                    """
+                )
                 logger.error(error_message)
                 raise
 
@@ -692,6 +762,9 @@ def main(argv=None, **kwargs):
     )
 
     card = EvaluationCard(args.path, args.results_path)
+    if args.override is not None:
+        card.replace(args.override)
+
     card.evaluate()
     card.summarize()
 
@@ -701,3 +774,25 @@ __cli__.main = main
 
 if __name__ == '__main__':
     main(sys.argv[1:])
+
+'''
+kwutil.Yaml.coerce("threshold: 2\nhelms_run_path: [1,2,3,4]")
+Out[103]: {'threshold': 2, 'helms_run_path': [1, 2, 3, 4]}
+In [92]: kwutil.Yaml.coerce("helm_runs_path: './data'\nthreshold: 2")
+Out[92]: {'helm_runs_path': './data', 'threshold': 2}
+In [86]: kwutil.Yaml.coerce("{helm_runs_path: './data', threshold: 2}")
+Out[86]: {'helm_runs_path': './data', 'threshold': 2}
+
+In [87]: kwutil.Yaml.coerce("{'helm_runs_path': './data', 'threshold': 2}")
+Out[87]: {'helm_runs_path': './data', 'threshold': 2}
+
+In [88]: kwutil.Yaml.coerce("'helm_runs_path': './data'\n'threshold': 2")
+Out[88]: {'helm_runs_path': './data', 'threshold': 2}
+
+In [89]: kwutil.Yaml.coerce("helm_runs_path: './data'\nthreshold: 2")
+Out[89]: {'helm_runs_path': './data', 'threshold': 2}
+
+In [90]: kwutil.Yaml.coerce("helm_runs_path:  './data'\nthreshold:  2")
+Out[90]: {'helm_runs_path': './data', 'threshold': 2}
+
+"helm_runs_path:  './data'\nthreshold:  2" '''
