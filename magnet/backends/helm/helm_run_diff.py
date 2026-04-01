@@ -1432,14 +1432,19 @@ class HelmRunDiff(ub.NiceRepr):
             )
 
         execution_ok = bool(run_spec_semantic.get('execution_ok', False))
-        if not execution_ok:
+        execution_paths = run_spec_semantic.get('execution_paths', []) or []
+        deployment_paths = run_spec_semantic.get('deployment_paths', []) or []
+        non_deployment_execution_paths = [
+            p
+            for p in execution_paths
+            if not str(p).startswith('adapter_spec.model_deployment')
+        ]
+        if not execution_ok and non_deployment_execution_paths:
             add_reason(
                 'execution_spec_drift',
                 0,
                 {
-                    'execution_paths': run_spec_semantic.get(
-                        'execution_paths', []
-                    ),
+                    'execution_paths': execution_paths,
                     'execution_value_examples': run_spec_semantic.get(
                         'execution_value_examples', []
                     ),
@@ -1458,11 +1463,11 @@ class HelmRunDiff(ub.NiceRepr):
                     'execution_paths': [
                         p
                         for p in (
-                            run_spec_semantic.get('execution_paths', []) or []
+                            execution_paths
                         )
                         if str(p).startswith('adapter_spec.model_deployment')
                     ]
-                    or (run_spec_semantic.get('deployment_paths', []) or []),
+                    or deployment_paths,
                 },
             )
 
