@@ -1,4 +1,3 @@
-from weasel.util.config import _parse_overrides
 import builtins
 import json
 import sys
@@ -43,9 +42,8 @@ class EvaluationConfig(scfg.DataConfig):
 
     override = scfg.Value(
         None,
-        #nargs='*', 
         type=str,
-        help='Override symbol values (e.g. --override dataset=legalbench, num_replicates=5)',
+        help='Override symbol values (e.g. --override dataset: legalbench\nnum_replicates: 5)',
     )
 
 
@@ -774,25 +772,3 @@ __cli__.main = main
 
 if __name__ == '__main__':
     main(sys.argv[1:])
-
-'''
-kwutil.Yaml.coerce("threshold: 2\nhelms_run_path: [1,2,3,4]")
-Out[103]: {'threshold': 2, 'helms_run_path': [1, 2, 3, 4]}
-In [92]: kwutil.Yaml.coerce("helm_runs_path: './data'\nthreshold: 2")
-Out[92]: {'helm_runs_path': './data', 'threshold': 2}
-In [86]: kwutil.Yaml.coerce("{helm_runs_path: './data', threshold: 2}")
-Out[86]: {'helm_runs_path': './data', 'threshold': 2}
-
-In [87]: kwutil.Yaml.coerce("{'helm_runs_path': './data', 'threshold': 2}")
-Out[87]: {'helm_runs_path': './data', 'threshold': 2}
-
-In [88]: kwutil.Yaml.coerce("'helm_runs_path': './data'\n'threshold': 2")
-Out[88]: {'helm_runs_path': './data', 'threshold': 2}
-
-In [89]: kwutil.Yaml.coerce("helm_runs_path: './data'\nthreshold: 2")
-Out[89]: {'helm_runs_path': './data', 'threshold': 2}
-
-In [90]: kwutil.Yaml.coerce("helm_runs_path:  './data'\nthreshold:  2")
-Out[90]: {'helm_runs_path': './data', 'threshold': 2}
-
-"helm_runs_path:  './data'\nthreshold:  2" '''
