@@ -60,7 +60,7 @@ class EvaluationCard:
         >>> card = EvaluationCard(card_path, results_path)
         >>> card.evaluate()
         'VERIFIED'
-        >>> 
+        >>>
         >>> # Replacement example
         >>> import kwutil
         >>> example_symbols = kwutil.Yaml.coerce(
@@ -91,7 +91,7 @@ class EvaluationCard:
         confidence: 0.1
         model: ['llama-2-13b', 'gpt-5.4-pro']
         >>> override = '''
-            confidence: 0.01 
+            confidence: 0.01
             model: [claude-3.5-sonnet, gemini-1.5-pro-001]
         '''
         >>> card.replace(override)
@@ -151,7 +151,9 @@ class EvaluationCard:
 
         for key, value in override.items():
             if key not in self.symbols:
-                raise ValueError(f"Unknown symbol '{key}' -- available: {list(self.symbols.keys())}")
+                raise ValueError(
+                    f"Unknown symbol '{key}' -- available: {list(self.symbols.keys())}"
+                )
             if 'value' in self.symbols[key]:
                 # replacement
                 self.symbols[key]['value'] = value
