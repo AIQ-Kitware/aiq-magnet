@@ -98,7 +98,7 @@ class EvaluationCard:
         >>> show_symbol_values(card.symbols)
         data_path: ./data/runs
         confidence: 0.01
-        model: ['llama-2-13b', 'gpt-5.4-pro', 'claude-3.5-sonnet', 'gemini-1.5-pro-001']
+        model: ['claude-3.5-sonnet', 'gemini-1.5-pro-001']
     """
 
     def __init__(self, path, results_path):
@@ -158,11 +158,10 @@ class EvaluationCard:
                 # replacement
                 self.symbols[key]['value'] = value
             elif 'sweep' in self.symbols[key]:
-                # accept n entries
                 if isinstance(value, list):
-                    self.symbols[key]['sweep'].extend(value)
+                    self.symbols[key]['sweep'] = value
                 else:
-                    self.symbols[key]['sweep'].append(value)
+                    self.symbols[key]['sweep'] = [value]
 
     def evaluate(self):
         """
