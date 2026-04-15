@@ -41,7 +41,7 @@ def override_path(card, corrected_path):
 
         card.pipeline['llama_predict']['executable'] = python_module
     else:
-        card.symbols['helm_runs_path']['value'] = corrected_path
+        card.replace({'helm_runs_path': corrected_path})
 
 
 @pytest.fixture(scope='session')
