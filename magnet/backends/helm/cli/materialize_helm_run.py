@@ -663,9 +663,10 @@ def canonicalize_requested_tokens(
         {'model': 'openai_gpt2', 'subject': 'philosophy'}
     """
     tokens = dict(tokens)
-    model = tokens.get('model', None)
-    if isinstance(model, str):
-        tokens['model'] = model.replace('/', '_')
+    for key in ('model', 'model_deployment'):
+        value = tokens.get(key, None)
+        if isinstance(value, str):
+            tokens[key] = value.replace('/', '_')
     return tokens
 
 
@@ -730,11 +731,14 @@ def canonicalize_kv(kv: dict[str, object]) -> dict[str, object]:
     Example:
         >>> canonicalize_kv({'model': 'meta/llama-3-8b-chat'})
         {'model': 'meta_llama-3-8b-chat'}
+        >>> canonicalize_kv({'model_deployment': 'kubeai/qwen-small'})
+        {'model_deployment': 'kubeai_qwen-small'}
     """
     kv = dict(kv)
-    model = kv.get('model', None)
-    if isinstance(model, str):
-        kv['model'] = model.replace('/', '_')
+    for key in ('model', 'model_deployment'):
+        value = kv.get(key, None)
+        if isinstance(value, str):
+            kv[key] = value.replace('/', '_')
     return kv
 
 
