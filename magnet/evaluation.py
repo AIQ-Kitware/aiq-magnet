@@ -641,8 +641,7 @@ class Claim:
             return self.status, out_msg
 
     def __repr__(self) -> str:
-        # FIXME: incomplete solution (trying to remove error message)
-        return "".join(self.claim.split(',')[:-1])
+        return self.claim
 
 
 class Symbol:
