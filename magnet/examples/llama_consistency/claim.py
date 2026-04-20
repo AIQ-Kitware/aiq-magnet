@@ -66,6 +66,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
         verdict_json['result'] = {
             'status': status,
             'output': out_msg,
+            'symbols': model_scores,
         }
 
         dst_fpath = ub.Path(config.verdict_fpath)
