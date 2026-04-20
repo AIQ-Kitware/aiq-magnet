@@ -31,7 +31,7 @@ dependencies = [
     "h5py>=3.14.0",
     "numexpr>=2.11.0",
     "kwarray>=0.7.1",
-    "kwutil>=0.3.7", 
+    "kwutil>=0.3.8", 
     "pygtrie>=2.5.0",
     "scriptconfig>=0.8.4",
     "orjson>=3.10.15",
@@ -41,6 +41,8 @@ dependencies = [
     "pyyaml>=6.0.2",
     "typing-extensions>=4.0.0",
     "ruamel.yaml>=0.17.22",
+    "loguru>=0.7.3",
+    "kwdagger>=0.2.3",
 ]
 
 [project.optional-dependencies]
@@ -54,6 +56,7 @@ tests = [
 
 optional = [
     "gcsfs>=2024.9.0",
+    "plotly>=6.5.2"
 ]
 
 all = [
@@ -76,13 +79,36 @@ docs = [
 magnet = "magnet.__main__:main"
 magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
 
+[project.entry-points.helm]
+run_specs = "magnet.backends.helm.run_specs"
+
 [tool.pytest.ini_options]
 addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
 norecursedirs = ".git build __pycache__ dev docs dockerfiles"
 
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    ".*  # pragma: no cover",
+    ".*  # nocover",
+]
+
 [tool.mypy]
 disable_error_code = ["import-untyped"]
 
+[tool.ruff]
+line-length = 80
+target-version = "py311"
+
+[tool.ruff.lint]
+# Enable Flake8 (E, F) and isort (I) rules.
+select = ["E", "F", "I"]
+# Ignore specific rules, for example, E501 (line too long) as it's handled by the formatter.
+ignore = [
+    "E501",  # line too long
+    "E402",  # Module level import not at top of file
+]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -92,10 +118,8 @@ line-ending = "auto"
 docstring-code-format = false
 docstring-code-line-length = "dynamic"
 
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    ".*  # pragma: no cover",
-    ".*  # nocover",
-]
+[tool.codespell]
+skip = ['./docs/build', './*.egg-info', './build', './htmlcov']
+count = true
+quiet-level = 3
+ignore-words-list = ['wont', 'cant', 'ANS', 'doesnt', 'arent', 'ans', 'thats', 'datas', 'isnt']

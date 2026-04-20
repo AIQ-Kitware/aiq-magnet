@@ -57,8 +57,8 @@ symbols:
       - helm_runs_path
     python: |
       import ubelt as ub
-      from magnet import HelmOutputs
-      from magnet.helm_outputs import HelmSuiteRuns
+      from magnet.backends.helm.helm_outputs import HelmOutputs
+      from magnet.backends.helm.helm_outputs import HelmSuiteRuns
 
       # Load all HELM Lite releases 
       helm_data = HelmOutputs(ub.Path(helm_runs_path))

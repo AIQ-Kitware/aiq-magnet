@@ -6,7 +6,7 @@ import ubelt as ub
 import pandas as pd
 import kwarray
 
-from magnet.helm_outputs import HelmRuns, HelmSuites
+from magnet.backends.helm.helm_outputs import HelmRuns, HelmSuites
 from magnet.data_splits import TestSplit, TrainSplit
 
 

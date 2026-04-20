@@ -7,7 +7,7 @@ class DownloadModalCLI(scfg.ModalCLI):
     Download precomputed results for different benchmarking backends.
     """
     # Add more downloaders for different backends here
-    from magnet.backends.helm.download_helm_results import DownloadHelmConfig as helm
+    from magnet.backends.helm.cli.download_helm_results import DownloadHelmConfig as helm
 
 __cli__ = DownloadModalCLI
 
