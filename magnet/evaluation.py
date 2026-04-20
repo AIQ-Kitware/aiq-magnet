@@ -59,6 +59,8 @@ class EvaluationCard:
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
 
+        # output fields
+        self.name = ub.Path(path).stem
         self.results_path = ub.Path(results_path)
 
         self.title = cfg.get('title', '')
@@ -131,9 +133,43 @@ class EvaluationCard:
                 )
 
             for evaluation in self.evaluations:
-                status, _ = evaluation.execute()
-                results.append(status)
+                result = evaluation.execute()
+                results.append(result.status)
 
+                # Write output
+                name=f'{self.name}_result'
+
+                output_data = result.json
+                output_data['symbols'] = evaluation.symbols()
+
+                write_output_code = ub.codeblock(
+                f"""
+                    import argparse 
+                    import ubelt as ub
+                    import json
+                    parser = argparse.ArgumentParser()
+                    parser.add_argument('--results_fpath')
+                    args, _ = parser.parse_known_args()
+                    dst_fpath = ub.Path(args.results_fpath)
+                    dst_fpath.parent.ensuredir()
+                    dst_fpath.write_text(json.dumps({output_data}, indent=2))
+                    print('Wrote results to ' + dst_fpath)
+                """).strip().replace("\n", ";")
+
+                claim_node = ProcessNode(name=name, executable = f'python -c "{write_output_code}"', algo_params= list(evaluation.symbols().keys()), out_paths= {'results_fpath': 'results.json'})
+                dag = Pipeline({name: claim_node})
+                dag.build_nx_graphs()
+
+                result_config = ScheduleEvaluationConfig(
+                    params={'pipeline': dag, 'matrix': {f'{name}.{k}' : [v] for k,v in evaluation.symbols().items()}},
+                    root_dpath=self.results_path,
+                    backend='serial',
+                    skip_existing=False,
+                    run=True,
+                )
+
+                dag, queue = build_schedule(result_config)
+                # {'executable': 'python magnet/examples/llama_consistency/llama_predict.py', 'algo_params': ['helm_runs_path', 'base_model', 'comp_model'], 'out_paths': {'results_fpath': 'results.json'}}
         else:
             # Serial Evaluation Card
             self.evaluations = self.dispatch(
@@ -142,8 +178,8 @@ class EvaluationCard:
 
             results = []
             for evaluation in self.evaluations:
-                status, _ = evaluation.execute()
-                results.append(status)
+                result = evaluation.execute()
+                results.append(result.status)
 
         total = len(results)
 
@@ -430,6 +466,17 @@ class KWDaggerProcessor:
 
         return self.results
 
+# {'executable': 'python magnet/examples/llama_consistency/llama_predict.py', 'algo_params': ['helm_runs_path', 'base_model', 'comp_model'], 'out_paths': {'results_fpath': 'results.json'}}
+class TaskResult:
+    def __init__(self, result):
+        self.status, self.output = result
+    
+    @property
+    def json(self):
+        return {
+            'result': self.status,
+            'output': self.output,
+        }
 
 class EvaluationTask:
     """
@@ -440,13 +487,13 @@ class EvaluationTask:
         self.claim = claim
         self.symbols = symbols
 
-    def execute(self) -> Tuple[str, str]:
+    def execute(self) -> TaskResult:
         self.symbols.resolve()
         # x -> y -> z1 -> a1 -> res1
         #           ...
         #           zn -> an -> resn
         # make sure x,y are done once / before sweep
-        return self.claim.evaluate(self.symbols())
+        return TaskResult(self.claim.evaluate(self.symbols()))
 
     def record_run(self):
         # Could log requests from here (i.e. timestamps), I think this was done in other code segments
