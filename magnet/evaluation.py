@@ -188,7 +188,7 @@ class EvaluationCard:
         card_output_path = self.output_path / self._run_hash
         card_output_path.ensuredir()
 
-        with open(card_output_path / 'card.yaml', "w") as f:
+        with open(card_output_path / 'card.yaml', 'w') as f:
             yaml.safe_dump(self.original_card, f, sort_keys=False)
 
         claim_results_path = card_output_path / 'results'
@@ -201,9 +201,11 @@ class EvaluationCard:
             ).collect_results()
 
             for sweep in symbols:
-                symbol_with_value = {s : {'value': v} for s, v in sweep.items()}
+                symbol_with_value = {s: {'value': v} for s, v in sweep.items()}
                 self.symbols.update(symbol_with_value)
-                self.evaluations.extend(self.dispatch(Symbols.decompose_symbol_defs(self.symbols)))
+                self.evaluations.extend(
+                    self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
+                )
 
         elif self.has_pipeline:
             # Implicit pipeline definition needs parsing
@@ -231,10 +233,12 @@ class EvaluationCard:
             status, _ = evaluation.execute()
             results.append(status)
 
-            results_fpath = claim_results_path / evaluation._execution_hash / 'verdict.json'
+            results_fpath = (
+                claim_results_path / evaluation._execution_hash / 'verdict.json'
+            )
             results_fpath.parent.ensuredir()
             results_fpath.write_text(json.dumps(evaluation.log, indent=2))
-            print(f"Wrote claim output to {results_fpath}")
+            print(f'Wrote claim output to {results_fpath}')
 
         total = len(results)
 
@@ -264,8 +268,13 @@ class EvaluationCard:
         self.claim.status = card_result
         return card_result
 
-    def dispatch(self, flattened_sweep): #: List[Symbols]) -> List[EvaluationTask]:
-        return [EvaluationTask(Claim({'python': self.claim.claim}), symbols) for symbols in flattened_sweep]
+    def dispatch(
+        self, flattened_sweep
+    ):  #: List[Symbols]) -> List[EvaluationTask]:
+        return [
+            EvaluationTask(Claim({'python': self.claim.claim}), symbols)
+            for symbols in flattened_sweep
+        ]
 
     def summarize(self):
         """
@@ -298,9 +307,9 @@ class EvaluationCard:
     @property
     def _run_hash(self):
         card_hash = ub.hash_data(self.original_card)[:8]
-        timestamp = datetime.now().strftime("%Y-%m-%d__%H-%M-%S")
+        timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
 
-        return f"{card_hash}_{timestamp}"
+        return f'{card_hash}_{timestamp}'
 
 
 class GenericPipelineProcessor:
@@ -533,11 +542,12 @@ class EvaluationTask:
     """
     Singular submission from an Evaluation Card
     """
+
     def __init__(self, claim, symbols):
         self.claim = claim
         self.symbols = symbols
-        self.output_msg = ""
-        self.log = ""
+        self.output_msg = ''
+        self.log = ''
 
     def execute(self) -> Tuple[str, str]:
         self.symbols.resolve()
@@ -552,11 +562,11 @@ class EvaluationTask:
     def record_run(self):
         completion_time = datetime.now().isoformat()
         self.log = {
-            "status": self.result, 
-            "output": self.output_msg, 
-            "symbols": self.symbols.simple_view(),
-            "timestamp": completion_time
-            }
+            'status': self.result,
+            'output': self.output_msg,
+            'symbols': self.symbols.simple_view(),
+            'timestamp': completion_time,
+        }
 
     @property
     def _execution_hash(self):
@@ -600,7 +610,7 @@ class Claim:
         else:
             INCONCLUSIVE
         """
-        out_msg = ""
+        out_msg = ''
         try:
             out_msg = ''
             exec(self.claim, symbols)
@@ -794,8 +804,13 @@ class Symbols:
     def simple_view(self):
         # TODO: replace with free variables and data attestation
         ALLOWABLE_TYPES = [int, float, str]
-        return {k:v for k,v in self().items() if type(v) in ALLOWABLE_TYPES or (type(v) == list and type(v[0]) == int)}
-    
+        return {
+            k: v
+            for k, v in self().items()
+            if type(v) in ALLOWABLE_TYPES
+            or (type(v) == list and type(v[0]) == int)
+        }
+
     def __call__(self):
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
