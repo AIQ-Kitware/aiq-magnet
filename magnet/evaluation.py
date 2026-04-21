@@ -181,6 +181,7 @@ class EvaluationCard:
         │   │   └── Consistency_Algorithm (*)
         │   │       └── ab0012cf_2026-04-21__12-23-34
         │   │           ├── card.yaml
+        │   │           └── kwdagger
         │   │           └── results
         """
         results = []
@@ -197,7 +198,7 @@ class EvaluationCard:
             # Explicit kwdagger pipeline defined
             # Claim node handles symbols outside of EvaluationCard
             kwdagger_results, symbols = KWDaggerProcessor(
-                self.kwdagger, root_dpath=claim_results_path / 'kwdagger'
+                self.kwdagger, root_dpath=card_output_path / 'kwdagger'
             ).collect_results()
 
             for sweep in symbols:
@@ -210,7 +211,7 @@ class EvaluationCard:
         elif self.has_pipeline:
             # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
-                self.pipeline, root_dpath=claim_results_path / 'kwdagger'
+                self.pipeline, root_dpath=card_output_path / 'kwdagger'
             ).collect_symbols()
 
             for run in pipeline_runs:
