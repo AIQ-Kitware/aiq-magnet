@@ -1,4 +1,5 @@
 import pytest
+
 pytest.importorskip('gcsfs')
 
 from importlib.resources import files
@@ -12,6 +13,7 @@ from magnet.evaluation import EvaluationCard
     [
         'llama.yaml',
         'llama_pipeline.yaml',
+        'llama_kwdagger.yaml',
     ],
 )
 def test_llama_card(run_download, tmp_path, card_name):
@@ -40,6 +42,8 @@ def override_path(card, corrected_path):
         python_module = ' -m '.join(python_script.replace('/', '.').split())
 
         card.pipeline['llama_predict']['executable'] = python_module
+    elif card.has_kwdagger:
+        card.kwdagger['matrix']['llama_predict.helm_runs_path'] = corrected_path
     else:
         card.replace({'helm_runs_path': corrected_path})
 
