@@ -196,32 +196,20 @@ class EvaluationCard:
         if self.has_kwdagger:
             # Explicit kwdagger pipeline defined
             # Claim node handles symbols outside of EvaluationCard
-            results = []
             kwdagger_results, symbols = KWDaggerProcessor(
                 self.kwdagger, root_dpath=claim_results_path / 'kwdagger'
             ).collect_results()
 
             for sweep in symbols:
-                self.symbols.update(sweep)
-                self.evaluations.extend(self.dispatch(self.symbols))
-
-            for evaluation in self.evaluations:
-                status, _ = evaluation.execute()
-                results.append(status)
-
-                results_fpath = claim_results_path / evaluation._execution_hash / 'verdict.json'
-                results_fpath.parent.ensuredir()
-                results_fpath.write_text(json.dumps(evaluation.log, indent=2))
-                print(f"Wrote claim output to {results_fpath}")
+                symbol_with_value = {s : {'value': v} for s, v in sweep.items()}
+                self.symbols.update(symbol_with_value)
+                self.evaluations.extend(self.dispatch(Symbols.decompose_symbol_defs(self.symbols)))
 
         elif self.has_pipeline:
             # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
                 self.pipeline, root_dpath=claim_results_path / 'kwdagger'
             ).collect_symbols()
-
-            # Claim resolution
-            results = []
 
             for run in pipeline_runs:
                 run_symbols = pipeline_runs[run]
@@ -230,31 +218,23 @@ class EvaluationCard:
                     self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
                 )
 
-            for evaluation in self.evaluations:
-                status, _ = evaluation.execute()
-                results.append(status)
-
-                results_fpath = claim_results_path / evaluation._execution_hash / 'verdict.json'
-                results_fpath.parent.ensuredir()
-                results_fpath.write_text(json.dumps(evaluation.log, indent=2))
-                print(f"Wrote claim output to {results_fpath}")
-
         else:
             # Serial Evaluation Card
             self.evaluations = self.dispatch(
                 Symbols.decompose_symbol_defs(self.symbols)
             )
 
-            results = []
-            for evaluation in self.evaluations:
-                status, _ = evaluation.execute()
-                results.append(status)
+        # Claim Resolution
+        results = []
 
-                results_fpath = claim_results_path / evaluation._execution_hash / 'verdict.json'
-                results_fpath.parent.ensuredir()
-                results_fpath.write_text(json.dumps(evaluation.log, indent=2))
-                print(f"Wrote claim output to {results_fpath}")
+        for evaluation in self.evaluations:
+            status, _ = evaluation.execute()
+            results.append(status)
 
+            results_fpath = claim_results_path / evaluation._execution_hash / 'verdict.json'
+            results_fpath.parent.ensuredir()
+            results_fpath.write_text(json.dumps(evaluation.log, indent=2))
+            print(f"Wrote claim output to {results_fpath}")
 
         total = len(results)
 

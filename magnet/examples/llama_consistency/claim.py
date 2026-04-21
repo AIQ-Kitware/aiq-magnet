@@ -47,7 +47,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
         model_scores = json.loads(ub.Path(config.symbols_fpath).read_text())[
             'result'
         ]
-
+        symbols = model_scores.copy() # avoid adding __builtins__
         # Copied from magnet.evaluation.Claim evaluate
         try:
             exec(claim_str, model_scores)
@@ -66,7 +66,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
         verdict_json['result'] = {
             'status': status,
             'output': out_msg,
-            'symbols': model_scores,
+            'symbols': symbols,
         }
 
         dst_fpath = ub.Path(config.verdict_fpath)
