@@ -2,6 +2,7 @@
 
 title: "Arithmetic - Addition Commutative Property"
 description: "Addition is commutative on pairs of even and odd integers"
+category: "Mathematical Properties"
 
 claim:
   python: |

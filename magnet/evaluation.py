@@ -1,6 +1,7 @@
 import builtins
 import json
 import sys
+from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import product
 from typing import Any, Dict, List, Self, Tuple, get_args, get_origin
@@ -36,8 +37,8 @@ class EvaluationConfig(scfg.DataConfig):
         None, required=True, position=1, help='Path to evaluation card YAML'
     )
 
-    results_path = scfg.Value(
-        './results', help='Root data path for saved results'
+    output_path = scfg.Value(
+        './evaluation_runs', help='Root data path for saved results'
     )
 
     override = scfg.Value(
@@ -56,8 +57,8 @@ class EvaluationCard:
         >>> from magnet.evaluation import EvaluationCard
         >>> card_name = 'simple.yaml'
         >>> card_path = files('magnet') / 'cards' / card_name
-        >>> results_path = './results'
-        >>> card = EvaluationCard(card_path, results_path)
+        >>> output_path = './results'
+        >>> card = EvaluationCard(card_path, output_path)
         >>> card.evaluate()
         'VERIFIED'
         >>>
@@ -101,11 +102,12 @@ class EvaluationCard:
         model: ['claude-3.5-sonnet', 'gemini-1.5-pro-001']
     """
 
-    def __init__(self, path, results_path):
+    def __init__(self, path, output_path):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
 
-        self.results_path = ub.Path(results_path)
+        self.original_card = cfg
+        self.output_path = ub.Path(output_path)
 
         self.title = cfg.get('title', '')
         self.description = cfg.get('description', '')
@@ -169,25 +171,48 @@ class EvaluationCard:
 
         1. Resolve symbol definitions
         2. Evaluate claim under symbol values
-        3. Summarize general finding
+        3. Write out results
+        4. Summarize general finding
+
+        Assumes user provides input path up to (*)
+        e.g.
+        ├── Milestone
+        │   ├── Organization
+        │   │   └── Consistency_Algorithm (*)
+        │   │       └── ab0012cf_2026-04-21__12-23-34
+        │   │           ├── card.yaml
+        │   │           └── kwdagger
+        │   │           └── results
         """
         results = []
+
+        card_output_path = self.output_path / self._run_hash
+        card_output_path.ensuredir()
+
+        with open(card_output_path / 'card.yaml', 'w') as f:
+            yaml.safe_dump(self.original_card, f, sort_keys=False)
+
+        claim_results_path = card_output_path / 'results'
 
         if self.has_kwdagger:
             # Explicit kwdagger pipeline defined
             # Claim node handles symbols outside of EvaluationCard
-            results = KWDaggerProcessor(
-                self.kwdagger, root_dpath=self.results_path
+            kwdagger_results, symbols = KWDaggerProcessor(
+                self.kwdagger, root_dpath=card_output_path / 'kwdagger'
             ).collect_results()
+
+            for sweep in symbols:
+                symbol_with_value = {s: {'value': v} for s, v in sweep.items()}
+                self.symbols.update(symbol_with_value)
+                self.evaluations.extend(
+                    self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
+                )
 
         elif self.has_pipeline:
             # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
-                self.pipeline, root_dpath=self.results_path
+                self.pipeline, root_dpath=card_output_path / 'kwdagger'
             ).collect_symbols()
-
-            # Claim resolution
-            results = []
 
             for run in pipeline_runs:
                 run_symbols = pipeline_runs[run]
@@ -196,20 +221,25 @@ class EvaluationCard:
                     self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
                 )
 
-            for evaluation in self.evaluations:
-                status, _ = evaluation.execute()
-                results.append(status)
-
         else:
             # Serial Evaluation Card
             self.evaluations = self.dispatch(
                 Symbols.decompose_symbol_defs(self.symbols)
             )
 
-            results = []
-            for evaluation in self.evaluations:
-                status, _ = evaluation.execute()
-                results.append(status)
+        # Claim Resolution
+        results = []
+
+        for evaluation in self.evaluations:
+            status, _ = evaluation.execute()
+            results.append(status)
+
+            results_fpath = (
+                claim_results_path / evaluation._execution_hash / 'verdict.json'
+            )
+            results_fpath.parent.ensuredir()
+            results_fpath.write_text(json.dumps(evaluation.log, indent=2))
+            print(f'Wrote claim output to {results_fpath}')
 
         total = len(results)
 
@@ -239,7 +269,9 @@ class EvaluationCard:
         self.claim.status = card_result
         return card_result
 
-    def dispatch(self, flattened_sweep):
+    def dispatch(
+        self, flattened_sweep
+    ):  #: List[Symbols]) -> List[EvaluationTask]:
         return [
             EvaluationTask(Claim({'python': self.claim.claim}), symbols)
             for symbols in flattened_sweep
@@ -272,6 +304,13 @@ class EvaluationCard:
 
         print('================================')
         print(f'[bold]CARD STATUS:[/bold] {status}')
+
+    @property
+    def _run_hash(self):
+        card_hash = ub.hash_data(self.original_card)[:8]
+        timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
+
+        return f'{card_hash}_{timestamp}'
 
 
 class GenericPipelineProcessor:
@@ -468,6 +507,7 @@ class KWDaggerProcessor:
         self.spec = pipeline_def
         self.root_dpath = root_dpath
         self.results = []
+        self.symbols = []
 
     def dispatch(self, backend='serial', skip_existing=True, **kwargs):
         kwd_config = ScheduleEvaluationConfig(
@@ -493,8 +533,10 @@ class KWDaggerProcessor:
             claim_result = json.load(open(claim_json, 'r'))
             if 'result' in claim_result and 'status' in claim_result['result']:
                 self.results.append(claim_result['result']['status'])
+            if 'result' in claim_result and 'symbols' in claim_result['result']:
+                self.symbols.append(claim_result['result']['symbols'])
 
-        return self.results
+        return self.results, self.symbols
 
 
 class EvaluationTask:
@@ -505,6 +547,8 @@ class EvaluationTask:
     def __init__(self, claim, symbols):
         self.claim = claim
         self.symbols = symbols
+        self.output_msg = ''
+        self.log = ''
 
     def execute(self) -> Tuple[str, str]:
         self.symbols.resolve()
@@ -512,12 +556,22 @@ class EvaluationTask:
         #           ...
         #           zn -> an -> resn
         # make sure x,y are done once / before sweep
-        return self.claim.evaluate(self.symbols())
+        self.result, self.output_msg = self.claim.evaluate(self.symbols())
+        self.record_run()
+        return self.result, self.output_msg
 
     def record_run(self):
-        # Could log requests from here (i.e. timestamps), I think this was done in other code segments
-        # timestamp, symbol value, claim result
-        raise NotImplementedError
+        completion_time = datetime.now().isoformat()
+        self.log = {
+            'status': self.result,
+            'output': self.output_msg,
+            'symbols': self.symbols.simple_view(),
+            'timestamp': completion_time,
+        }
+
+    @property
+    def _execution_hash(self):
+        return ub.hash_data(self.symbols.simple_view())[:12]
 
 
 class Claim:
@@ -557,6 +611,7 @@ class Claim:
         else:
             INCONCLUSIVE
         """
+        out_msg = ''
         try:
             out_msg = ''
             exec(self.claim, symbols)
@@ -747,6 +802,16 @@ class Symbols:
         sorter = TopologicalSorter(dependency_graph)
         return list(sorter.static_order())
 
+    def simple_view(self):
+        # TODO: replace with free variables and data attestation
+        ALLOWABLE_TYPES = [int, float, str]
+        return {
+            k: v
+            for k, v in self().items()
+            if type(v) in ALLOWABLE_TYPES
+            or (type(v) == list and type(v[0]) == int)
+        }
+
     def __call__(self):
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
@@ -760,7 +825,7 @@ def main(argv=None, **kwargs):
         special_options=False,
     )
 
-    card = EvaluationCard(args.path, args.results_path)
+    card = EvaluationCard(args.path, args.output_path)
     if args.override is not None:
         card.replace(args.override)
 

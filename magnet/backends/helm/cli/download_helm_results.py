@@ -14,7 +14,7 @@ Example:
     >>> # Test listing benchamrks
     >>> with ub.CaptureStdout(suppress=False) as cap:
     >>>     download_helm_results.main(argv=False, list_benchmarks=True)
-    >>> assert len(cap.text.split()) >= 24
+    >>> assert len(cap.text.split()) >= 23
     >>> #
     >>> # Test listing versions
     >>> with ub.CaptureStdout(suppress=False) as cap:
@@ -625,17 +625,12 @@ class HelmRemoteStore:
 
     # --- path helpers ---
     def _runs_root(self, benchmark: str) -> str:
-        # HELM layout quirk: classic lives at top-level benchmark_output
-        if benchmark == 'classic':
-            return f'{self.bucket}/benchmark_output/runs'
         return f'{self.bucket}/{benchmark}/benchmark_output/runs'
 
     # --- list API ---
     def list_benchmarks(self) -> List[str]:
         # everything at bucket root are candidate benchmarks; filter out non-bench dirs
         names = set(self.backend.list_dirs(self.bucket))
-        # include classic; remove non-bench directories we know about
-        names.add('classic')
         blocklist = {
             'benchmark_output',
             'assets',
