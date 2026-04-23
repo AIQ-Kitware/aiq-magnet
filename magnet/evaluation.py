@@ -228,17 +228,37 @@ class EvaluationCard:
             )
 
         # Claim Resolution
-        results = []
+        #
+        # Optional parallelism:
+        #   MAGNET_EVAL_N_JOBS=N         int, default 1 (serial, backward-compatible)
+        #   MAGNET_EVAL_BACKEND=<name>   joblib backend: loky (default), threading,
+        #                                multiprocessing. loky is robust on macOS;
+        #                                threading shares module-level caches but
+        #                                only helps for GIL-releasing workloads.
+        import os as _os
+        _n_jobs = int(_os.environ.get('MAGNET_EVAL_N_JOBS', '1'))
+        _backend = _os.environ.get('MAGNET_EVAL_BACKEND', 'loky')
 
-        for evaluation in self.evaluations:
+        def _run_one(evaluation):
             status, _ = evaluation.execute()
-            results.append(status)
-
             results_fpath = (
                 claim_results_path / evaluation._execution_hash / 'verdict.json'
             )
             results_fpath.parent.ensuredir()
             results_fpath.write_text(json.dumps(evaluation.log, indent=2))
+            return status, results_fpath
+
+        if _n_jobs == 1:
+            out = [_run_one(e) for e in self.evaluations]
+        else:
+            from joblib import Parallel, delayed
+            out = Parallel(n_jobs=_n_jobs, backend=_backend, verbose=5)(
+                delayed(_run_one)(e) for e in self.evaluations
+            )
+
+        results = []
+        for status, results_fpath in out:
+            results.append(status)
             print(f'Wrote claim output to {results_fpath}')
 
         total = len(results)
@@ -258,13 +278,7 @@ class EvaluationCard:
         print('================================')
         print('\n')
 
-        card_result = ''
-        if falsified_count:
-            card_result = 'FALSIFIED'
-        elif inconclusive_count:
-            card_result = 'INCONCLUSIVE'
-        else:
-            card_result = 'VERIFIED'
+        card_result = _reduce_results(results, self.claim.reduce)
 
         self.claim.status = card_result
         return card_result
@@ -574,6 +588,48 @@ class EvaluationTask:
         return ub.hash_data(self.symbols.simple_view())[:12]
 
 
+def _reduce_results(results, reduce_spec):
+    """
+    Reduce per-sweep-point claim outcomes to a single card-level status.
+
+    reduce_spec: dict with key `type`:
+      - {'type': 'all'}    (default)  any FALSIFIED -> FALSIFIED; any INCONCLUSIVE -> INCONCLUSIVE; else VERIFIED
+      - {'type': 'any'}               any VERIFIED -> VERIFIED; any INCONCLUSIVE (and no VERIFIED) -> INCONCLUSIVE; else FALSIFIED
+      - {'type': 'fraction', 'threshold': 0.8}
+                                      VERIFIED_count / total >= threshold -> VERIFIED; else FALSIFIED.
+                                      INCONCLUSIVE points count in the denominator but not the numerator.
+    """
+    total = len(results)
+    if total == 0:
+        return 'INCONCLUSIVE'
+
+    verified_count    = results.count('VERIFIED')
+    falsified_count   = results.count('FALSIFIED')
+    inconclusive_count = results.count('INCONCLUSIVE')
+
+    rtype = reduce_spec.get('type', 'all')
+    if rtype == 'all':
+        if falsified_count:
+            return 'FALSIFIED'
+        if inconclusive_count:
+            return 'INCONCLUSIVE'
+        return 'VERIFIED'
+    if rtype == 'any':
+        if verified_count:
+            return 'VERIFIED'
+        if inconclusive_count:
+            return 'INCONCLUSIVE'
+        return 'FALSIFIED'
+    if rtype == 'fraction':
+        threshold = reduce_spec.get('threshold')
+        if threshold is None:
+            raise ValueError("reduce type=fraction requires `threshold`")
+        frac = verified_count / total
+        print(f'[reduce=fraction] VERIFIED {verified_count}/{total} ({frac:.3f}) vs threshold {threshold}')
+        return 'VERIFIED' if frac >= threshold else 'FALSIFIED'
+    raise ValueError(f"Unknown reduce type: {rtype!r}")
+
+
 class Claim:
     """
     Represents a verifiable assertion for a set of resolved symbols
@@ -598,6 +654,7 @@ class Claim:
 
     def __init__(self, raw):
         self.claim = raw.get('python')
+        self.reduce = raw.get('reduce', {'type': 'all'})
         self.status = 'UNVERIFIED'
 
     def evaluate(self, symbols: Dict[str, Any] = {}):
@@ -616,6 +673,7 @@ class Claim:
             out_msg = ''
             exec(self.claim, symbols)
             self.status = 'VERIFIED'
+            out_msg = 'Assertion holds'
         except AssertionError as e:
             self.status = 'FALSIFIED'
             out_msg = f'Assertion does not hold: {e}'
