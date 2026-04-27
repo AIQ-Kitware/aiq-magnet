@@ -16,6 +16,9 @@ from loguru import logger
 from rich import print
 
 
+DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
+
+
 class EvaluationConfig(scfg.DataConfig):
     """
     Resolve an Evaluation Card
@@ -45,6 +48,22 @@ class EvaluationConfig(scfg.DataConfig):
         None,
         type=str,
         help='Override symbol values (e.g. --override dataset: legalbench\nnum_replicates: 5)',
+    )
+
+    jobs = scfg.Value(
+        1,
+        type=int,
+        help=(
+            'Number of evaluation jobs. Use 1 for serial execution, '
+            '-1 for all available CPUs when using joblib.'
+        ),
+    )
+
+    parallel_backend = scfg.Value(
+        'loky',
+        type=str,
+        choices=['loky', 'threading', 'multiprocessing'],
+        help='Joblib backend used when --jobs is not 1.',
     )
 
 
@@ -113,6 +132,8 @@ class EvaluationCard:
         self.description = cfg.get('description', '')
 
         self.claim = Claim(cfg.get('claim'))
+        self.claim_aggregation_strategy = cfg.get(
+            'claim_aggregation_strategy', DEFAULT_CLAIM_AGGREGATION_STRATEGY)
         self.symbols = cfg.get('symbols', {})
 
         # explicit kwdagger spec
@@ -165,7 +186,7 @@ class EvaluationCard:
                 else:
                     self.symbols[key]['sweep'] = [value]
 
-    def evaluate(self):
+    def evaluate(self, jobs=1, parallel_backend='loky'):
         """
         Run the evaluation specification
 
@@ -228,17 +249,6 @@ class EvaluationCard:
             )
 
         # Claim Resolution
-        #
-        # Optional parallelism:
-        #   MAGNET_EVAL_N_JOBS=N         int, default 1 (serial, backward-compatible)
-        #   MAGNET_EVAL_BACKEND=<name>   joblib backend: loky (default), threading,
-        #                                multiprocessing. loky is robust on macOS;
-        #                                threading shares module-level caches but
-        #                                only helps for GIL-releasing workloads.
-        import os as _os
-        _n_jobs = int(_os.environ.get('MAGNET_EVAL_N_JOBS', '1'))
-        _backend = _os.environ.get('MAGNET_EVAL_BACKEND', 'loky')
-
         def _run_one(evaluation):
             status, _ = evaluation.execute()
             results_fpath = (
@@ -248,11 +258,11 @@ class EvaluationCard:
             results_fpath.write_text(json.dumps(evaluation.log, indent=2))
             return status, results_fpath
 
-        if _n_jobs == 1:
+        if jobs == 1:
             out = [_run_one(e) for e in self.evaluations]
         else:
             from joblib import Parallel, delayed
-            out = Parallel(n_jobs=_n_jobs, backend=_backend, verbose=5)(
+            out = Parallel(n_jobs=jobs, backend=parallel_backend, verbose=5)(
                 delayed(_run_one)(e) for e in self.evaluations
             )
 
@@ -278,7 +288,13 @@ class EvaluationCard:
         print('================================')
         print('\n')
 
-        card_result = _reduce_results(results, self.claim.reduce)
+        card_result = _reduce_results(results, self.claim_aggregation_strategy)
+        aggregate_verdict = {'result': card_result,
+                             'claim_aggregation_strategy': self.claim_aggregation_strategy,
+                             'claims': [e._execution_hash for e in self.evaluations]}
+
+        with open(card_output_path / 'verdict.json', 'w') as f:
+            json.dump(aggregate_verdict, f, indent=2)
 
         self.claim.status = card_result
         return card_result
@@ -593,9 +609,9 @@ def _reduce_results(results, reduce_spec):
     Reduce per-sweep-point claim outcomes to a single card-level status.
 
     reduce_spec: dict with key `type`:
-      - {'type': 'all'}    (default)  any FALSIFIED -> FALSIFIED; any INCONCLUSIVE -> INCONCLUSIVE; else VERIFIED
+      - {'type': 'all'}               any FALSIFIED -> FALSIFIED; any INCONCLUSIVE -> INCONCLUSIVE; else VERIFIED
       - {'type': 'any'}               any VERIFIED -> VERIFIED; any INCONCLUSIVE (and no VERIFIED) -> INCONCLUSIVE; else FALSIFIED
-      - {'type': 'fraction', 'threshold': 0.8}
+      - {'type': 'fraction', 'parameters': {'threshold': 0.8}}
                                       VERIFIED_count / total >= threshold -> VERIFIED; else FALSIFIED.
                                       INCONCLUSIVE points count in the denominator but not the numerator.
     """
@@ -621,12 +637,15 @@ def _reduce_results(results, reduce_spec):
             return 'INCONCLUSIVE'
         return 'FALSIFIED'
     if rtype == 'fraction':
-        threshold = reduce_spec.get('threshold')
+        parameters = reduce_spec.get('parameters', {})
+        threshold = parameters.get('threshold')
         if threshold is None:
             raise ValueError("reduce type=fraction requires `threshold`")
         frac = verified_count / total
         print(f'[reduce=fraction] VERIFIED {verified_count}/{total} ({frac:.3f}) vs threshold {threshold}')
+        print()
         return 'VERIFIED' if frac >= threshold else 'FALSIFIED'
+
     raise ValueError(f"Unknown reduce type: {rtype!r}")
 
 
@@ -654,7 +673,6 @@ class Claim:
 
     def __init__(self, raw):
         self.claim = raw.get('python')
-        self.reduce = raw.get('reduce', {'type': 'all'})
         self.status = 'UNVERIFIED'
 
     def evaluate(self, symbols: Dict[str, Any] = {}):
@@ -887,7 +905,7 @@ def main(argv=None, **kwargs):
     if args.override is not None:
         card.replace(args.override)
 
-    card.evaluate()
+    card.evaluate(jobs=args.jobs, parallel_backend=args.parallel_backend)
     card.summarize()
 
 
