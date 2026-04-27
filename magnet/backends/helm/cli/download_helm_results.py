@@ -625,19 +625,18 @@ class HelmRemoteStore:
 
     # --- path helpers ---
     def _runs_root(self, benchmark: str) -> str:
-        # HELM layout quirk: classic lives at top-level benchmark_output
-        if benchmark == 'classic':
-            return f'{self.bucket}/benchmark_output/runs'
+        # All benchmarks live under gs://<bucket>/<benchmark>/benchmark_output/runs/<version>/<run_id>.
+        # HELM previously hosted classic at the bucket root under
+        # benchmark_output/runs/ as a layout quirk; the upstream bucket has
+        # since been reorganized so classic is a normal benchmark prefix.
         return f'{self.bucket}/{benchmark}/benchmark_output/runs'
 
     # --- list API ---
     def list_benchmarks(self) -> List[str]:
         # everything at bucket root are candidate benchmarks; filter out non-bench dirs
         names = set(self.backend.list_dirs(self.bucket))
-        # include classic; remove non-bench directories we know about
-        names.add('classic')
+        # Non-benchmark directories that share the bucket root.
         blocklist = {
-            'benchmark_output',
             'assets',
             'tmp',
             'config',
