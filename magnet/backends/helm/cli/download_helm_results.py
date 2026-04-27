@@ -901,9 +901,13 @@ def main(argv=None, **kwargs) -> int:
             )
             return [selector]
         import kwutil
-
         pat = kwutil.MultiPattern.coerce(selector)
         all_versions = storage.list_versions(benchmark)
+        logger.debug(
+            f'Version selector using multipattern: {pat}',
+            benchmark,
+            selector,
+        )
         return [v for v in all_versions if pat.match(v)]
 
     # Resolve benchmarks set
