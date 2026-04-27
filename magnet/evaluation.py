@@ -67,6 +67,18 @@ class EvaluationConfig(scfg.DataConfig):
     )
 
 
+# Claim Resolution (pulled out as standalone function for
+# multiprocessing support)
+def _run_one(evaluation, claim_results_path):
+    status, _ = evaluation.execute()
+    results_fpath = (
+        claim_results_path / evaluation._execution_hash / 'verdict.json'
+    )
+    results_fpath.parent.ensuredir()
+    results_fpath.write_text(json.dumps(evaluation.log, indent=2))
+    return status, results_fpath
+
+
 class EvaluationCard:
     """
     Specification of an empirical claim with resolvable symbols and metadata
@@ -248,22 +260,12 @@ class EvaluationCard:
                 Symbols.decompose_symbol_defs(self.symbols)
             )
 
-        # Claim Resolution
-        def _run_one(evaluation):
-            status, _ = evaluation.execute()
-            results_fpath = (
-                claim_results_path / evaluation._execution_hash / 'verdict.json'
-            )
-            results_fpath.parent.ensuredir()
-            results_fpath.write_text(json.dumps(evaluation.log, indent=2))
-            return status, results_fpath
-
         if jobs == 1:
-            out = [_run_one(e) for e in self.evaluations]
+            out = [_run_one(e, claim_results_path) for e in self.evaluations]
         else:
             from joblib import Parallel, delayed
             out = Parallel(n_jobs=jobs, backend=parallel_backend, verbose=5)(
-                delayed(_run_one)(e) for e in self.evaluations
+                delayed(_run_one)(e, claim_results_path) for e in self.evaluations
             )
 
         results = []
