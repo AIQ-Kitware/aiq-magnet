@@ -14,6 +14,11 @@ from kwdagger import Pipeline, ProcessNode
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
 from rich import print
+import safer
+
+SAFER_USE_TEMPFILE = not ub.WIN32
+
+DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
 
 
 class EvaluationConfig(scfg.DataConfig):
@@ -46,6 +51,38 @@ class EvaluationConfig(scfg.DataConfig):
         type=str,
         help='Override symbol values (e.g. --override dataset: legalbench\nnum_replicates: 5)',
     )
+
+    jobs = scfg.Value(
+        1,
+        type=int,
+        help=(
+            'Number of evaluation jobs. Use 1 for serial execution, '
+            '-1 for all available CPUs when using joblib.'
+        ),
+    )
+
+    parallel_backend = scfg.Value(
+        'loky',
+        type=str,
+        choices=['loky', 'threading', 'multiprocessing'],
+        help='Joblib backend used when --jobs is not 1.',
+    )
+
+
+# Claim Resolution (pulled out as standalone function for
+# multiprocessing support)
+def _run_one(evaluation, claim_results_path):
+    status, _ = evaluation.execute()
+    results_fpath = (
+        claim_results_path / evaluation._execution_hash / 'verdict.json'
+    )
+    results_fpath.parent.ensuredir()
+
+    with safer.open(results_fpath, 'w', temp_file=SAFER_USE_TEMPFILE) as f:
+        json.dump(evaluation.log, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+
+    return status, results_fpath
 
 
 class EvaluationCard:
@@ -113,6 +150,8 @@ class EvaluationCard:
         self.description = cfg.get('description', '')
 
         self.claim = Claim(cfg.get('claim'))
+        self.claim_aggregation_strategy = cfg.get(
+            'claim_aggregation_strategy', DEFAULT_CLAIM_AGGREGATION_STRATEGY)
         self.symbols = cfg.get('symbols', {})
 
         # explicit kwdagger spec
@@ -165,7 +204,7 @@ class EvaluationCard:
                 else:
                     self.symbols[key]['sweep'] = [value]
 
-    def evaluate(self):
+    def evaluate(self, jobs=1, parallel_backend='loky'):
         """
         Run the evaluation specification
 
@@ -189,7 +228,7 @@ class EvaluationCard:
         card_output_path = self.output_path / self._run_hash
         card_output_path.ensuredir()
 
-        with open(card_output_path / 'card.yaml', 'w') as f:
+        with safer.open(card_output_path / 'card.yaml', 'w', temp_file=SAFER_USE_TEMPFILE) as f:
             yaml.safe_dump(self.original_card, f, sort_keys=False)
 
         claim_results_path = card_output_path / 'results'
@@ -227,18 +266,17 @@ class EvaluationCard:
                 Symbols.decompose_symbol_defs(self.symbols)
             )
 
-        # Claim Resolution
-        results = []
-
-        for evaluation in self.evaluations:
-            status, _ = evaluation.execute()
-            results.append(status)
-
-            results_fpath = (
-                claim_results_path / evaluation._execution_hash / 'verdict.json'
+        if jobs == 1:
+            out = [_run_one(e, claim_results_path) for e in self.evaluations]
+        else:
+            from joblib import Parallel, delayed
+            out = Parallel(n_jobs=jobs, backend=parallel_backend, verbose=5)(
+                delayed(_run_one)(e, claim_results_path) for e in self.evaluations
             )
-            results_fpath.parent.ensuredir()
-            results_fpath.write_text(json.dumps(evaluation.log, indent=2))
+
+        results = []
+        for status, results_fpath in out:
+            results.append(status)
             print(f'Wrote claim output to {results_fpath}')
 
         total = len(results)
@@ -258,13 +296,14 @@ class EvaluationCard:
         print('================================')
         print('\n')
 
-        card_result = ''
-        if falsified_count:
-            card_result = 'FALSIFIED'
-        elif inconclusive_count:
-            card_result = 'INCONCLUSIVE'
-        else:
-            card_result = 'VERIFIED'
+        card_result = _reduce_results(results, self.claim_aggregation_strategy)
+        aggregate_verdict = {'result': card_result,
+                             'claim_aggregation_strategy': self.claim_aggregation_strategy,
+                             'claims': [e._execution_hash for e in self.evaluations]}
+
+        with safer.open(card_output_path / 'verdict.json', 'w', temp_file=SAFER_USE_TEMPFILE) as f:
+            json.dump(aggregate_verdict, f, indent=2, ensure_ascii=False)
+            f.write('\n')
 
         self.claim.status = card_result
         return card_result
@@ -574,6 +613,52 @@ class EvaluationTask:
         return ub.hash_data(self.symbols.simple_view())[:12]
 
 
+def _reduce_results(results, reduce_spec):
+    """
+    Reduce per-sweep-point claim outcomes to a single card-level status.
+
+    reduce_spec: dict with key `type`:
+      - {'type': 'all'}               any FALSIFIED -> FALSIFIED; any INCONCLUSIVE -> INCONCLUSIVE; else VERIFIED
+      - {'type': 'any'}               any VERIFIED -> VERIFIED; any INCONCLUSIVE (and no VERIFIED) -> INCONCLUSIVE; else FALSIFIED
+      - {'type': 'fraction', 'parameters': {'threshold': 0.8}}
+                                      VERIFIED_count / total >= threshold -> VERIFIED; else FALSIFIED.
+                                      INCONCLUSIVE points count in the denominator but not the numerator.
+    """
+    total = len(results)
+    if total == 0:
+        return 'INCONCLUSIVE'
+
+    verified_count    = results.count('VERIFIED')
+    falsified_count   = results.count('FALSIFIED')
+    inconclusive_count = results.count('INCONCLUSIVE')
+
+    rtype = reduce_spec.get('type', 'all')
+    if rtype == 'all':
+        if falsified_count:
+            return 'FALSIFIED'
+        if inconclusive_count:
+            return 'INCONCLUSIVE'
+        return 'VERIFIED'
+    if rtype == 'any':
+        if verified_count:
+            return 'VERIFIED'
+        if inconclusive_count:
+            return 'INCONCLUSIVE'
+        return 'FALSIFIED'
+    if rtype == 'fraction':
+        parameters = reduce_spec.get('parameters', {})
+        threshold = parameters.get('threshold')
+        if threshold is None:
+            raise ValueError("reduce type=fraction requires `threshold`")
+        frac = verified_count / total
+        final_result = 'VERIFIED' if frac >= threshold else 'FALSIFIED'
+        print(f'[reduce=fraction] {final_result} {verified_count}/{total} ({frac:.3f}) vs threshold {threshold}')
+        print()
+        return final_result
+
+    raise ValueError(f"Unknown reduce type: {rtype!r}")
+
+
 class Claim:
     """
     Represents a verifiable assertion for a set of resolved symbols
@@ -616,6 +701,7 @@ class Claim:
             out_msg = ''
             exec(self.claim, symbols)
             self.status = 'VERIFIED'
+            out_msg = 'Assertion holds'
         except AssertionError as e:
             self.status = 'FALSIFIED'
             out_msg = f'Assertion does not hold: {e}'
@@ -829,7 +915,7 @@ def main(argv=None, **kwargs):
     if args.override is not None:
         card.replace(args.override)
 
-    card.evaluate()
+    card.evaluate(jobs=args.jobs, parallel_backend=args.parallel_backend)
     card.summarize()
 
 
