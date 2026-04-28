@@ -644,9 +644,10 @@ def _reduce_results(results, reduce_spec):
         if threshold is None:
             raise ValueError("reduce type=fraction requires `threshold`")
         frac = verified_count / total
-        print(f'[reduce=fraction] VERIFIED {verified_count}/{total} ({frac:.3f}) vs threshold {threshold}')
+        final_result = 'VERIFIED' if frac >= threshold else 'FALSIFIED'
+        print(f'[reduce=fraction] {final_result} {verified_count}/{total} ({frac:.3f}) vs threshold {threshold}')
         print()
-        return 'VERIFIED' if frac >= threshold else 'FALSIFIED'
+        return final_result
 
     raise ValueError(f"Unknown reduce type: {rtype!r}")
 
