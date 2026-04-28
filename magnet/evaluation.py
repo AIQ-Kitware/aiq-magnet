@@ -14,7 +14,9 @@ from kwdagger import Pipeline, ProcessNode
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
 from rich import print
+import safer
 
+SAFER_USE_TEMPFILE = not ub.WIN32
 
 DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
 
@@ -75,7 +77,11 @@ def _run_one(evaluation, claim_results_path):
         claim_results_path / evaluation._execution_hash / 'verdict.json'
     )
     results_fpath.parent.ensuredir()
-    results_fpath.write_text(json.dumps(evaluation.log, indent=2))
+
+    with safer.open(results_fpath, 'w', temp_file=SAFER_USE_TEMPFILE) as f:
+        json.dump(evaluation.log, f, indent=2, ensure_ascii=False)
+        f.write('\n')
+
     return status, results_fpath
 
 
@@ -222,7 +228,7 @@ class EvaluationCard:
         card_output_path = self.output_path / self._run_hash
         card_output_path.ensuredir()
 
-        with open(card_output_path / 'card.yaml', 'w') as f:
+        with safer.open(card_output_path / 'card.yaml', 'w', temp_file=SAFER_USE_TEMPFILE) as f:
             yaml.safe_dump(self.original_card, f, sort_keys=False)
 
         claim_results_path = card_output_path / 'results'
@@ -295,8 +301,9 @@ class EvaluationCard:
                              'claim_aggregation_strategy': self.claim_aggregation_strategy,
                              'claims': [e._execution_hash for e in self.evaluations]}
 
-        with open(card_output_path / 'verdict.json', 'w') as f:
-            json.dump(aggregate_verdict, f, indent=2)
+        with safer.open(card_output_path / 'verdict.json', 'w', temp_file=SAFER_USE_TEMPFILE) as f:
+            json.dump(aggregate_verdict, f, indent=2, ensure_ascii=False)
+            f.write('\n')
 
         self.claim.status = card_result
         return card_result
