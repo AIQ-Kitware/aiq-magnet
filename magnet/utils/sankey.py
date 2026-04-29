@@ -8,6 +8,7 @@ Sankey DSL + utilities.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
 import typing
@@ -29,6 +30,34 @@ if typing.TYPE_CHECKING:
 @dataclass(frozen=True)
 class Root:
     label: str
+    def builder(self) -> PlanBuilder:
+        return PlanBuilder(Plan(self))
+    def group(self, *, by: Grouper, name: Optional[str] = None) -> PlanBuilder:
+        return self.builder().group(by=by, name=name)
+    def split(self, *, by: Grouper, name: Optional[str] = None) -> SplitBuilder:
+        return self.builder().split(by=by, name=name)
+
+
+# A terminal label convenience (primarily for branch specs)
+@dataclass(frozen=True)
+class Node:
+    label: str
+
+
+@dataclass(frozen=True)
+class Branch:
+    """
+    A Split branch:
+      - label: optional override for the *split outcome node label*
+      - plan: plan to continue after the split outcome node
+      - terminal: if True, stop at the outcome node (ignore plan)
+    """
+    plan: "Plan" = field(default_factory=lambda: Plan())
+    label: Optional[str] = None
+    terminal: bool = False
+
+
+BranchLike = Union["Plan", Branch, Node, str]  # str => terminal label
 
 
 @dataclass(frozen=True)
@@ -47,12 +76,103 @@ class Bucket:
 class Split:
     name: str
     by: Grouper
-    branches: Dict[Any, 'Plan']
-    default: Optional['Plan'] = None
+    branches: Dict[Any, BranchLike]
+    default: Optional[BranchLike] = None
+
+    def __post_init__(self):
+        def coerce(x: BranchLike) -> Branch:
+            if isinstance(x, Branch):
+                return x
+            if isinstance(x, Node):
+                return Branch(label=x.label, terminal=True)
+            if isinstance(x, str):
+                return Branch(label=x, terminal=True)
+            if isinstance(x, Plan):
+                return Branch(plan=x)
+            raise TypeError(f"Invalid branch spec: {type(x)}")
+
+        # frozen dataclass: use object.__setattr__ to normalize
+        object.__setattr__(
+            self, "branches", {k: coerce(v) for k, v in self.branches.items()}
+        )
+        if self.default is not None:
+            object.__setattr__(self, "default", coerce(self.default))
 
 
-def _eval_by(by: Grouper, row: Row):
-    return by(row) if callable(by) else row.get(by)
+class PlanBuilder:
+    def __init__(self, plan: Optional[Plan] = None):
+        self.plan = plan or Plan()
+
+    def build(self) -> Plan:
+        return self.plan
+
+    def group(self, *, by: Grouper, name: Optional[str] = None) -> "PlanBuilder":
+        if name is None:
+            name = by if isinstance(by, str) else "group"
+        self.plan.steps.append(Group(name, by))
+        return self
+
+    def bucket(self, *, by: Grouper, name: Optional[str] = None) -> "PlanBuilder":
+        if name is None:
+            name = by if isinstance(by, str) else "bucket"
+        self.plan.steps.append(Bucket(name, by))
+        return self
+
+    def split(self, *, by: Grouper, name: Optional[str] = None) -> "SplitBuilder":
+        if name is None:
+            name = by if isinstance(by, str) else "split"
+        sp = Split(name, by, branches={})
+        self.plan.steps.append(sp)
+        return SplitBuilder(sp)
+
+
+class CaseBuilder(PlanBuilder):
+    def __init__(self, branch_ref: Dict[Any, Branch], key: Any):
+        # branch_ref is the Split.branches dict (already normalized to Branch)
+        self._branch_ref = branch_ref
+        self._key = key
+        super().__init__(plan=self._branch_ref[key].plan)
+
+    def set_label(self, label: str) -> "CaseBuilder":
+        br = self._branch_ref[self._key]
+        self._branch_ref[self._key] = Branch(plan=br.plan, label=label, terminal=br.terminal)
+        return self
+
+    def terminal(self, label: Optional[str] = None) -> "CaseBuilder":
+        br = self._branch_ref[self._key]
+        self._branch_ref[self._key] = Branch(
+            plan=br.plan,
+            label=(label if label is not None else br.label),
+            terminal=True,
+        )
+        return self
+
+
+class SplitBuilder:
+    def __init__(self, split: Split):
+        self.split = split
+        # Split.__post_init__ normalized branches to Branch already
+        self.cases: Dict[Any, CaseBuilder] = {}
+
+    def add_case(self, *, value: Any) -> CaseBuilder:
+        if value not in self.split.branches:
+            # create an empty branch by default
+            self.split.branches[value] = Branch(plan=Plan())
+        cb = CaseBuilder(self.split.branches, value)
+        self.cases[value] = cb
+        return cb
+
+    def __getitem__(self, value: Any) -> CaseBuilder:
+        # defaultdict-ish
+        return self.add_case(value=value)
+
+    def set_default(self) -> CaseBuilder:
+        if self.split.default is None:
+            # store default as a Branch (not in branches dict)
+            object.__setattr__(self.split, "default", Branch(plan=Plan()))
+        # expose via a pseudo key
+        # (or provide a dedicated DefaultCaseBuilder)
+        raise NotImplementedError("Implement a DefaultCaseBuilder if you want this.")
 
 
 def _by_repr(by: Grouper) -> str:
@@ -62,10 +182,6 @@ def _by_repr(by: Grouper) -> str:
     if name:
         return f'<fn {name}>'
     return f'<callable {by!r}>'
-
-
-def _label(stage: str, value: Any, fmt: str):
-    return fmt.format(name=stage, value=value)
 
 
 @dataclass
@@ -128,15 +244,19 @@ class Plan:
                         f'{indent}BUCKET {st.name!r} by={_by_repr(st.by)}'
                     )
                 elif isinstance(st, Split):
-                    lines.append(
-                        f'{indent}SPLIT {st.name!r} by={_by_repr(st.by)}'
-                    )
-                    for k, sub in st.branches.items():
-                        lines.append(f'{indent}  BRANCH {k!r}:')
-                        rec(sub, indent + '    ')
+                    lines.append(f"{indent}SPLIT {st.name!r} by={_by_repr(st.by)}")
+                    for k, br in st.branches.items():
+                        extra = []
+                        if br.label is not None:
+                            extra.append(f"label={br.label!r}")
+                        if br.terminal:
+                            extra.append("terminal=True")
+                        extra_s = ("  [" + ", ".join(extra) + "]") if extra else ""
+                        lines.append(f"{indent}  BRANCH {k!r}:{extra_s}")
+                        rec(br.plan, indent + "    ")
                     if st.default is not None:
-                        lines.append(f'{indent}  DEFAULT:')
-                        rec(st.default, indent + '    ')
+                        # same idea for default
+                        ...
                 else:
                     lines.append(f'{indent}{type(st).__name__} (?)')
 
@@ -149,6 +269,7 @@ class Plan:
 
         Example:
             >>> # Trace the path a row takes through the plan
+            >>> from magnet.utils import sankey
             >>> plan = Plan(
             ...     Root("ROOT_NODE"),
             ...     Group("dataset", "dataset"),
@@ -170,6 +291,9 @@ class Plan:
         root = self._find_root_label(default='ROOT_NODE')
         path = [root]
 
+        def _eval_by(by: Grouper, row: Row):
+            return by(row) if callable(by) else row.get(by)
+
         def run(plan: 'Plan', cur: str):
             node = cur
             for st in plan.steps:
@@ -177,18 +301,30 @@ class Plan:
                     continue
                 elif isinstance(st, (Group, Bucket)):
                     val = _eval_by(st.by, row)
-                    nxt = _label(st.name, val, label_fmt)
+                    nxt = label_fmt.format(name=st.name, value=val)
                     path.append(nxt)
                     node = nxt
                 elif isinstance(st, Split):
                     key = _eval_by(st.by, row)
-                    split_node = _label(st.name, key, label_fmt)
-                    path.append(split_node)
-                    node = split_node
-                    branch = st.branches.get(key) or st.default
-                    if branch is None:
+
+                    br = st.branches.get(key) or st.default
+                    if br is None:
                         return node
-                    node = run(branch, node)
+
+                    # Decide the split outcome node label
+                    split_label = (
+                        br.label
+                        if (br.label is not None)
+                        else label_fmt.format(name=st.name, value=key)
+                    )
+                    path.append(split_label)
+                    node = split_label
+
+                    # Terminal branch stops here
+                    if br.terminal:
+                        return node
+
+                    node = run(br.plan, node)
                 else:
                     raise TypeError(f'Unknown step type: {type(st)}')
             return node
@@ -453,3 +589,70 @@ class SankeyDiGraph(nx.DiGraph):
         )
         fig.update_layout(title_text=title, font_size=14)
         return fig
+
+
+def demo():
+    """
+    """
+    import kwutil
+    import ubelt as ub
+    rows = kwutil.Yaml.loads(ub.codeblock(
+        '''
+        - {run: run1, suite: suite1, retcode: 1, retmsg: 'unsupported', spec_diagnosis: null, metric_iou: null}
+        - {run: run2, suite: suite1, retcode: 1, retmsg: 'unsupported', spec_diagnosis: null, metric_iou: null}
+        - {run: run3, suite: suite1, retcode: 1, retmsg: 'unsupported', spec_diagnosis: null, metric_iou: null}
+        - {run: run4, suite: suite1, retcode: 1, retmsg: 'unsupported', spec_diagnosis: null, metric_iou: null}
+        - {run: run5, suite: suite1, retcode: 1, retmsg: 'unsupported', spec_diagnosis: null, metric_iou: null}
+
+        - {run: run1, suite: suite2, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 1.0}
+        - {run: run2, suite: suite2, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 1.0}
+        - {run: run3, suite: suite2, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 1.0}
+        - {run: run4, suite: suite2, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 1.0}
+        - {run: run5, suite: suite2, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 1.0}
+
+        - {run: run1, suite: suite3, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 0.9}
+        - {run: run2, suite: suite3, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 0.7}
+        - {run: run3, suite: suite3, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 0.9}
+        - {run: run4, suite: suite3, retcode: 0, retmsg: '', spec_diagnosis: 'agree', metric_iou: 1.0}
+        - {run: run5, suite: suite3, retcode: 1, retmsg: 'oom', spec_diagnosis: null, metric_iou: null}
+        - {run: run6, suite: suite3, retcode: 1, retmsg: 'oom', spec_diagnosis: null, metric_iou: null}
+
+        - {run: run1, suite: suite4, retcode: 0, retmsg: '', spec_diagnosis: 'disagree-deploy', metric_iou: 0.0}
+        - {run: run2, suite: suite4, retcode: 0, retmsg: '', spec_diagnosis: 'disagree-deploy', metric_iou: 0.0}
+        - {run: run3, suite: suite4, retcode: 0, retmsg: '', spec_diagnosis: 'disagree-input', metric_iou: 0.3}
+        - {run: run4, suite: suite4, retcode: 0, retmsg: '', spec_diagnosis: 'disagree-input', metric_iou: 0.1}
+        '''))
+
+    from magnet.utils import sankey_builder
+    root = sankey_builder.Root(label="All Attempts")
+    bench = root.group(by="suite", name="benchmark")
+
+    splits = bench.group(by="retcode", name="Ran")
+    splits[1].label = 'Failed'
+    splits[0].label = 'Ran'
+
+    # Do something unique on the fail branch
+    splits[1].group(by='retmsg')
+
+    def iou_grouper(row):
+        value = row['metric_iou']
+        if value == 1:
+            return '1'
+        elif value > 0.5:
+            return '0.5 - 1'
+        elif value > 0:
+            return '0 - 0.5'
+        else:
+            return '0'
+
+    diagnosis_buckets = splits[0].group(by="agreement")
+    iou_groups = diagnosis_buckets.group(by=iou_grouper)
+
+    # Connect only some of the underlying buckets
+    iou_groups['0.5 - 1'].connect('Priority Analysis')
+    iou_groups['0 - 0.5'].connect('Priority Analysis')
+
+    graph = root.build_sankey(rows)
+    print(root.to_text())
+    import networkx as nx
+    nx.write_network_text(graph)
