@@ -1292,7 +1292,39 @@ def run_helm(
         cmd += ['--enable-local-huggingface-models', *map(str, enable_local_huggingface_models)]
     cmd += list(extra_args or [])
     logger.info('Executing: {}', ' '.join(map(str, cmd)))
-    ub.cmd(cmd, cwd=out_dpath, verbose=3, system=True).check_returncode()
+    # Capture stdout/stderr (in addition to streaming live to the terminal)
+    # so that post-mortem failure classification can see exceptions raised
+    # *before* helm-run's own logger initialized — e.g. TypeErrors from
+    # ``run_spec_function(**args)`` when a run_entry contains kwargs the
+    # function doesn't accept. Those errors only surface in the parent
+    # shell's stderr today, not in helm-run.log, and would otherwise be
+    # lost when the run dir is rsync'd elsewhere for analysis.
+    result = ub.cmd(cmd, cwd=out_dpath, verbose=3, system=False, capture=True, check=False)
+    _persist_cmd_streams(out_dpath, result)
+    result.check_returncode()
+
+
+_CMD_STREAM_TAIL_BYTES = 64 * 1024
+
+
+def _persist_cmd_streams(out_dpath: Path, result) -> None:
+    """Write tail snippets of the wrapped command's stdout/stderr to ``out_dpath``.
+
+    Always writes a tail (capped at ``_CMD_STREAM_TAIL_BYTES`` per stream) so
+    forensic tooling can classify failures that occur outside helm-run's
+    own logger. Best-effort: never let a write failure mask the underlying
+    helm-run exit code.
+    """
+    streams = (
+        ('cmd_stdout.txt', getattr(result, 'stdout', None) or ''),
+        ('cmd_stderr.txt', getattr(result, 'stderr', None) or ''),
+    )
+    for name, text in streams:
+        try:
+            tail = text[-_CMD_STREAM_TAIL_BYTES:] if len(text) > _CMD_STREAM_TAIL_BYTES else text
+            (out_dpath / name).write_text(tail)
+        except Exception:
+            pass
 
 
 def find_run_in_out_dpath(
