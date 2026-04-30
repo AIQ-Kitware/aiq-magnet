@@ -721,24 +721,51 @@ def parse_run_name_to_kv(run_name: str) -> tuple[str, dict[str, object]]:
     return bench, kv
 
 
-def canonicalize_kv(kv: dict[str, object]) -> dict[str, object]:
+# HELM display-name kwarg aliases keyed by benchmark family.
+#
+# Some HELM run-spec functions accept one kwarg name but write a *different*
+# token into the run_spec.name display string. The canonical example is
+# ``mmlu_pro``: it accepts ``subject`` as the function kwarg but writes
+# ``subset=...`` into the display name (and therefore into the run dir name).
+# Without a translation, ``run_dir_matches_requested`` fails because the
+# requested ``subject=all`` token is not present in the candidate dir
+# (``subset=all`` is).
+#
+# Each entry maps ``benchmark -> {request_kwarg: display_token}``. We apply
+# these renames in ``canonicalize_kv`` so both the request and the candidate
+# converge on the same token before comparison.
+_BENCHMARK_KWARG_ALIASES: dict[str, dict[str, str]] = {
+    'mmlu_pro': {'subject': 'subset'},
+}
+
+
+def canonicalize_kv(kv: dict[str, object], benchmark: str | None = None) -> dict[str, object]:
     """
     Canonicalize key/value pairs in a conservative way.
 
     Current behavior:
         - Normalize model strings by replacing '/' with '_'
+        - Apply per-benchmark request-kwarg → display-token aliases when
+          ``benchmark`` is provided (e.g. ``mmlu_pro``'s ``subject`` →
+          ``subset``).
 
     Example:
         >>> canonicalize_kv({'model': 'meta/llama-3-8b-chat'})
         {'model': 'meta_llama-3-8b-chat'}
         >>> canonicalize_kv({'model_deployment': 'kubeai/qwen-small'})
         {'model_deployment': 'kubeai_qwen-small'}
+        >>> canonicalize_kv({'subject': 'all'}, benchmark='mmlu_pro')
+        {'subset': 'all'}
     """
     kv = dict(kv)
     for key in ('model', 'model_deployment'):
         value = kv.get(key, None)
         if isinstance(value, str):
             kv[key] = value.replace('/', '_')
+    aliases = _BENCHMARK_KWARG_ALIASES.get(benchmark or '', {})
+    for src, dst in aliases.items():
+        if src in kv and dst not in kv:
+            kv[dst] = kv.pop(src)
     return kv
 
 
@@ -772,8 +799,8 @@ def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
     if req_bench != cand_bench:
         return False
 
-    req_kv = canonicalize_kv(req_kv)
-    cand_kv = canonicalize_kv(cand_kv)
+    req_kv = canonicalize_kv(req_kv, benchmark=req_bench)
+    cand_kv = canonicalize_kv(cand_kv, benchmark=cand_bench)
 
     for k, v in req_kv.items():
         if k not in cand_kv:
