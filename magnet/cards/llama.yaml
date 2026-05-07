@@ -4,6 +4,32 @@ title: "In-domain Model Consistency for Llama Family"
 description: |
   Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family
 
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - llama
+  - helm
+  - mmlu
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+  - title: "mmlu"
+    url: "https://huggingface.co/datasets/cais/mmlu"
+    type: "dataset"
+  - title: "Precomputed HELM lite benchmark outputs"
+    url: "https://console.cloud.google.com/storage/browser/crfm-helm-public/lite"
+    type: "asset"
+
 claim:
   python: |
     assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"

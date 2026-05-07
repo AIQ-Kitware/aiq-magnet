@@ -4,6 +4,23 @@ title: "Arithmetic - Addition Commutative Property"
 description: "Addition is commutative on pairs of even and odd integers"
 category: "Mathematical Properties"
 
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+
 claim:
   python: |
     for even, odd in zip(int_range_even, int_range_odd):
