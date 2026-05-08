@@ -692,7 +692,8 @@ def summary_dict(
     This is intended to be:
       * easy to print for a human,
       * stable-ish enough to compare between runs,
-      * informative enough to decide if you need HelmRunDiff.
+      * informative enough to decide if you need a run-to-run diff
+        (eval_audit.helm.diff.HelmRunDiff in the helm_audit repo).
 
     Parameters
     ----------
