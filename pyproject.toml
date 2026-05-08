@@ -1,125 +1,118 @@
 [build-system]
-requires = ["setuptools >= 80.9.0"]
 build-backend = "setuptools.build_meta"
-
-[tool.setuptools.packages.find]
-namespaces = true
-include = ["magnet*"]
-
-[tool.setuptools.package-data]
-magnet = ["cards/*.yaml"]
-
-[tool.setuptools.dynamic]
-version = {attr = "magnet.__version__"}
+requires = [ "setuptools>=80.9" ]
 
 [project]
 name = "aiq-magnet"
-dynamic = ["version"]
 description = "Kitware's MAGNET framework for AIQ"
-authors = [
-    {name = "MAGNET Kitware", email = "aiq-ta2@kitware.com"}
+license.text = "Apache 2"
+authors = [ { name = "MAGNET Kitware", email = "aiq-ta2@kitware.com" } ]
+requires-python = ">=3.11"
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
 ]
-urls = { "Repository" = "https://github.com/AIQ-Kitware/aiq-magnet/" }
-requires-python = ">=3.10"
+dynamic = [ "readme", "version" ]
 dependencies = [
-    "crfm-helm>=0.5.8",
-    "pandas>=2.2.3",
-    "dacite>=1.9.2",
-    "ubelt>=1.3.8",
-    "lazy_loader>=0.4",
-    "scikit-learn>=1.7.1",
-    "h5py>=3.14.0",
-    "numexpr>=2.11.0",
-    "kwarray>=0.7.1",
-    "kwutil>=0.3.8", 
-    "pygtrie>=2.5.0",
-    "scriptconfig>=0.8.4",
-    "orjson>=3.10.15",
-    "msgspec>=0.19.0",
-    "rich>=14.1.0",
-    "fsspec>=2024.9.0",
-    "pyyaml>=6.0.2",
-    "typing-extensions>=4.0.0",
-    "ruamel.yaml>=0.17.22",
-    "loguru>=0.7.3",
-    "kwdagger>=0.2.3",
+  "crfm-helm>=0.5.8",
+  "dacite>=1.9.2",
+  "fsspec>=2024.9",
+  "h5py>=3.14",
+  "kwarray>=0.7.1",
+  "kwdagger>=0.2.3",
+  "kwutil>=0.3.8",
+  "lazy-loader>=0.4",
+  "loguru>=0.7.3",
+  "msgspec>=0.19",
+  "numexpr>=2.11",
+  "orjson>=3.10.15",
+  "pandas>=2.2.3",
+  "pygtrie>=2.5",
+  "pyyaml>=6.0.2",
+  "rich>=14.1",
+  "ruamel-yaml>=0.17.22",
+  "scikit-learn>=1.7.1",
+  "scriptconfig>=0.8.4",
+  "typing-extensions>=4",
+  "ubelt>=1.3.8",
 ]
-
-[project.optional-dependencies]
-
-tests = [
-    "xdoctest>=1.2.0",
-    "pytest>=8.1.1",
-    "coverage>=7.3.0",
-    "pytest-cov>=3.0.0",
+optional-dependencies.all = [
+  "aiq-magnet[optional]",
+  "aiq-magnet[tests]",
 ]
-
-optional = [
-    "gcsfs>=2024.9.0",
-    "plotly>=6.5.2"
+optional-dependencies.docs = [
+  "myst-parser>=0.16.1",
+  "pygments>=2.9",
+  "sphinx>=4.3.2",
+  "sphinx-autoapi>=1.8.4",
+  "sphinx-autobuild>=2021.3.14",
+  "sphinx-reredirects>=0.0.1",
+  "sphinx-rtd-theme>=1",
+  "sphinxcontrib-napoleon>=0.7",
 ]
-
-all = [
-    "aiq-magnet[optional]",
-    "aiq-magnet[tests]",
+optional-dependencies.optional = [ "gcsfs>=2024.9", "plotly>=6.5.2" ]
+optional-dependencies.tests = [
+  "coverage>=7.3",
+  "pytest>=8.1.1",
+  "pytest-cov>=3",
+  "xdoctest>=1.2",
 ]
+urls.Homepage = "https://github.com/AIQ-Kitware/aiq-magnet/"
+urls.Repository = "https://github.com/AIQ-Kitware/aiq-magnet/"
+scripts.magnet = "magnet.__main__:main"
+scripts.magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
+entry-points.helm.run_specs = "magnet.backends.helm.run_specs"
 
-docs = [
-    "sphinx >= 4.3.2",
-    "sphinx-autobuild >= 2021.3.14",
-    "sphinx_rtd_theme >= 1.0.0",
-    "sphinxcontrib-napoleon >= 0.7",
-    "sphinx-autoapi >= 1.8.4",
-    "Pygments >= 2.9.0",
-    "myst_parser >= 0.16.1",
-    "sphinx-reredirects >= 0.0.1",
+[tool.setuptools]
+dynamic.readme.file = [
+  "README.md",
 ]
-
-[project.scripts]
-magnet = "magnet.__main__:main"
-magnet-helm-run = "magnet.backends.helm.magnet_run_helm:main"
-
-[project.entry-points.helm]
-run_specs = "magnet.backends.helm.run_specs"
-
-[tool.pytest.ini_options]
-addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
-norecursedirs = ".git build __pycache__ dev docs dockerfiles"
-
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    ".*  # pragma: no cover",
-    ".*  # nocover",
-]
-
-[tool.mypy]
-disable_error_code = ["import-untyped"]
+dynamic.readme.content-type = "text/markdown"
+dynamic.version.attr = "magnet.__version__"
+package-data.magnet = [ "cards/*.yaml" ]
+packages.find.namespaces = true
+packages.find.include = [ "magnet*" ]
 
 [tool.ruff]
-line-length = 80
 target-version = "py311"
-
-[tool.ruff.lint]
+line-length = 80
+format.indent-style = "space"
+format.quote-style = "single"
+format.line-ending = "auto"
+format.skip-magic-trailing-comma = false
+format.docstring-code-line-length = "dynamic"
+format.docstring-code-format = false
 # Enable Flake8 (E, F) and isort (I) rules.
-select = ["E", "F", "I"]
+lint.select = [ "E", "F", "I" ]
 # Ignore specific rules, for example, E501 (line too long) as it's handled by the formatter.
-ignore = [
-    "E501",  # line too long
-    "E402",  # Module level import not at top of file
+lint.ignore = [
+  "E402", # Module level import not at top of file
+  "E501", # line too long
 ]
 
-[tool.ruff.format]
-quote-style = "single"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
-docstring-code-format = false
-docstring-code-line-length = "dynamic"
-
 [tool.codespell]
-skip = ['./docs/build', './*.egg-info', './build', './htmlcov']
+skip = [ "./docs/build", "./*.egg-info", "./build", "./htmlcov" ]
 count = true
 quiet-level = 3
-ignore-words-list = ['wont', 'cant', 'ANS', 'doesnt', 'arent', 'ans', 'thats', 'datas', 'isnt']
+ignore-words-list = [ "wont", "cant", "ANS", "doesnt", "arent", "ans", "thats", "datas", "isnt" ]
+
+[tool.mypy]
+disable_error_code = [
+  "import-untyped",
+]
+ignore_missing_imports = true
+
+
+[tool.pytest]
+ini_options.addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
+ini_options.norecursedirs = ".git build __pycache__ dev docs dockerfiles"
+
+[tool.coverage]
+report.exclude_lines = [
+  ".*  # nocover",
+  ".*  # pragma: no cover",
+  "pragma: no cover",
+]
