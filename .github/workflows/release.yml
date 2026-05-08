@@ -102,6 +102,22 @@ jobs:
     - name: Show files to upload
       shell: bash
       run: ls -la wheelhouse
+    - name: Prepare publish directory
+      shell: bash
+      run: |-
+        mkdir -p publish_wheelhouse
+        shopt -s nullglob
+        for FPATH in wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.zip
+        do
+            cp "$FPATH" publish_wheelhouse/
+        done
+        ls -la publish_wheelhouse
+    - name: Publish test artifacts to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: publish_wheelhouse
+        skip-existing: true
+        repository-url: https://test.pypi.org/legacy/
     - uses: actions/upload-artifact@v6.0.0
       name: Upload deploy artifacts
       with:
@@ -110,6 +126,9 @@ jobs:
           wheelhouse/*.whl
           wheelhouse/*.zip
           wheelhouse/*.tar.gz
+    permissions:
+      contents: read
+      id-token: write
     environment: testpypi
   live_deploy:
     name: Deploy Live
@@ -135,6 +154,21 @@ jobs:
     - name: Show files to upload
       shell: bash
       run: ls -la wheelhouse
+    - name: Prepare publish directory
+      shell: bash
+      run: |-
+        mkdir -p publish_wheelhouse
+        shopt -s nullglob
+        for FPATH in wheelhouse/*.whl wheelhouse/*.tar.gz wheelhouse/*.zip
+        do
+            cp "$FPATH" publish_wheelhouse/
+        done
+        ls -la publish_wheelhouse
+    - name: Publish live artifacts to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: publish_wheelhouse
+        skip-existing: true
     - uses: actions/upload-artifact@v6.0.0
       name: Upload deploy artifacts
       with:
@@ -143,6 +177,9 @@ jobs:
           wheelhouse/*.whl
           wheelhouse/*.zip
           wheelhouse/*.tar.gz
+    permissions:
+      contents: read
+      id-token: write
     environment: pypi
   release:
     name: Create Github Release

@@ -136,11 +136,6 @@ jobs:
           os: ubuntu-latest
           arch: auto
           uv-resolution: lowest-direct
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-          uv-resolution: highest
         - python-version: '3.11'
           install-extras: tests,optional
           os: ubuntu-latest

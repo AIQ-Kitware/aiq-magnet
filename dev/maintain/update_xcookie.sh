@@ -11,6 +11,7 @@ xcookie --only_gen ".github*.yml" --enable_gpg=False --ci_pypy_versions="" --max
     --ci_versions_minimal_strict=None \
     --ci_versions_minimal_loose=None \
     --linter=False \
+    --ci_pypi_trusted_publishing=True \
     --deploy_pypi=True
 
 
