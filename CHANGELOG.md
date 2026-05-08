@@ -3,7 +3,7 @@
 This changelog follows the specifications detailed in: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), although we have not yet reached a `1.0.0` release.
 
-## Version 0.0.2 -- Unreleased
+## Version 0.0.2 -- Released 2026-05-08
 
 ### Added
 
@@ -11,6 +11,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 * User can now specify patterns to helm runs, suites, or all outputs as predictor input
 * Added symbol sweeping capability to evaluation card evaluator
 * Added modal CLI for `evaluation.py` script
+* Added support for KWDagger pipelines in evaluation cards (both as explicit pipelines, and YAML defined pipelines)
+* Added support for symbol overrides to `magnet evaluate` with the `--override` argument
+* Added parallelization to `magnet evaluate` with the `--jobs` (and `--parallel_backend`) arguments
+* Added claim resolution and final result file output to `magnet evaluate`
+* Added support for `claim_aggregation_strategy` to evaluation cards (supporting `any`, `all`, and `fraction` strategies)
 
 ### Changed
 
