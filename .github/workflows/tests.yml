@@ -29,7 +29,7 @@ jobs:
     - name: Upgrade pip
       run: |-
         python -m pip install pip uv -U
-        python -m pip install --prefer-binary -e ".[]"
+        python -m pip install --prefer-binary -e ".[tests]"
     - name: Build sdist
       shell: bash
       run: |-
