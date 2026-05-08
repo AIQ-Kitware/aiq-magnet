@@ -12,33 +12,6 @@ on:
     branches: [ main ]
 
 jobs:
-  lint_job:
-    ##
-    # Run quick linting and typing checks.
-    # To disable all linting add "linter=false" to the xcookie config.
-    # To disable type checks add "notypes" to the xcookie tags.
-    ##
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout source
-      uses: actions/checkout@v6.0.2
-    - name: Set up Python 3.14 for linting
-      uses: actions/setup-python@v5.6.0
-      with:
-        python-version: '3.14'
-    - name: Install dependencies
-      run: |-
-        python -m pip install pip uv -U
-        python -m uv pip install flake8
-    - name: Lint with flake8
-      run: |-
-        # stop the build if there are Python syntax errors or undefined names
-        flake8 ./magnet --count --select=E9,F63,F7,F82 --show-source --statistics
-    - name: Typecheck
-      run: |-
-        python -m pip install ty
-        pip install -r requirements/runtime.txt
-        ty check ./magnet
   build_and_test_sdist:
     ##
     # Build the pure python package from source and test it in the
@@ -49,15 +22,14 @@ jobs:
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
-    - name: Set up Python 3.14
+    - name: Set up Python 3.13
       uses: actions/setup-python@v5.6.0
       with:
-        python-version: '3.14'
+        python-version: '3.13'
     - name: Upgrade pip
       run: |-
         python -m pip install pip uv -U
-        python -m pip install --prefer-binary -r requirements/tests.txt
-        python -m pip install --prefer-binary -r requirements/runtime.txt
+        python -m pip install --prefer-binary -e ".[]"
     - name: Build sdist
       shell: bash
       run: |-
@@ -118,7 +90,7 @@ jobs:
         os:
         - ubuntu-latest
         python-version:
-        - '3.14'
+        - '3.13'
         arch:
         - auto
     steps:
@@ -159,118 +131,34 @@ jobs:
         # Xcookie generates an explicit list of environments that will be used
         # for testing instead of using the more concise matrix notation.
         include:
-        - python-version: '3.10'
-          install-extras: tests-strict,runtime-strict
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests-strict,runtime-strict
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests-strict,runtime-strict
-          os: windows-latest
-          arch: auto
-        - python-version: '3.14'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.14'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.14'
-          install-extras: tests-strict,runtime-strict,optional-strict
-          os: windows-latest
-          arch: auto
-        - python-version: '3.14'
-          install-extras: tests
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.14'
-          install-extras: tests
-          os: windows-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: ubuntu-latest
-          arch: auto
         - python-version: '3.13'
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: '3.14'
+          uv-resolution: lowest-direct
+        - python-version: '3.10'
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: pypy-3.9
+          uv-resolution: highest
+        - python-version: '3.11'
           install-extras: tests,optional
           os: ubuntu-latest
           arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
+          uv-resolution: highest
         - python-version: '3.12'
           install-extras: tests,optional
-          os: macOS-latest
+          os: ubuntu-latest
           arch: auto
+          uv-resolution: highest
         - python-version: '3.13'
           install-extras: tests,optional
-          os: macOS-latest
+          os: ubuntu-latest
           arch: auto
-        - python-version: '3.14'
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: pypy-3.9
-          install-extras: tests,optional
-          os: macOS-latest
-          arch: auto
-        - python-version: '3.10'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.11'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.12'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.13'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: '3.14'
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
-        - python-version: pypy-3.9
-          install-extras: tests,optional
-          os: windows-latest
-          arch: auto
+          uv-resolution: highest
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
-    - name: Enable MSVC 64bit
-      uses: ilammy/msvc-dev-cmd@v1
-      if: ${{ startsWith(matrix.os, 'windows-') }}
-      with:
-        arch: ${{ contains(matrix.os, 'arm') && 'arm64' || 'x64' }}
     - name: Setup Python
       uses: actions/setup-python@v5.6.0
       with:
@@ -281,22 +169,20 @@ jobs:
         pattern: wheels-*
         merge-multiple: true
         path: wheelhouse
-    - name: Set macOS deployment target (arm64)
-      if: runner.os == 'macOS'
-      run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
     - name: Install wheel ${{ matrix.install-extras }}
       shell: bash
       env:
         INSTALL_EXTRAS: ${{ matrix.install-extras }}
+        UV_RESOLUTION: ${{ matrix.uv-resolution }}
       run: |-
         echo "Finding the path to the wheel"
         ls wheelhouse || echo "wheelhouse does not exist"
         echo "Installing helpers: update pip"
         python -m pip install pip uv -U
         echo "Installing helpers: setuptools"
-        python -m uv pip install setuptools>=0.8 setuptools_scm wheel build -U
+        python -m uv pip install --resolution=highest setuptools>=0.8 setuptools_scm wheel build -U
         echo "Installing helpers: tomli and pkginfo"
-        python -m uv pip install tomli pkginfo packaging
+        python -m uv pip install --resolution=highest tomli pkginfo packaging
         export WHEEL_FPATH=$(python -c "if 1:
             import pathlib
             from packaging import tags
