@@ -133,7 +133,7 @@ jobs:
   live_deploy:
     name: Deploy Live
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && (startsWith(github.event.ref, 'refs/tags') || startsWith(github.event.ref, 'refs/heads/release'))
+    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/heads/release')
     needs:
     - build_purepy_wheels
     - build_sdist
@@ -183,7 +183,7 @@ jobs:
     environment: pypi
   release:
     name: Create Github Release
-    if: github.event_name == 'push' && (startsWith(github.event.ref, 'refs/tags') || startsWith(github.event.ref, 'refs/heads/release'))
+    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/heads/release')
     runs-on: ubuntu-latest
     permissions:
       contents: write
