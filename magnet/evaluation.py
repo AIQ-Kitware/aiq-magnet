@@ -16,6 +16,9 @@ from loguru import logger
 from rich import print
 import safer
 
+from pydantic import ValidationError
+from magnet.schema import EvaluationCardSchema
+
 SAFER_USE_TEMPFILE = not ub.WIN32
 
 DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
@@ -68,6 +71,12 @@ class EvaluationConfig(scfg.DataConfig):
         help='Joblib backend used when --jobs is not 1.',
     )
 
+    # TODO: check w/ David if he likes this
+    validate_only = scfg.Value(
+        False,
+        isflag=True,
+        help='Validate the card schema and exit without running the evaluation.',
+    )
 
 # Claim Resolution (pulled out as standalone function for
 # multiprocessing support)
@@ -142,7 +151,8 @@ class EvaluationCard:
     def __init__(self, path, output_path):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
-
+        EvaluationCardSchema.model_validate(cfg) # TODO: this seems like the most idiomatic approach
+        
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
 
@@ -910,6 +920,19 @@ def main(argv=None, **kwargs):
         verbose='auto',
         special_options=False,
     )
+
+    if args.validate_only:
+        try:
+            with open(args.path, 'r') as f:
+                cfg = yaml.safe_load(f)
+            EvaluationCardSchema.model_validate(cfg)
+            print('Card validation succeeded.')
+        except ValidationError as e:
+            print('Card validation failed.')
+            print(e)
+            sys.exit(1)
+        return
+
 
     card = EvaluationCard(args.path, args.output_path)
     if args.override is not None:
