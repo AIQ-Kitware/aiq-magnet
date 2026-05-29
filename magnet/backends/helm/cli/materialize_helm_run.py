@@ -769,14 +769,99 @@ def canonicalize_kv(kv: dict[str, object], benchmark: str | None = None) -> dict
     return kv
 
 
-def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
+# Requested keys in this table are treated as identity-bearing parameters
+# that HELM may omit from ``run_spec.name``.  Directory-name matching remains
+# the first filter; these paths are consulted only after all name-visible tokens
+# match and only when the key is absent from the candidate directory name.
+#
+# Keep this list explicit.  A generic "missing key -> search all of
+# run_spec.json" fallback is tempting, but it is both slower for public-cache
+# scans and easier to make accidentally permissive.
+_RUN_SPEC_ONLY_IDENTITY_KEY_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
+    'temperature': (('adapter_spec', 'temperature'),),
+}
+
+
+def _coerce_comparison_number(value: object) -> float | None:
+    """Return a float for numeric-looking scalar values, otherwise ``None``."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _values_match(expected: object, actual: object) -> bool:
+    """Compare run-entry values against JSON values with light type coercion."""
+    expected_num = _coerce_comparison_number(expected)
+    actual_num = _coerce_comparison_number(actual)
+    if expected_num is not None and actual_num is not None:
+        return expected_num == actual_num
+    return str(expected) == str(actual)
+
+
+def _get_nested_value(data: object, path: tuple[str, ...]) -> object:
+    """Get a nested JSON-like value, raising ``KeyError`` if absent."""
+    value = data
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            raise KeyError(key)
+        value = value[key]
+    return value
+
+
+def _run_spec_only_identity_matches(
+    run_dir: Path,
+    raw_key: str,
+    raw_value: object,
+    canonical_key: str,
+    canonical_value: object,
+) -> bool:
+    """Verify one explicitly supported run-spec-only identity key."""
+    paths = (
+        _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS.get(raw_key)
+        or _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS.get(canonical_key)
+    )
+    if not paths:
+        return False
+
+    run_spec_fpath = run_dir / 'run_spec.json'
+    if not run_spec_fpath.exists():
+        return False
+
+    try:
+        run_spec = kwutil.Json.load(run_spec_fpath, backend='orjson')
+    except Exception:
+        return False
+
+    for path in paths:
+        try:
+            actual = _get_nested_value(run_spec, path)
+        except KeyError:
+            continue
+        if _values_match(canonical_value, actual) or _values_match(raw_value, actual):
+            return True
+    return False
+
+
+def run_dir_matches_requested(
+    run_dir_name: str,
+    requested_desc: str,
+    run_dir: Path | None = None,
+) -> bool:
     """
-    Robust matching: parse + normalize into dicts, then require requested kv ⊆ candidate kv.
+    Robust matching: use directory names first, then explicit run-spec checks.
 
     Matching policy:
     - benchmark prefix must match (before ':')
-    - all required tokens from the requested description must be present in the
-      candidate run directory name (token-subset match)
+    - all name-visible requested tokens must match the candidate directory name
+    - a small explicit set of identity-bearing tokens that HELM may omit from
+      ``run_spec.name`` is verified against ``run_spec.json``
     - candidate may contain extra tokens (HELM defaults / normalization)
 
     Example:
@@ -794,19 +879,50 @@ def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
         >>> run_dir_matches_requested("ifeval:model=openai_gpt2", requested)
         False
     """
-    req_bench, req_kv = parse_run_name_to_kv(requested_desc)
+    req_bench, raw_req_kv = parse_run_name_to_kv(requested_desc)
     cand_bench, cand_kv = parse_run_name_to_kv(run_dir_name)
     if req_bench != cand_bench:
         return False
 
-    req_kv = canonicalize_kv(req_kv, benchmark=req_bench)
     cand_kv = canonicalize_kv(cand_kv, benchmark=cand_bench)
+    pending_run_spec_checks = []
 
-    for k, v in req_kv.items():
-        if k not in cand_kv:
+    # First pass: cheap directory-name filtering.  This prevents public-cache
+    # scans from opening run_spec.json for candidates that already fail on
+    # benchmark, model, subject/subset, method, etc.
+    for raw_key, raw_value in raw_req_kv.items():
+        canonical_items = canonicalize_kv(
+            {raw_key: raw_value}, benchmark=req_bench
+        )
+        assert len(canonical_items) == 1
+        canonical_key, canonical_value = next(iter(canonical_items.items()))
+
+        if canonical_key in cand_kv:
+            if not _values_match(canonical_value, cand_kv[canonical_key]):
+                return False
+        elif (
+            raw_key in _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS
+            or canonical_key in _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS
+        ):
+            pending_run_spec_checks.append(
+                (raw_key, raw_value, canonical_key, canonical_value)
+            )
+        else:
             return False
-        if cand_kv[k] != v:
+
+    if pending_run_spec_checks:
+        if run_dir is None:
             return False
+        for raw_key, raw_value, canonical_key, canonical_value in pending_run_spec_checks:
+            if not _run_spec_only_identity_matches(
+                run_dir=run_dir,
+                raw_key=raw_key,
+                raw_value=raw_value,
+                canonical_key=canonical_key,
+                canonical_value=canonical_value,
+            ):
+                return False
+
     return True
 
 
@@ -1102,7 +1218,7 @@ def find_best_precomputed_run(
                 #     run_dir, require_per_instance_stats=require_per_instance_stats
                 # ):
                 #     continue
-                if not run_dir_matches_requested(run.name, requested_desc):
+                if not run_dir_matches_requested(run.name, requested_desc, run_dir=run_dir):
                     continue
                 if max_eval_instances is not None:
                     n = infer_num_instances(run_dir)
@@ -1390,7 +1506,7 @@ def find_run_in_out_dpath(
             run_dir, require_per_instance_stats=require_per_instance_stats
         ):
             continue
-        if not run_dir_matches_requested(run.name, requested_desc):
+        if not run_dir_matches_requested(run.name, requested_desc, run_dir=run_dir):
             continue
         # If the scenario has fewer instances, this check fails, ignore it.
         # if max_eval_instances is not None:
