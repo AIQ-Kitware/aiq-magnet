@@ -890,7 +890,7 @@ class Symbols:
 
     def simple_view(self):
         # TODO: replace with free variables and data attestation
-        ALLOWABLE_TYPES = [int, float, str]
+        ALLOWABLE_TYPES = [int, float, str, dict]
         return {
             k: v
             for k, v in self().items()
