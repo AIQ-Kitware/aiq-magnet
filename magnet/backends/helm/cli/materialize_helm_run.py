@@ -136,6 +136,7 @@ from __future__ import annotations
 
 import os
 import time
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator, Optional
@@ -150,7 +151,104 @@ from loguru import logger
 # We rely on MAGNET's HELM output exploration helpers.
 # These are already present in aiq-magnet and know how to load / validate
 # the standard json files produced by helm-run.
-from magnet.helm_outputs import HelmOutputs
+from magnet.backends.helm.helm_outputs import HelmOutputs
+
+
+def _normalize_optional_pathish(value):
+    """
+    Normalize common "unset" placeholder values emitted by schedulers / CLIs.
+
+    Args:
+        value: raw parsed CLI/config value
+
+    Returns:
+        The original value, or ``None`` for empty / null-like placeholders.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text == '':
+            return None
+        if text.lower() in {'none', 'null'}:
+            return None
+        return text
+    return value
+
+
+def _safe_config_dict(config) -> dict:
+    try:
+        return config.asdict()
+    except Exception:
+        try:
+            return dict(config)
+        except Exception:
+            return {}
+
+
+def _query_nvidia_smi() -> dict | None:
+    """
+    Best-effort GPU query for reproducibility metadata.
+    """
+    try:
+        cmd = [
+            'nvidia-smi',
+            '--query-gpu=index,name,memory.total,driver_version',
+            '--format=csv,noheader,nounits',
+        ]
+        info = ub.cmd(cmd, verbose=0, system=False, check=False)
+        if info.returncode != 0:
+            return None
+        gpus = []
+        for line in info.stdout.strip().splitlines():
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) != 4:
+                continue
+            idx, name, mem_total, driver = parts
+            gpus.append({
+                'index': int(idx),
+                'name': name,
+                'memory_total_mb': int(mem_total),
+                'driver_version': driver,
+            })
+        return {'gpus': gpus}
+    except FileNotFoundError:
+        return None
+    except Exception as ex:
+        return {'error': repr(ex)}
+
+
+def _capture_process_context(out_dpath: Path, config) -> dict:
+    from kwutil.process_context import ProcessContext
+
+    process_context_fpath = out_dpath / 'process_context.json'
+    extra = {
+        'env': {
+            'CUDA_VISIBLE_DEVICES': os.environ.get('CUDA_VISIBLE_DEVICES'),
+            'HOSTNAME': os.environ.get('HOSTNAME'),
+        }
+    }
+    ctx = ProcessContext(
+        name='materialize_helm_run',
+        config=_safe_config_dict(config),
+        extra=extra,
+        output_fpath=process_context_fpath,
+    )
+    ctx.start()
+    ctx.stop()
+    try:
+        ctx.add_disk_info(out_dpath)
+    except Exception:
+        pass
+    gpu_info = _query_nvidia_smi()
+    if gpu_info:
+        ctx.properties.setdefault('extra', {})
+        ctx.properties['extra']['nvidia_smi'] = gpu_info
+    try:
+        process_context_fpath.write_text(kwutil.Json.dumps(ctx.obj, indent=2))
+    except Exception:
+        pass
+    return ctx.obj
 
 
 class MaterializeHelmRunConfig(scfg.DataConfig):
@@ -218,6 +316,43 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['perf_param'],
     )
 
+    local_path = scfg.Value(
+        'prod_env',
+        type=str,
+        help='Passed to helm-run --local-path. Relative paths are resolved inside out_dpath.',
+        tags=['perf_param'],
+    )
+
+    model_deployments_fpath = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional path to a HELM model_deployments.yaml file that will be copied '
+            'into <local_path>/model_deployments.yaml before invoking helm-run.'
+        ),
+        tags=['algo_param'],
+    )
+
+    enable_huggingface_models = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional YAML-encoded list passed through to helm-run '
+            '--enable-huggingface-models. Example: \'[repo-a, repo-b]\''
+        ),
+        tags=['algo_param'],
+    )
+
+    enable_local_huggingface_models = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional YAML-encoded list passed through to helm-run '
+            '--enable-local-huggingface-models. Example: \'[/models/a, /models/b]\''
+        ),
+        tags=['algo_param'],
+    )
+
     # extra_helm_args = scfg.Value(
     #     [],
     #     nargs='*',
@@ -260,9 +395,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         Example:
             >>> # This doctest is illustrative only; it requires helm-run installed.
             >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)
-            >>> from magnet.backends.helm.cli.materialize_helm_run import main
+            >>> from magnet.backends.helm.cli.materialize_helm_run import MaterializeHelmRunConfig
             >>> dpath = ub.Path.appdir('magnet/tests/materialize').delete().ensuredir()
-            >>> main([
+            >>> MaterializeHelmRunConfig.main([
             ...   '--run-entry', 'mmlu:subject=philosophy,model=openai/gpt2',
             ...   '--suite', 'my-suite',
             ...   '--max-eval-instances', '2',
@@ -272,6 +407,16 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         """
         config = MaterializeHelmRunConfig.cli(
             argv=argv, data=kwargs, verbose='auto'
+        )
+        config.precomputed_root = _normalize_optional_pathish(config.precomputed_root)
+        config.model_deployments_fpath = _normalize_optional_pathish(
+            config.model_deployments_fpath
+        )
+        config.enable_huggingface_models = kwutil.Yaml.coerce(
+            config.enable_huggingface_models
+        )
+        config.enable_local_huggingface_models = kwutil.Yaml.coerce(
+            config.enable_local_huggingface_models
         )
 
         if config.run_entry is None:
@@ -320,6 +465,10 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 'require_per_instance_stats': config.require_per_instance_stats,
                 'mode': config.mode,
                 'materialize': config.materialize,
+                'local_path': config.local_path,
+                'model_deployments_fpath': config.model_deployments_fpath,
+                'enable_huggingface_models': list(config.enable_huggingface_models or []),
+                'enable_local_huggingface_models': list(config.enable_local_huggingface_models or []),
             },
             'status': None,
             'reuse': None,
@@ -327,6 +476,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
             'out_dpath': str(out_dpath),
             'timestamp': time.time(),
         }
+        process_context = _capture_process_context(out_dpath, config)
+        manifest['process_context_fpath'] = str(out_dpath / 'process_context.json')
+        manifest['process_context'] = process_context
 
         # 1) Try reuse
         match = None
@@ -389,14 +541,22 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
 
             # Ensure benchmark_output exists (helm-run will create, but pre-creating is fine)
             (out_dpath / 'benchmark_output').mkdir(exist_ok=True)
+            prepared_local_path = prepare_local_helm_config(
+                out_dpath=out_dpath,
+                local_path=config.local_path,
+                model_deployments_fpath=config.model_deployments_fpath,
+            )
 
             logger.info('No reusable run found; running helm-run')
             run_helm(
                 requested_desc=config.run_entry,
                 suite=config.suite,
                 out_dpath=out_dpath,
+                local_path=prepared_local_path,
                 max_eval_instances=config.max_eval_instances,
                 num_threads=config.num_threads,
+                enable_huggingface_models=list(config.enable_huggingface_models or []),
+                enable_local_huggingface_models=list(config.enable_local_huggingface_models or []),
                 extra_args=[],
             )
 
@@ -503,9 +663,10 @@ def canonicalize_requested_tokens(
         {'model': 'openai_gpt2', 'subject': 'philosophy'}
     """
     tokens = dict(tokens)
-    model = tokens.get('model', None)
-    if isinstance(model, str):
-        tokens['model'] = model.replace('/', '_')
+    for key in ('model', 'model_deployment'):
+        value = tokens.get(key, None)
+        if isinstance(value, str):
+            tokens[key] = value.replace('/', '_')
     return tokens
 
 
@@ -560,32 +721,147 @@ def parse_run_name_to_kv(run_name: str) -> tuple[str, dict[str, object]]:
     return bench, kv
 
 
-def canonicalize_kv(kv: dict[str, object]) -> dict[str, object]:
+# HELM display-name kwarg aliases keyed by benchmark family.
+#
+# Some HELM run-spec functions accept one kwarg name but write a *different*
+# token into the run_spec.name display string. The canonical example is
+# ``mmlu_pro``: it accepts ``subject`` as the function kwarg but writes
+# ``subset=...`` into the display name (and therefore into the run dir name).
+# Without a translation, ``run_dir_matches_requested`` fails because the
+# requested ``subject=all`` token is not present in the candidate dir
+# (``subset=all`` is).
+#
+# Each entry maps ``benchmark -> {request_kwarg: display_token}``. We apply
+# these renames in ``canonicalize_kv`` so both the request and the candidate
+# converge on the same token before comparison.
+_BENCHMARK_KWARG_ALIASES: dict[str, dict[str, str]] = {
+    'mmlu_pro': {'subject': 'subset'},
+}
+
+
+def canonicalize_kv(kv: dict[str, object], benchmark: str | None = None) -> dict[str, object]:
     """
     Canonicalize key/value pairs in a conservative way.
 
     Current behavior:
         - Normalize model strings by replacing '/' with '_'
+        - Apply per-benchmark request-kwarg → display-token aliases when
+          ``benchmark`` is provided (e.g. ``mmlu_pro``'s ``subject`` →
+          ``subset``).
 
     Example:
         >>> canonicalize_kv({'model': 'meta/llama-3-8b-chat'})
         {'model': 'meta_llama-3-8b-chat'}
+        >>> canonicalize_kv({'model_deployment': 'kubeai/qwen-small'})
+        {'model_deployment': 'kubeai_qwen-small'}
+        >>> canonicalize_kv({'subject': 'all'}, benchmark='mmlu_pro')
+        {'subset': 'all'}
     """
     kv = dict(kv)
-    model = kv.get('model', None)
-    if isinstance(model, str):
-        kv['model'] = model.replace('/', '_')
+    for key in ('model', 'model_deployment'):
+        value = kv.get(key, None)
+        if isinstance(value, str):
+            kv[key] = value.replace('/', '_')
+    aliases = _BENCHMARK_KWARG_ALIASES.get(benchmark or '', {})
+    for src, dst in aliases.items():
+        if src in kv and dst not in kv:
+            kv[dst] = kv.pop(src)
     return kv
 
 
-def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
+# Requested keys in this table are treated as identity-bearing parameters
+# that HELM may omit from ``run_spec.name``.  Directory-name matching remains
+# the first filter; these paths are consulted only after all name-visible tokens
+# match and only when the key is absent from the candidate directory name.
+#
+# Keep this list explicit.  A generic "missing key -> search all of
+# run_spec.json" fallback is tempting, but it is both slower for public-cache
+# scans and easier to make accidentally permissive.
+_RUN_SPEC_ONLY_IDENTITY_KEY_PATHS: dict[str, tuple[tuple[str, ...], ...]] = {
+    'temperature': (('adapter_spec', 'temperature'),),
+}
+
+
+def _coerce_comparison_number(value: object) -> float | None:
+    """Return a float for numeric-looking scalar values, otherwise ``None``."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def _values_match(expected: object, actual: object) -> bool:
+    """Compare run-entry values against JSON values with light type coercion."""
+    expected_num = _coerce_comparison_number(expected)
+    actual_num = _coerce_comparison_number(actual)
+    if expected_num is not None and actual_num is not None:
+        return expected_num == actual_num
+    return str(expected) == str(actual)
+
+
+def _get_nested_value(data: object, path: tuple[str, ...]) -> object:
+    """Get a nested JSON-like value, raising ``KeyError`` if absent."""
+    value = data
+    for key in path:
+        if not isinstance(value, dict) or key not in value:
+            raise KeyError(key)
+        value = value[key]
+    return value
+
+
+def _run_spec_only_identity_matches(
+    run_dir: Path,
+    raw_key: str,
+    raw_value: object,
+    canonical_key: str,
+    canonical_value: object,
+) -> bool:
+    """Verify one explicitly supported run-spec-only identity key."""
+    paths = (
+        _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS.get(raw_key)
+        or _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS.get(canonical_key)
+    )
+    if not paths:
+        return False
+
+    run_spec_fpath = run_dir / 'run_spec.json'
+    if not run_spec_fpath.exists():
+        return False
+
+    try:
+        run_spec = kwutil.Json.load(run_spec_fpath, backend='orjson')
+    except Exception:
+        return False
+
+    for path in paths:
+        try:
+            actual = _get_nested_value(run_spec, path)
+        except KeyError:
+            continue
+        if _values_match(canonical_value, actual) or _values_match(raw_value, actual):
+            return True
+    return False
+
+
+def run_dir_matches_requested(
+    run_dir_name: str,
+    requested_desc: str,
+    run_dir: Path | None = None,
+) -> bool:
     """
-    Robust matching: parse + normalize into dicts, then require requested kv ⊆ candidate kv.
+    Robust matching: use directory names first, then explicit run-spec checks.
 
     Matching policy:
     - benchmark prefix must match (before ':')
-    - all required tokens from the requested description must be present in the
-      candidate run directory name (token-subset match)
+    - all name-visible requested tokens must match the candidate directory name
+    - a small explicit set of identity-bearing tokens that HELM may omit from
+      ``run_spec.name`` is verified against ``run_spec.json``
     - candidate may contain extra tokens (HELM defaults / normalization)
 
     Example:
@@ -603,19 +879,50 @@ def run_dir_matches_requested(run_dir_name: str, requested_desc: str) -> bool:
         >>> run_dir_matches_requested("ifeval:model=openai_gpt2", requested)
         False
     """
-    req_bench, req_kv = parse_run_name_to_kv(requested_desc)
+    req_bench, raw_req_kv = parse_run_name_to_kv(requested_desc)
     cand_bench, cand_kv = parse_run_name_to_kv(run_dir_name)
     if req_bench != cand_bench:
         return False
 
-    req_kv = canonicalize_kv(req_kv)
-    cand_kv = canonicalize_kv(cand_kv)
+    cand_kv = canonicalize_kv(cand_kv, benchmark=cand_bench)
+    pending_run_spec_checks = []
 
-    for k, v in req_kv.items():
-        if k not in cand_kv:
+    # First pass: cheap directory-name filtering.  This prevents public-cache
+    # scans from opening run_spec.json for candidates that already fail on
+    # benchmark, model, subject/subset, method, etc.
+    for raw_key, raw_value in raw_req_kv.items():
+        canonical_items = canonicalize_kv(
+            {raw_key: raw_value}, benchmark=req_bench
+        )
+        assert len(canonical_items) == 1
+        canonical_key, canonical_value = next(iter(canonical_items.items()))
+
+        if canonical_key in cand_kv:
+            if not _values_match(canonical_value, cand_kv[canonical_key]):
+                return False
+        elif (
+            raw_key in _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS
+            or canonical_key in _RUN_SPEC_ONLY_IDENTITY_KEY_PATHS
+        ):
+            pending_run_spec_checks.append(
+                (raw_key, raw_value, canonical_key, canonical_value)
+            )
+        else:
             return False
-        if cand_kv[k] != v:
+
+    if pending_run_spec_checks:
+        if run_dir is None:
             return False
+        for raw_key, raw_value, canonical_key, canonical_value in pending_run_spec_checks:
+            if not _run_spec_only_identity_matches(
+                run_dir=run_dir,
+                raw_key=raw_key,
+                raw_value=raw_value,
+                canonical_key=canonical_key,
+                canonical_value=canonical_value,
+            ):
+                return False
+
     return True
 
 
@@ -911,7 +1218,7 @@ def find_best_precomputed_run(
                 #     run_dir, require_per_instance_stats=require_per_instance_stats
                 # ):
                 #     continue
-                if not run_dir_matches_requested(run.name, requested_desc):
+                if not run_dir_matches_requested(run.name, requested_desc, run_dir=run_dir):
                     continue
                 if max_eval_instances is not None:
                     n = infer_num_instances(run_dir)
@@ -993,12 +1300,113 @@ def ensure_copytree(src: Path, dst: Path) -> None:
     ub.copytree(src, dst)
 
 
+def resolve_local_path(out_dpath: Path, local_path: str | os.PathLike[str]) -> Path:
+    """
+    Resolve HELM's local config path.
+
+    HELM defaults to ``prod_env`` relative to its current working directory, so
+    we mirror that here by resolving relative paths inside ``out_dpath``.
+    """
+    path = Path(local_path)
+    if path.is_absolute():
+        return path
+    return out_dpath / path
+
+
+def prepare_local_helm_config(
+    out_dpath: Path,
+    local_path: str | os.PathLike[str],
+    model_deployments_fpath: str | os.PathLike[str] | None = None,
+) -> Path:
+    """
+    Prepare the local HELM config directory used by ``helm-run``.
+
+    Currently this only materializes an optional ``model_deployments.yaml``
+    override file, but keeping it centralized makes future config additions
+    straightforward.
+    """
+    local_path_abs = resolve_local_path(out_dpath, local_path)
+    local_path_abs.mkdir(parents=True, exist_ok=True)
+
+    if model_deployments_fpath:
+        src = Path(model_deployments_fpath).expanduser().resolve()
+        if not src.exists():
+            raise FileNotFoundError(
+                f'model_deployments_fpath does not exist: {src}'
+            )
+        dst = local_path_abs / 'model_deployments.yaml'
+        shutil.copy2(src, dst)
+        logger.info('Copied model deployments override: {} -> {}', src, dst)
+
+    return local_path_abs
+
+
+def write_helm_log_config(out_dpath: Path) -> Path:
+    """
+    Write a HELM logging config file into ``out_dpath``.
+
+    This keeps the ``helm-run`` console logs and file logs colocated with the
+    kwdagger node outputs so they survive rsync / artifact transfer.
+    """
+    log_fpath = out_dpath / 'helm-run.log'
+    debug_log_fpath = out_dpath / 'helm-run.debug.log'
+    config = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'console': {
+                'datefmt': '%Y-%m-%dT%H:%M:%S',
+                'format': '%(asctime)s %(levelname)-8s %(message)s',
+            },
+            'detailed': {
+                'datefmt': '%Y-%m-%dT%H:%M:%S',
+                'format': '%(asctime)s %(levelname)-8s %(name)s %(message)s',
+            },
+        },
+        'handlers': {
+            'stdout': {
+                'class': 'logging.StreamHandler',
+                'stream': 'ext://sys.stdout',
+                'formatter': 'console',
+                'level': 'INFO',
+            },
+            'file_info': {
+                'class': 'logging.FileHandler',
+                'filename': os.fspath(log_fpath),
+                'formatter': 'detailed',
+                'level': 'INFO',
+                'mode': 'w',
+            },
+            'file_debug': {
+                'class': 'logging.FileHandler',
+                'filename': os.fspath(debug_log_fpath),
+                'formatter': 'detailed',
+                'level': 'DEBUG',
+                'mode': 'w',
+            },
+        },
+        'loggers': {
+            'helm': {
+                'handlers': ['stdout', 'file_info', 'file_debug'],
+                'level': 'DEBUG',
+                'propagate': False,
+            }
+        },
+    }
+    config_fpath = out_dpath / 'helm_log_config.yaml'
+    config_fpath.write_text(kwutil.Yaml.dumps(config))
+    return config_fpath
+
+
 def run_helm(
     requested_desc: str,
     suite: str,
     out_dpath: Path,
+    local_path: Path,
     max_eval_instances: Optional[int],
     num_threads: int,
+    enable_huggingface_models: Optional[list[str]] = None,
+    enable_local_huggingface_models: Optional[list[str]] = None,
     extra_args: Optional[list[str]] = None,
 ) -> None:
     """
@@ -1006,14 +1414,60 @@ def run_helm(
 
     We do not run helm-summarize by design.
     """
-    cmd = ['helm-run', '--run-entries', requested_desc, '--suite', suite]
+    cmd = [
+        'helm-run',
+        '--run-entries',
+        requested_desc,
+        '--suite',
+        suite,
+        '--local-path',
+        os.fspath(local_path),
+        '--log-config',
+        os.fspath(write_helm_log_config(out_dpath)),
+    ]
     if max_eval_instances is not None:
         cmd += ['--max-eval-instances', str(max_eval_instances)]
     if num_threads is not None:
         cmd += ['--num-threads', str(num_threads)]
+    if enable_huggingface_models:
+        cmd += ['--enable-huggingface-models', *map(str, enable_huggingface_models)]
+    if enable_local_huggingface_models:
+        cmd += ['--enable-local-huggingface-models', *map(str, enable_local_huggingface_models)]
     cmd += list(extra_args or [])
     logger.info('Executing: {}', ' '.join(map(str, cmd)))
-    ub.cmd(cmd, cwd=out_dpath, verbose=3, system=True).check_returncode()
+    # Capture stdout/stderr (in addition to streaming live to the terminal)
+    # so that post-mortem failure classification can see exceptions raised
+    # *before* helm-run's own logger initialized — e.g. TypeErrors from
+    # ``run_spec_function(**args)`` when a run_entry contains kwargs the
+    # function doesn't accept. Those errors only surface in the parent
+    # shell's stderr today, not in helm-run.log, and would otherwise be
+    # lost when the run dir is rsync'd elsewhere for analysis.
+    result = ub.cmd(cmd, cwd=out_dpath, verbose=3, system=False, capture=True, check=False)
+    _persist_cmd_streams(out_dpath, result)
+    result.check_returncode()
+
+
+_CMD_STREAM_TAIL_BYTES = 64 * 1024
+
+
+def _persist_cmd_streams(out_dpath: Path, result) -> None:
+    """Write tail snippets of the wrapped command's stdout/stderr to ``out_dpath``.
+
+    Always writes a tail (capped at ``_CMD_STREAM_TAIL_BYTES`` per stream) so
+    forensic tooling can classify failures that occur outside helm-run's
+    own logger. Best-effort: never let a write failure mask the underlying
+    helm-run exit code.
+    """
+    streams = (
+        ('cmd_stdout.txt', getattr(result, 'stdout', None) or ''),
+        ('cmd_stderr.txt', getattr(result, 'stderr', None) or ''),
+    )
+    for name, text in streams:
+        try:
+            tail = text[-_CMD_STREAM_TAIL_BYTES:] if len(text) > _CMD_STREAM_TAIL_BYTES else text
+            (out_dpath / name).write_text(tail)
+        except Exception:
+            pass
 
 
 def find_run_in_out_dpath(
@@ -1052,7 +1506,7 @@ def find_run_in_out_dpath(
             run_dir, require_per_instance_stats=require_per_instance_stats
         ):
             continue
-        if not run_dir_matches_requested(run.name, requested_desc):
+        if not run_dir_matches_requested(run.name, requested_desc, run_dir=run_dir):
             continue
         # If the scenario has fewer instances, this check fails, ignore it.
         # if max_eval_instances is not None:

@@ -1,4 +1,4 @@
-from magnet.helm_outputs import HelmRun
+from magnet.backends.helm.helm_outputs import HelmRun
 import ubelt as ub
 import timerit
 from typing import Iterator
