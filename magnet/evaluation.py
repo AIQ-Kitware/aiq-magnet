@@ -17,6 +17,8 @@ from loguru import logger
 from rich import print
 import safer
 
+from magnet.utils.util_logger import setup_logging
+
 SAFER_USE_TEMPFILE = not ub.WIN32
 
 DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
@@ -67,6 +69,10 @@ class EvaluationConfig(scfg.DataConfig):
         type=str,
         choices=['loky', 'threading', 'multiprocessing'],
         help='Joblib backend used when --jobs is not 1.',
+    )
+
+    verbose = scfg.Value(
+        False, isflag=True, help='Verbose log output', group='logging'
     )
 
 
@@ -210,7 +216,12 @@ class EvaluationCard:
                 else:
                     self.symbols[key]['sweep'] = [value]
 
-    def evaluate(self, jobs: int = 1, parallel_backend: str = 'loky') -> str:
+    def evaluate(
+        self,
+        jobs: int = 1,
+        parallel_backend: str = 'loky',
+        verbose: bool = False,
+    ) -> str:
         """
         Run the evaluation specification
 
@@ -233,6 +244,8 @@ class EvaluationCard:
 
         card_output_path = self.output_path / self._run_hash
         card_output_path.ensuredir()
+
+        setup_logging(verbose, card_output_path)
 
         with safer.open(
             card_output_path / 'card.yaml', 'w', temp_file=SAFER_USE_TEMPFILE
@@ -287,7 +300,7 @@ class EvaluationCard:
         results = []
         for status, results_fpath in out:
             results.append(status)
-            print(f'Wrote claim output to {results_fpath}')
+            logger.info(f'Wrote claim output to {results_fpath}')
 
         total = len(results)
 
@@ -298,13 +311,13 @@ class EvaluationCard:
         falsified_count = results.count('FALSIFIED')
         inconclusive_count = results.count('INCONCLUSIVE')
 
-        print('================================')
-        print(f'Settings Evaluated: {total}')
-        print(f'  Verified:     {percentage(verified_count):.2f}')
-        print(f'  Falsified:    {percentage(falsified_count):.2f}')
-        print(f'  Inconclusive: {percentage(inconclusive_count):.2f}')
-        print('================================')
-        print('\n')
+        logger.info('================================')
+        logger.info(f'Settings Evaluated: {total}')
+        logger.info(f'  Verified:     {percentage(verified_count):.2f}')
+        logger.info(f'  Falsified:    {percentage(falsified_count):.2f}')
+        logger.info(f'  Inconclusive: {percentage(inconclusive_count):.2f}')
+        logger.info('================================')
+        logger.info('\n')
 
         card_result = _reduce_results(results, self.claim_aggregation_strategy)
         aggregate_verdict = {
@@ -334,11 +347,11 @@ class EvaluationCard:
         """
         Human-readable summary of card in its current state
         """
-        print(f'[bold]Title:[/bold]       {self.title}')
-        print(f'[bold]Description:[/bold] {self.description}')
-        print('================================')
-        # print(f"SYMBOLS:     {self.symbols()}")
-        print(f'[bold]CLAIM:[/bold]       \n{self.claim}')
+        logger.info(f'[bold]Title:[/bold]       {self.title}')
+        logger.info(f'[bold]Description:[/bold] {self.description}')
+        logger.info('================================')
+        # logger.info(f"SYMBOLS:     {self.symbols()}")
+        logger.info(f'[bold]CLAIM:[/bold]       \n{self.claim}')
 
         status = self.status()
         if self.claim.status == 'VERIFIED':
@@ -349,14 +362,14 @@ class EvaluationCard:
             claim_status_color = 'yellow'
 
         if status == 'EVALUATED':
-            print('================================')
-            print(
+            logger.info('================================')
+            logger.info(
                 f'[bold]RESULT:[/bold]      [bold][{claim_status_color}]{self.claim.status}[/{claim_status_color}][/bold]'
                 ''
             )
 
-        print('================================')
-        print(f'[bold]CARD STATUS:[/bold] {status}')
+        logger.info('================================')
+        logger.info(f'[bold]CARD STATUS:[/bold] {status}')
 
     @property
     def _run_hash(self) -> str:
@@ -676,10 +689,9 @@ def _reduce_results(results: List[str], reduce_spec: Dict[str, Any]) -> str:
             raise ValueError('reduce type=fraction requires `threshold`')
         frac = verified_count / total
         final_result = 'VERIFIED' if frac >= threshold else 'FALSIFIED'
-        print(
+        logger.info(
             f'[reduce=fraction] {final_result} {verified_count}/{total} ({frac:.3f}) vs threshold {threshold}'
         )
-        print()
         return final_result
 
     raise ValueError(f'Unknown reduce type: {rtype!r}')
@@ -724,24 +736,25 @@ class Claim:
         """
         out_msg = ''
         try:
-            out_msg = ''
             exec(self.claim, symbols)
             self.status = 'VERIFIED'
             out_msg = 'Assertion holds'
+            logger.info(out_msg)
         except AssertionError as e:
             self.status = 'FALSIFIED'
             out_msg = f'Assertion does not hold: {e}'
+            logger.warning(out_msg)
         except NameError as e:
             self.status = 'INCONCLUSIVE'
             # This doesn't guarantee the missing variable is a symbol
             out_msg = f'SymbolNotResolved: {e}'
+            logger.error(out_msg)
         except Exception as e:
             self.status = 'INCONCLUSIVE'
             out_msg = f'ERROR evaluating claim: {e}'
-        finally:
-            if out_msg:
-                print(out_msg)
-            return self.status, out_msg
+            logger.exception('Unexpected exception while evaluating claim')
+
+        return self.status, out_msg
 
     def __repr__(self) -> str:
         return self.claim
@@ -773,7 +786,7 @@ class Symbol:
         FIXME: type verification is currently limited and hacky
         """
         if self.value is None:
-            print(f'Resolving: {self.name}')
+            logger.debug(f'Resolving: {self.name}')
             exec(self.definition, context)
             if self._check_type(self.type, context[self.name]):
                 self.value = context[self.name]
@@ -946,7 +959,11 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
     if args.override is not None:
         card.replace(args.override)
 
-    card.evaluate(jobs=args.jobs, parallel_backend=args.parallel_backend)
+    card.evaluate(
+        jobs=args.jobs,
+        parallel_backend=args.parallel_backend,
+        verbose=bool(args.verbose),
+    )
     card.summarize()
 
 

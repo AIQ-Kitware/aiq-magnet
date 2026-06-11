@@ -59,6 +59,8 @@ from functools import cached_property
 from typing import List
 from loguru import logger
 
+from magnet.utils.util_logger import setup_logging
+
 
 class DownloadHelmConfig(scfg.DataConfig):
     """
@@ -214,52 +216,6 @@ class ExitError(RuntimeError):
     @property
     def code(self) -> int:
         return self.args[1]
-
-
-def setup_logging(verbose: bool = False) -> None:
-    """Configure loguru logging.
-
-    - Default level is INFO, or DEBUG when --verbose is set.
-    - You may override via MAGNET_LOG_LEVEL (e.g. DEBUG, INFO, WARNING).
-    """
-    import os
-
-    level = os.environ.get('MAGNET_LOG_LEVEL')
-    if not level:
-        level = 'DEBUG' if verbose else 'INFO'
-    logger.remove()
-    # logger.add(sys.stderr, level=level, backtrace=False, diagnose=False)
-    # 3. Attempt to use richuru, otherwise fallback to standard loguru
-    try:
-        from rich.logging import RichHandler
-
-        # Add RichHandler as the sink
-        # We use format="{message}" because RichHandler handles its own formatting
-        from rich.console import Console
-
-        # Create a console specifically for stderr
-        error_console = Console(stderr=True)
-        logger.add(
-            RichHandler(
-                console=error_console,  # Force Rich to use stderr
-                markup=True,
-                rich_tracebacks=True,
-            ),
-            level=level,
-            format='{message}',
-            backtrace=False,
-            diagnose=False,
-        )
-    except ImportError:
-        # Fallback to standard loguru output if rich is not available
-        logger.add(
-            sys.stderr,
-            level=level,
-            colorize=True,
-            backtrace=False,
-            diagnose=False,
-        )
-
 
 # ===============================
 # Backend abstractions
