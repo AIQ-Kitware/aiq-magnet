@@ -68,7 +68,7 @@ class EvaluationCardSchema(BaseModel):
 
     # --- Recommended metadata ---
     category: Optional[str] = None
-    version: Optional[str] = None
+    version: Optional[str] = Field(coerce_numbers_to_str=True)
     organizations: Optional[list[str]] = None
     submitter: Optional[SubmitterSchema] = None
     tags: Optional[list[str]] = None
@@ -87,5 +87,9 @@ class EvaluationCardSchema(BaseModel):
         if self.kwdagger is not None and self.pipeline is not None:
             raise ValueError(
                 "at most one of 'kwdagger' and 'pipeline' may be specified"
+            )
+        elif self.kwdagger is None and self.pipeline is None:
+            raise ValueError(
+                ""
             )
         return self
