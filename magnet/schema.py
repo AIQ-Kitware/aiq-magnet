@@ -30,9 +30,9 @@ class SymbolSchema(BaseModel):
             )
         return self
 
+# TODO: If type == fraction, check that parameters[threshold] is defined and a float
 class ClaimAggregationStrategySchema(BaseModel): 
     type: str
-    # TODO: check if this is the idiomatic way to let a field contain whatever
     model_config = {'extra': 'allow'} # without this, seems like the extra fields disappear
 
 class EvaluationCardSchema(BaseModel):
@@ -88,8 +88,8 @@ class EvaluationCardSchema(BaseModel):
             raise ValueError(
                 "at most one of 'kwdagger' and 'pipeline' may be specified"
             )
-        elif self.kwdagger is None and self.pipeline is None:
+        if self.kwdagger is None and self.pipeline is None and self.symbols is None:
             raise ValueError(
-                ""
+                "if 'pipeline'/'kwdagger' undefined, 'symbols' must be defined"
             )
         return self
