@@ -49,6 +49,7 @@ class EvaluationCardSchema(BaseModel):
         >>> raw = yaml.safe_load('''
         ...   title: "Arithmetic"
         ...   description: "Addition is commutative"
+        ...   version: 1.0
         ...   claim:
         ...     python: "assert 1 + 2 == 2 + 1"
         ...   symbols:
@@ -65,10 +66,10 @@ class EvaluationCardSchema(BaseModel):
     title: str
     description: str
     claim: ClaimSchema
+    version: str = Field(coerce_numbers_to_str=True)
 
     # --- Recommended metadata ---
     category: Optional[str] = None
-    version: Optional[str] = Field(coerce_numbers_to_str=True)
     organizations: Optional[list[str]] = None
     submitter: Optional[SubmitterSchema] = None
     tags: Optional[list[str]] = None
