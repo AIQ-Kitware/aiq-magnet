@@ -71,7 +71,6 @@ class EvaluationConfig(scfg.DataConfig):
         help='Joblib backend used when --jobs is not 1.',
     )
 
-    # TODO: check w/ David if he likes this
     validate_only = scfg.Value(
         False,
         isflag=True,
@@ -151,7 +150,7 @@ class EvaluationCard:
     def __init__(self, path, output_path):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
-        EvaluationCardSchema.model_validate(cfg) # TODO: this seems like the most idiomatic approach
+        EvaluationCardSchema.model_validate(cfg)
         
         self.original_card = cfg
         self.output_path = ub.Path(output_path)

@@ -19,7 +19,7 @@ class SymbolSchema(BaseModel):
     type: Optional[str] = None # TODO: should type be required?
     value: Optional[Any] = None
     sweep: Optional[list] = None
-    depends_on: list[str] = Field(default_factory=list) # TODO: should I check that "depends_on" references an actual symbol?
+    depends_on: list[str] = Field(default_factory=list) # TODO: modify "depends_on" to reference an actual symbol
     python: Optional[str] = None
 
     @model_validator(mode='after')
@@ -30,7 +30,6 @@ class SymbolSchema(BaseModel):
             )
         return self
 
-# TODO: check with David what this should look like
 class ClaimAggregationStrategySchema(BaseModel): 
     type: str
     # TODO: check if this is the idiomatic way to let a field contain whatever
@@ -69,7 +68,7 @@ class EvaluationCardSchema(BaseModel):
 
     # --- Recommended metadata ---
     category: Optional[str] = None
-    version: Optional[float] = None #TODO: is version expected to be a string or a float?
+    version: Optional[str] = None
     organizations: Optional[list[str]] = None
     submitter: Optional[SubmitterSchema] = None
     tags: Optional[list[str]] = None
