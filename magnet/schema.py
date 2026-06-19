@@ -50,6 +50,18 @@ class EvaluationCardSchema(BaseModel):
         ...   title: "Arithmetic"
         ...   description: "Addition is commutative"
         ...   version: 1.0
+        ...   organizations:
+        ...     - Kitware
+        ...   submitter:
+        ...     name: Kitware TA2 Team
+        ...     email: aiq-ta2@kitware.com
+        ...   tags:
+        ...     - example
+        ...   links:
+        ...     - title: "MAGNET"
+        ...       url: "https://github.com/AIQ-Kitware/aiq-magnet"
+        ...       type: "software"
+
         ...   claim:
         ...     python: "assert 1 + 2 == 2 + 1"
         ...   symbols:
@@ -67,13 +79,13 @@ class EvaluationCardSchema(BaseModel):
     description: str
     claim: ClaimSchema
     version: str = Field(coerce_numbers_to_str=True)
+    organizations: list[str]
+    submitter: SubmitterSchema
+    tags: list[str]
+    links: list[LinkSchema]
 
-    # --- Recommended metadata ---
+    # --- Recommended ---
     category: Optional[str] = None
-    organizations: Optional[list[str]] = None
-    submitter: Optional[SubmitterSchema] = None
-    tags: Optional[list[str]] = None
-    links: Optional[list[LinkSchema]] = None
 
     # --- Evaluation configuration ---
     claim_aggregation_strategy: Optional[ClaimAggregationStrategySchema] = None
