@@ -28,6 +28,7 @@ from helm.common.object_spec import ObjectSpec  # noqa: E402
 
 from magnet.backends.helm.cli.materialize_helm_run_from_spec import (  # noqa: E402
     MaterializeHelmRunFromSpecConfig,
+    apply_adapter_substitutions,
     collect_class_names,
     preflight_resolve_classes,
 )
@@ -126,6 +127,86 @@ def test_preflight_detects_missing_nested_judge_class():
     with pytest.raises(SystemExit) as excinfo:
         preflight_resolve_classes(spec)
     assert "helm.nope.Judge" in str(excinfo.value)
+
+
+# --------------------------------------------------------------------------
+# Deployment rewrite (deployment-rewrite plan, Change 1)
+# --------------------------------------------------------------------------
+
+
+def _phi2_run_spec():
+    """A minimal real RunSpec carrying the official ``together/phi-2`` deployment.
+
+    Real helm dataclasses (not a stub) so ``dataclasses.replace`` exercises the
+    same field semantics the CLI hits at runtime.
+    """
+    from helm.benchmark.run_spec import RunSpec
+    from helm.benchmark.adaptation.adapter_spec import AdapterSpec
+
+    adapter_spec = AdapterSpec(
+        method="multiple_choice_joint",
+        model="microsoft/phi-2",
+        model_deployment="together/phi-2",
+    )
+    return RunSpec(
+        name="mmlu:subject=philosophy,model=microsoft_phi-2",
+        scenario_spec=ObjectSpec(class_name="helm.x.Scenario", args={}),
+        adapter_spec=adapter_spec,
+        metric_specs=[],
+        groups=[],
+    )
+
+
+def test_apply_substitutions_rewrites_deployment_keeps_model_and_name():
+    run_spec = _phi2_run_spec()
+    new_spec, replay = apply_adapter_substitutions(
+        run_spec, max_eval_instances=5, model_deployment="vllm/phi-2-local"
+    )
+    # The execution endpoint is rewritten to the LOCAL name...
+    assert new_spec.adapter_spec.model_deployment == "vllm/phi-2-local"
+    # ...but the model identity and the run name are untouched (same_model=yes,
+    # pairing/logical_run_key inert).
+    assert new_spec.adapter_spec.model == "microsoft/phi-2"
+    assert new_spec.name == run_spec.name
+    assert new_spec.adapter_spec.max_eval_instances == 5
+    # Provenance records the from->to so the substitution is auditable.
+    assert replay["deployment_substitution"] == {
+        "from": "together/phi-2",
+        "to": "vllm/phi-2-local",
+    }
+    assert replay["applied_max_eval_instances"] == 5
+
+
+def test_apply_substitutions_unset_is_pure_by_name():
+    # Default (no rewrite target): the spec is returned byte-unchanged (pure
+    # by-name replay) and the provenance record is null.
+    run_spec = _phi2_run_spec()
+    new_spec, replay = apply_adapter_substitutions(run_spec)
+    assert new_spec is run_spec
+    assert new_spec.adapter_spec.model_deployment == "together/phi-2"
+    assert replay["deployment_substitution"] is None
+    assert replay["applied_max_eval_instances"] is None
+
+
+def test_apply_substitutions_deployment_only_leaves_mei_untouched():
+    # Rewriting only the deployment must not touch max_eval_instances (the two
+    # rewrites are independent).
+    run_spec = _phi2_run_spec()
+    new_spec, replay = apply_adapter_substitutions(
+        run_spec, model_deployment="huggingface/phi-2-local"
+    )
+    assert new_spec.adapter_spec.model_deployment == "huggingface/phi-2-local"
+    assert new_spec.adapter_spec.max_eval_instances == run_spec.adapter_spec.max_eval_instances
+    assert replay["applied_max_eval_instances"] is None
+    assert replay["deployment_substitution"]["to"] == "huggingface/phi-2-local"
+
+
+def test_config_accepts_model_deployment_flag():
+    # The flag must parse so the docker node can render --model_deployment=<v>.
+    cfg = MaterializeHelmRunFromSpecConfig.cli(
+        argv=["--model_deployment", "vllm/phi-2-local"], strict=False
+    )
+    assert cfg["model_deployment"] == "vllm/phi-2-local"
 
 
 # --------------------------------------------------------------------------

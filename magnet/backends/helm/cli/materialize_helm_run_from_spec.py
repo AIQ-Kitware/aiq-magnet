@@ -39,16 +39,31 @@ Two input modes (dual-input, plan section 4)
   its ``run_spec.json``. This is what the eval_audit pipeline uses (it is keyed
   on run-entry strings and the manifest carries no per-entry paths).
 
-Substitution is by-name only (plan section 5)
----------------------------------------------
-This CLI never rewrites ``adapter_spec.model`` / ``model_deployment``. The
-``run_spec.json`` keeps its official deployment name; the locally registered
-override (``model_deployments.yaml``, copied in by
-:func:`prepare_local_helm_config`) binds that name to a local
-``HuggingFaceClient``. The only field this CLI mutates is
-``adapter_spec.max_eval_instances`` (when ``--max-eval-instances`` is set), so
-the produced run dir name stays ``run_spec.name`` and downstream indexing /
-``logical_run_key`` / planner pairing are untouched.
+Substitution: by-name, plus an optional deployment rewrite (deployment-rewrite plan)
+------------------------------------------------------------------------------------
+By default this CLI rewrites neither ``adapter_spec.model`` nor
+``model_deployment``: the ``run_spec.json`` keeps its official deployment name and
+the locally registered override (``model_deployments.yaml``, copied in by
+:func:`prepare_local_helm_config`) binds that name to a local client — pure
+by-name substitution.
+
+But pure by-name has a comparability cost: the produced run records the *official*
+deployment name (e.g. ``together/phi-2``), so the audit's comparison reports
+``same_deployment=yes`` even though a local engine (in-process HuggingFace / vLLM)
+actually served the run — masking the single most important difference the audit
+exists to surface (see ``docs/planning/from-spec-deployment-rewrite-plan.md``). So
+when ``--model-deployment <local-name>`` is given, after deserialization we rewrite
+``adapter_spec.model_deployment`` to that local name (the endpoint that actually
+ran). ``adapter_spec.model`` is **never** touched, and HELM run names encode
+``model=…`` not ``model_deployment=…``, so the produced run dir name still stays
+``run_spec.name`` and downstream indexing / ``logical_run_key`` / planner pairing
+are untouched. The other field this CLI mutates is
+``adapter_spec.max_eval_instances`` (when ``--max-eval-instances`` is set).
+
+The rewrite target MUST be a deployment ``name`` registered in the run's
+``model_deployments.yaml`` (the by-name override for hf, the bundle for vLLM) — HELM
+looks the client up by ``model_deployment``, so a wrong name fails loud
+("deployment not found") before any instances run, never silently.
 
 Version drift fails two ways (plan section 1)
 ---------------------------------------------
@@ -99,8 +114,9 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
 
     Accepts the same flags as :class:`MaterializeHelmRunConfig` (so the
     containerized docker node can render them from ``final_config`` unchanged),
-    plus ``run_spec_json`` for the explicit-path input mode. There are no
-    ``--model`` / ``--model-deployment`` flags: substitution is by-name only.
+    plus ``run_spec_json`` for the explicit-path input mode and the optional
+    ``model_deployment`` deployment-rewrite target. There is no ``--model`` flag:
+    the model identity always replays verbatim (substitution is by-name).
     """
 
     run_entry = scfg.Value(
@@ -152,9 +168,27 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         None,
         type=int,
         help=(
-            'When set, the ONLY field substituted into the resolved recipe: '
+            'When set, substituted into the resolved recipe: '
             'adapter_spec.max_eval_instances is replaced verbatim (truncating to '
             "HELM's deterministic instance prefix). When unset, replay exactly."
+        ),
+        tags=['algo_param'],
+    )
+
+    model_deployment = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional deployment-rewrite target. When set, '
+            'adapter_spec.model_deployment is rewritten to this LOCAL deployment '
+            'name (e.g. vllm/phi-2-local) AFTER deserialization, so the produced '
+            'run records the endpoint that actually served it and the audit '
+            'comparison reports same_deployment=no. adapter_spec.model is never '
+            'touched (model identity replays verbatim). The value MUST name a '
+            'deployment registered in the run\'s model_deployments.yaml, or HELM '
+            'fails loud ("deployment not found") before any instances run. When '
+            'unset, the official deployment name replays verbatim (pure by-name). '
+            'Treated as algo identity: a different deployment is a different run.'
         ),
         tags=['algo_param'],
     )
@@ -262,6 +296,10 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         config.model_deployments_fpath = _normalize_optional_pathish(
             config.model_deployments_fpath
         )
+        # Not a path — but reuse the same scheduler "unset" normalization so a
+        # rendered ``--model_deployment=None`` / empty value collapses to None
+        # (pure by-name replay) rather than a literal deployment named "None".
+        config.model_deployment = _normalize_optional_pathish(config.model_deployment)
         config.enable_huggingface_models = kwutil.Yaml.coerce(
             config.enable_huggingface_models
         )
@@ -296,6 +334,7 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
                 'run_spec_json': config.run_spec_json,
                 'suite': config.suite,
                 'max_eval_instances': config.max_eval_instances,
+                'model_deployment': config.model_deployment,
                 'require_per_instance_stats': config.require_per_instance_stats,
                 'local_path': config.local_path,
                 'model_deployments_fpath': config.model_deployments_fpath,
@@ -308,7 +347,11 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
                 'run_spec_path': str(run_spec_path),
                 'source': recipe_source,
             },
-            'substitution': 'by-name only (deployment names registered via model_deployments.yaml)',
+            'substitution': (
+                'by-name (deployment names registered via model_deployments.yaml); '
+                'adapter_spec.model_deployment additionally rewritten to the local '
+                'name when --model-deployment is set (see replay.deployment_substitution)'
+            ),
             'status': None,
             'replay': None,
             'out_dpath': str(out_dpath),
@@ -344,20 +387,26 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         #    failure on version drift).
         preflight_resolve_classes(run_spec)
 
-        # 6) Substitute (minimal): only max_eval_instances.
-        applied_max_eval_instances = None
-        if config.max_eval_instances is not None:
-            adapter_spec = dataclasses.replace(
-                run_spec.adapter_spec,
-                max_eval_instances=int(config.max_eval_instances),
-            )
-            run_spec = dataclasses.replace(run_spec, adapter_spec=adapter_spec)
-            applied_max_eval_instances = int(config.max_eval_instances)
+        # 6) Substitute the opt-in adapter_spec rewrites (see
+        #    apply_adapter_substitutions). ``model`` is never touched.
+        run_spec, replay_record = apply_adapter_substitutions(
+            run_spec,
+            max_eval_instances=config.max_eval_instances,
+            model_deployment=config.model_deployment,
+        )
+        if replay_record['applied_max_eval_instances'] is not None:
             logger.info(
                 'Applied max_eval_instances={} to adapter_spec',
-                applied_max_eval_instances,
+                replay_record['applied_max_eval_instances'],
             )
-        manifest['replay'] = {'applied_max_eval_instances': applied_max_eval_instances}
+        deployment_substitution = replay_record['deployment_substitution']
+        if deployment_substitution is not None:
+            logger.info(
+                'Rewrote adapter_spec.model_deployment {} -> {} (local endpoint)',
+                deployment_substitution['from'],
+                deployment_substitution['to'],
+            )
+        manifest['replay'] = replay_record
 
         # 7) Run, in-process. Wrap so a Python exception is captured to
         #    cmd_stderr.txt for the failure classifier (a hard crash —
@@ -419,6 +468,59 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         done_fpath.write_text('ok\n')
         logger.success('Wrote DONE sentinel: {}', done_fpath)
         return manifest
+
+
+def apply_adapter_substitutions(
+    run_spec,
+    *,
+    max_eval_instances: int | None = None,
+    model_deployment: str | None = None,
+) -> tuple[Any, dict]:
+    """Apply the opt-in ``adapter_spec`` rewrites; return ``(run_spec, replay)``.
+
+    Two opt-in rewrites, both of ``adapter_spec`` only — ``adapter_spec.model``
+    is NEVER touched (the model identity always replays verbatim, keeping
+    ``same_model=yes``):
+
+    * ``max_eval_instances`` — replaced verbatim, truncating the replay to HELM's
+      deterministic instance prefix.
+    * ``model_deployment`` — rewritten to the LOCAL deployment name that actually
+      served the run (e.g. ``vllm/phi-2-local``), so the produced run records the
+      execution endpoint and the audit comparison reports ``same_deployment=no``
+      instead of masking the engine substitution behind the official name.
+
+    HELM run names encode ``model=…``, not ``model_deployment=…``, so neither
+    rewrite changes ``run_spec.name`` — the produced run dir stays name-identical
+    to the official and downstream pairing / ``logical_run_key`` are inert.
+
+    Returns the (possibly new) RunSpec and the manifest ``replay`` record:
+    ``applied_max_eval_instances`` (int or None) and ``deployment_substitution``
+    (``{"from": official, "to": local}`` or None). The deployment record is
+    provenance only — the comparability signal comes for free from the rewritten
+    spec; the record exists so the substitution is auditable from the artifact.
+    """
+    official_deployment = run_spec.adapter_spec.model_deployment
+    adapter_changes: dict[str, Any] = {}
+    applied_max_eval_instances = None
+    if max_eval_instances is not None:
+        applied_max_eval_instances = int(max_eval_instances)
+        adapter_changes['max_eval_instances'] = applied_max_eval_instances
+    deployment_substitution = None
+    if model_deployment is not None:
+        adapter_changes['model_deployment'] = str(model_deployment)
+        deployment_substitution = {
+            'from': official_deployment,
+            'to': str(model_deployment),
+        }
+    if adapter_changes:
+        run_spec = dataclasses.replace(
+            run_spec,
+            adapter_spec=dataclasses.replace(run_spec.adapter_spec, **adapter_changes),
+        )
+    return run_spec, {
+        'applied_max_eval_instances': applied_max_eval_instances,
+        'deployment_substitution': deployment_substitution,
+    }
 
 
 def _resolve_run_spec_path(config) -> tuple[Path, str]:
