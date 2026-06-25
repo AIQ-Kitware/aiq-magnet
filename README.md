@@ -1,10 +1,13 @@
-# Introduction
+# AIQ MAGNET 
+Mathematical Assurance of Generative AI Network Evaluation Toolkit
+
+## Introduction
 
 This early version of the MAGNET package is intended to provide a look into how we're approaching TA1 evaluation (for algorithms that don't require model training or finetuning).  Currently we only provide a "predictor" style interface, but plan to extend the framework to support other TA1 algorithms that don't fit into this bucket.
 
 **IMPORTANT:** As this is a preliminary release, interfaces are subject to change.
 
-# Developer Quick Start
+## Developer Quick Start
 
 Quick start: install and run tests
 
@@ -15,11 +18,11 @@ uv pip install .[tests]
 pytest
 ```
 
-# Running the examples
+## Running the examples
 
 The examples below (which make use of the demo data) run [HELM](https://github.com/stanford-crfm/helm) on the backend the first time you run them.  Alternatively, the example predictors can be run against locally computed HELM outputs.
 
-## Random Predictor
+### Random Predictor
 
 Both the `magnet/example_random_predictor.py` and `magnet/example_perturbation_predictor.py` examples include example invocations in their docstrings.  For example the random predictor's docstring:
 
@@ -51,7 +54,7 @@ In this example, we ask the framework to generate some demo data for us (which w
 
 (Note that the exact values in your output may be different due to the random nature of this predictor)
 
-## Perturbation Predictor
+### Perturbation Predictor
 
 The perturbation predictor example builds a simple linear model with the strength of a "misspelling" perturbation to predict the `"exact_match"` score.  The example docstring is as follows:
 
@@ -85,7 +88,7 @@ perturbation_prob
 0
 ```
 
-## Running on local HELM outputs
+### Running on local HELM outputs
 
 We also provide a command line interface to each of the example
 predictors which allow you to point them at local precomputed HELM
@@ -101,7 +104,7 @@ list of arguments.
 
 Note that many already computed HELM outputs (including for the `helm-lite` benchmark suite) are publicly available [here](https://console.cloud.google.com/storage/browser/crfm-helm-public).
 
-# Implementing your own Predictor
+## Implementing your own Predictor
 
 The basic anatomy of a `Predictor` is as follows (assuming a clean Python file):
 
@@ -140,11 +143,11 @@ The arguments passed into the `predict` method are Pandas dataframes correspondi
 
 We also recommend looking at the `magnet/example_random_predictor.py` and/or `magnet/example_perturbation_predictor.py` examples to see what a complete (albeit simple) predictor looks like.
 
-# Evaluation Cards
+## Evaluation Cards
 
 Verifiable empirical claims with symbol definitions are specified in Python and stored in structured `yaml` files called Evaluation Cards. Examples are provided in `magnet/cards`, including a simple dataset of integers and a particular benchmark from the latest HELM Lite runs.
 
-## Simple Arithmetic Card
+### Simple Arithmetic Card
 A basic example for getting familiar with the structure of an evaluation card is available at `magnet/cards/simple.yaml`. The claim tests the commutative property of consecutive integers on the range `[-10, 10]`. This maps to the symbol-based assertion `x + y = y + x`, when `x` is even integers `[-10, 10]` and `y` is odd integers `[-9, 11]`. An example usage of this card is provided in the `EvaluationCard` docstring:
 ```
     """
@@ -197,7 +200,7 @@ The above was called prior to `.evaluate()`, as shown by the unresolved (`None`)
 ```
 Now, subsequent `.summarize()` calls for this instance will reflect the result of the claim subject to the symbol resolutions. 
 
-## Llama Performance Consistency Card (HELM Lite)
+### Llama Performance Consistency Card (HELM Lite)
 The `magnet/cards/llama.yaml` card tests the claim that for a single benchmark, the entire llama model family performs consistently within a `threshold`. Specifically, the card reads helm-lite runs to verify that llama models achieve an `exact_match` score within `threshold` of each other on the MMLU benchmark. 
 
 An example demonstration is provided below (assuming you've downloaded helm-lite runs to `/data/crfm-helm-public`):
@@ -236,7 +239,7 @@ Optionally, you could evaluate this card using the `magnet evaluate` command as 
 magnet evaluate magnet/cards/llama.yaml
 ```
 
-## Writing your own Evaluation Card
+### Writing your own Evaluation Card
 An `EvaluationCard` instance is expecting roughly the following structure in `yaml` format:
 
 ```
@@ -286,7 +289,7 @@ Or evaluate from the command line using:
 magnet evaluate path/to/mycard.yaml
 ```
 
-### Resolving Symbols as a Pipeline (kwdagger)
+#### Resolving Symbols as a Pipeline (kwdagger)
 In the example above, symbols are explicitly defined in Python as code blocks, values, or sweeps (list) of values. [kwdagger]([https://github.com/AIQ-Kitware/kwdagger) offers an alternative flexible approach to resolving symbols as pipelines of user scripts with a variety of backends (see [tutorials](https://github.com/AIQ-Kitware/kwdagger/tree/main/docs/source/manual/tutorials) for example definitions). MAGNET can dispatch these explicitly, by referencing a fully-defined pipeline, or generate from user-provided scaffolding in the Evaluation Card.
 
 The example python module (`magnet/examples/llama_consistency`) represents how a user may structure their code for testing the claim seen in `magnet/cards/llama.yaml`. Each potential 'node', or script, of a pipeline satisfies the following conditions:
@@ -368,7 +371,7 @@ Settings Evaluated: 36
   Inconclusive: 0.00
 ================================
 ```
-## Downloading HELM results
+### Downloading HELM results
 
 We provide a utility to download precomputed HELM results. 
 
@@ -386,14 +389,28 @@ results. For more details see:
 python -m magnet.backends.helm.download_helm_results --help
 ```
 
-# Roadmap
+## Roadmap
 
 - More options for predict input (dataframes vs. HELM objects vs. dicts)
 - Support for non-prediction style TA1 algorithms (feedback needed)
 - Further evaluation card development and evaluation router implementation
 - ...
 
-# Acknowledgments
+## Citation
+
+If you use MAGNET in your research, please cite our paper:
+
+```bibtex
+@inproceedings{crall2025magnet,
+  title={{MAGNET}: Mathematical Assurance of Generative {AI} Network Evaluation Toolkit},
+  author={Jon Crall and David Joy and Roderic Collins and Benjamin Fenelon and Anthony Hoogs and Brian H Hu},
+  booktitle={NeurIPS 2025 Workshop on Evaluating the Evolving LLM Lifecycle: Benchmarks, Emergent Abilities, and Scaling},
+  year={2025},
+  url={https://openreview.net/forum?id=ZypC0qCMhT}
+}
+```
+
+## Acknowledgments
 
 This material is based upon work supported by the Defense Advanced
 Research Project Agency (DARPA) under Contract No. HR001125CE017. Any
