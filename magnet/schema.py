@@ -14,13 +14,12 @@ class SubmitterSchema(BaseModel):
 class ClaimSchema(BaseModel):
     python: str
 
-# TODO: not actually sure what the schema for "symbols" should look like.
 class SymbolSchema(BaseModel):
-    type: Optional[str] = None # TODO: should type be required?
-    value: Optional[Any] = None
-    sweep: Optional[list] = None
+    type: str | None = None
+    value: Any | None = None
+    sweep: list | None = None
     depends_on: list[str] = Field(default_factory=list) # TODO: modify "depends_on" to reference an actual symbol
-    python: Optional[str] = None
+    python: str | None = None # TODO: this can be validated with a syntax check
 
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
@@ -85,16 +84,16 @@ class EvaluationCardSchema(BaseModel):
     links: list[LinkSchema]
 
     # --- Recommended ---
-    category: Optional[str] = None
+    category: str | None = None
 
     # --- Evaluation configuration ---
-    claim_aggregation_strategy: Optional[ClaimAggregationStrategySchema] = None
-    symbols: Optional[dict[str, SymbolSchema]] = None
+    claim_aggregation_strategy: ClaimAggregationStrategySchema | None = None
+    symbols: dict[str, SymbolSchema] | None = None
 
     # --- Backend (at most one) ---
-    kwdagger: Optional[dict[str, Any]] = None
-    pipeline: Optional[dict[str, Any]] = None
-
+    kwdagger: dict[str, Any] | None = None
+    pipeline: dict[str, Any] | None = None
+    
     @model_validator(mode='after')
     def exclusive_backends(self) -> 'EvaluationCardSchema':
         if self.kwdagger is not None and self.pipeline is not None:
