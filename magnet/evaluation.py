@@ -17,6 +17,9 @@ from loguru import logger
 from rich import print
 import safer
 
+from pydantic import ValidationError
+from magnet.schema import EvaluationCardSchema
+
 SAFER_USE_TEMPFILE = not ub.WIN32
 
 DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
@@ -69,6 +72,17 @@ class EvaluationConfig(scfg.DataConfig):
         help='Joblib backend used when --jobs is not 1.',
     )
 
+    validate = scfg.Value(
+        'error',
+        type=str,
+        choices=['only', 'error', 'warning', 'off'],
+        help=(
+            "'only': validate schema and exit. "
+            "'error': validate and raise on failure (default). "
+            "'warning': validate, warn on failure, and proceed. "
+            "'off': skip validation entirely."
+        ),
+    )
 
 # Claim Resolution (pulled out as standalone function for
 # multiprocessing support)
@@ -142,12 +156,17 @@ class EvaluationCard:
         model: ['claude-3.5-sonnet', 'gemini-1.5-pro-001']
     """
 
-    def __init__(
-        self, path: str | os.PathLike[str], output_path: str | os.PathLike[str]
-    ) -> None:
+    def __init__(self, path, output_path: str | os.PathLike[str], validate='error'):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
-
+        if validate in ('error', 'warning'):
+            try:
+                EvaluationCardSchema.model_validate(cfg)
+            except ValidationError as e:
+                if validate == 'error':
+                    raise e
+                logger.warning(f'WARNING! Card validation failed with error:\n{e}')        
+        
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
 
@@ -942,7 +961,20 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         special_options=False,
     )
 
-    card = EvaluationCard(args.path, args.output_path)
+    if args.validate == 'only':
+        try:
+            with open(args.path, 'r') as f:
+                cfg = yaml.safe_load(f)
+            EvaluationCardSchema.model_validate(cfg)
+            print('Card validation succeeded.')
+        except ValidationError as e:
+            print('Card validation failed.')
+            print(e)
+            sys.exit(1)
+        return
+
+
+    card = EvaluationCard(args.path, args.output_path, validate=args.validate)
     if args.override is not None:
         card.replace(args.override)
 
