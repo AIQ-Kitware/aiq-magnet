@@ -71,10 +71,16 @@ class EvaluationConfig(scfg.DataConfig):
         help='Joblib backend used when --jobs is not 1.',
     )
 
-    validate_only = scfg.Value(
-        False,
-        isflag=True,
-        help='Validate the card schema and exit without running the evaluation.',
+    validate = scfg.Value(
+        'error',
+        type=str,
+        choices=['only', 'error', 'warning', 'off'],
+        help=(
+            "'only': validate schema and exit. "
+            "'error': validate and raise on failure (default). "
+            "'warning': validate, warn on failure, and proceed. "
+            "'off': skip validation entirely."
+        ),
     )
 
 # Claim Resolution (pulled out as standalone function for
@@ -147,10 +153,16 @@ class EvaluationCard:
         model: ['claude-3.5-sonnet', 'gemini-1.5-pro-001']
     """
 
-    def __init__(self, path, output_path):
+    def __init__(self, path, output_path, validate='error'):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
-        EvaluationCardSchema.model_validate(cfg)
+        if validate in ('error', 'warning'):
+            try:
+                EvaluationCardSchema.model_validate(cfg)
+            except ValidationError as e:
+                if validate == 'error':
+                    raise e
+                logger.warning(f'WARNING! Card validation failed with error:\n{e}')        
         
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
@@ -920,7 +932,7 @@ def main(argv=None, **kwargs):
         special_options=False,
     )
 
-    if args.validate_only:
+    if args.validate == 'only':
         try:
             with open(args.path, 'r') as f:
                 cfg = yaml.safe_load(f)
@@ -933,7 +945,7 @@ def main(argv=None, **kwargs):
         return
 
 
-    card = EvaluationCard(args.path, args.output_path)
+    card = EvaluationCard(args.path, args.output_path, validate=args.validate)
     if args.override is not None:
         card.replace(args.override)
 
