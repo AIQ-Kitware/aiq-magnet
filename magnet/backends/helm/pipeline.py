@@ -87,6 +87,11 @@ class MaterializeHelmRunNode(kwdagger.ProcessNode):
         'max_eval_instances': None,
         'require_per_instance_stats': True,
         'model_deployments_fpath': None,
+        # HELM registry sidecars copied into <local_path>/ (net-new model /
+        # tokenizer ids). Identity-bearing: different registrations change the
+        # adapter behavior of the produced run.
+        'model_metadata_fpath': None,
+        'tokenizer_configs_fpath': None,
         'enable_huggingface_models': None,
         'enable_local_huggingface_models': None,
         # Behavior toggles that change how/what we materialize
