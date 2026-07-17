@@ -244,6 +244,28 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
+    model_metadata_fpath = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional path to a HELM model_metadata.yaml sidecar copied into '
+            '<local_path>/model_metadata.yaml before replay. Registers net-new '
+            'model ids without editing HELM itself.'
+        ),
+        tags=['algo_param'],
+    )
+
+    tokenizer_configs_fpath = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional path to a HELM tokenizer_configs.yaml sidecar copied into '
+            '<local_path>/tokenizer_configs.yaml before replay. Registers net-new '
+            'tokenizer ids without editing HELM itself.'
+        ),
+        tags=['algo_param'],
+    )
+
     enable_huggingface_models = scfg.Value(
         None,
         type=str,
@@ -296,6 +318,12 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         config.model_deployments_fpath = _normalize_optional_pathish(
             config.model_deployments_fpath
         )
+        config.model_metadata_fpath = _normalize_optional_pathish(
+            config.model_metadata_fpath
+        )
+        config.tokenizer_configs_fpath = _normalize_optional_pathish(
+            config.tokenizer_configs_fpath
+        )
         # Not a path — but reuse the same scheduler "unset" normalization so a
         # rendered ``--model_deployment=None`` / empty value collapses to None
         # (pure by-name replay) rather than a literal deployment named "None".
@@ -338,6 +366,8 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
                 'require_per_instance_stats': config.require_per_instance_stats,
                 'local_path': config.local_path,
                 'model_deployments_fpath': config.model_deployments_fpath,
+                'model_metadata_fpath': config.model_metadata_fpath,
+                'tokenizer_configs_fpath': config.tokenizer_configs_fpath,
                 'enable_huggingface_models': list(config.enable_huggingface_models or []),
                 'enable_local_huggingface_models': list(
                     config.enable_local_huggingface_models or []
@@ -376,6 +406,8 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
             out_dpath=out_dpath,
             local_path=config.local_path,
             model_deployments_fpath=config.model_deployments_fpath,
+            model_metadata_fpath=config.model_metadata_fpath,
+            tokenizer_configs_fpath=config.tokenizer_configs_fpath,
         )
 
         # 4) Register the full environment BEFORE the preflight, mirroring the

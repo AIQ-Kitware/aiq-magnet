@@ -333,6 +333,28 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
+    model_metadata_fpath = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional path to a HELM model_metadata.yaml file that will be copied '
+            'into <local_path>/model_metadata.yaml before invoking helm-run. '
+            'Registers net-new model ids without editing HELM itself.'
+        ),
+        tags=['algo_param'],
+    )
+
+    tokenizer_configs_fpath = scfg.Value(
+        None,
+        type=str,
+        help=(
+            'Optional path to a HELM tokenizer_configs.yaml file that will be copied '
+            'into <local_path>/tokenizer_configs.yaml before invoking helm-run. '
+            'Registers net-new tokenizer ids without editing HELM itself.'
+        ),
+        tags=['algo_param'],
+    )
+
     enable_huggingface_models = scfg.Value(
         None,
         type=str,
@@ -412,6 +434,12 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         config.model_deployments_fpath = _normalize_optional_pathish(
             config.model_deployments_fpath
         )
+        config.model_metadata_fpath = _normalize_optional_pathish(
+            config.model_metadata_fpath
+        )
+        config.tokenizer_configs_fpath = _normalize_optional_pathish(
+            config.tokenizer_configs_fpath
+        )
         config.enable_huggingface_models = kwutil.Yaml.coerce(
             config.enable_huggingface_models
         )
@@ -467,6 +495,8 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 'materialize': config.materialize,
                 'local_path': config.local_path,
                 'model_deployments_fpath': config.model_deployments_fpath,
+                'model_metadata_fpath': config.model_metadata_fpath,
+                'tokenizer_configs_fpath': config.tokenizer_configs_fpath,
                 'enable_huggingface_models': list(config.enable_huggingface_models or []),
                 'enable_local_huggingface_models': list(config.enable_local_huggingface_models or []),
             },
@@ -545,6 +575,8 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
                 out_dpath=out_dpath,
                 local_path=config.local_path,
                 model_deployments_fpath=config.model_deployments_fpath,
+                model_metadata_fpath=config.model_metadata_fpath,
+                tokenizer_configs_fpath=config.tokenizer_configs_fpath,
             )
 
             logger.info('No reusable run found; running helm-run')
@@ -1317,26 +1349,38 @@ def prepare_local_helm_config(
     out_dpath: Path,
     local_path: str | os.PathLike[str],
     model_deployments_fpath: str | os.PathLike[str] | None = None,
+    model_metadata_fpath: str | os.PathLike[str] | None = None,
+    tokenizer_configs_fpath: str | os.PathLike[str] | None = None,
 ) -> Path:
     """
     Prepare the local HELM config directory used by ``helm-run``.
 
-    Currently this only materializes an optional ``model_deployments.yaml``
-    override file, but keeping it centralized makes future config additions
-    straightforward.
+    Materializes the optional sidecar config files HELM's
+    ``register_configs_from_directory`` reads from ``--local-path``:
+    ``model_deployments.yaml`` (a local serving route), and
+    ``model_metadata.yaml`` + ``tokenizer_configs.yaml`` (registration for
+    net-new model ids that upstream HELM does not know, so a new model needs
+    no HELM-source edit).
     """
     local_path_abs = resolve_local_path(out_dpath, local_path)
     local_path_abs.mkdir(parents=True, exist_ok=True)
 
-    if model_deployments_fpath:
-        src = Path(model_deployments_fpath).expanduser().resolve()
+    sidecar_files = [
+        ('model_deployments_fpath', model_deployments_fpath, 'model_deployments.yaml'),
+        ('model_metadata_fpath', model_metadata_fpath, 'model_metadata.yaml'),
+        ('tokenizer_configs_fpath', tokenizer_configs_fpath, 'tokenizer_configs.yaml'),
+    ]
+    for param_name, fpath, canonical_name in sidecar_files:
+        if not fpath:
+            continue
+        src = Path(fpath).expanduser().resolve()
         if not src.exists():
             raise FileNotFoundError(
-                f'model_deployments_fpath does not exist: {src}'
+                f'{param_name} does not exist: {src}'
             )
-        dst = local_path_abs / 'model_deployments.yaml'
+        dst = local_path_abs / canonical_name
         shutil.copy2(src, dst)
-        logger.info('Copied model deployments override: {} -> {}', src, dst)
+        logger.info('Copied HELM config override: {} -> {}', src, dst)
 
     return local_path_abs
 
