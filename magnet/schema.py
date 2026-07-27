@@ -1,4 +1,4 @@
-from typing import Any, Optional
+from typing import Any, Optional, Literal
 from pydantic import BaseModel, Field, model_validator
 
 class LinkSchema(BaseModel):
@@ -14,12 +14,26 @@ class SubmitterSchema(BaseModel):
 class ClaimSchema(BaseModel):
     python: str
 
+class MetricAggregationStrategySchema(BaseModel):
+    type: Literal["mean", "max", "min", "threshold", "custom"]
+    parameters: dict[str, Any] | None = None
+
+class MetricSymbolSchema(BaseModel):
+    lower_is_better: bool | None = None
+    aggregation_strategy: MetricAggregationStrategySchema
+
+class SymbolMetadataSchema(BaseModel):
+    displayed: bool | None = None
+    display_name: str | None = None
+    define_metric: MetricSymbolSchema | None = None
+
 class SymbolSchema(BaseModel):
     type: str | None = None
     value: Any | None = None
     sweep: list | None = None
     depends_on: list[str] = Field(default_factory=list) # TODO: modify "depends_on" to reference an actual symbol
     python: str | None = None # TODO: this can be validated with a syntax check
+    metadata: SymbolMetadataSchema | None = None
 
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
@@ -29,10 +43,22 @@ class SymbolSchema(BaseModel):
             )
         return self
 
+class ClaimAggregationStrategyParameterSchema(BaseModel):
+    threshold: float
+
 # TODO: If type == fraction, check that parameters[threshold] is defined and a float
 class ClaimAggregationStrategySchema(BaseModel): 
     type: str
+    parameters: ClaimAggregationStrategyParameterSchema | None = None
     model_config = {'extra': 'allow'} # without this, seems like the extra fields disappear
+
+    @model_validator(mode='after')
+    def confirm_threshold(self) -> 'ClaimAggregationStrategySchema':
+        if self.type == "fraction" and (self.parameters is None or self.parameters.threshold is None):
+            raise ValueError(
+                "claim aggregation strategy of fraction requires threshold parameter"
+            )
+        return self
 
 class EvaluationCardSchema(BaseModel):
     """

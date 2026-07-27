@@ -2,27 +2,29 @@ import builtins
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import product
 from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
 
 import kwutil
+import safer
 import scriptconfig as scfg
 import ubelt as ub
 import yaml
 from kwdagger import Pipeline, ProcessNode
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
-from rich import print
-import safer
-
 from pydantic import ValidationError
+from rich import print
+
 from magnet.schema import EvaluationCardSchema
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
 DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
+DEFAULT_METRIC_AGGREGATION_STRATEGY = {'type': 'mean'}
 
 
 class EvaluationConfig(scfg.DataConfig):
@@ -156,7 +158,9 @@ class EvaluationCard:
         model: ['claude-3.5-sonnet', 'gemini-1.5-pro-001']
     """
 
-    def __init__(self, path, output_path: str | os.PathLike[str], validate='error'):
+    def __init__(
+        self, path, output_path: str | os.PathLike[str], validate='error'
+    ):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
         if validate in ('error', 'warning'):
@@ -165,8 +169,10 @@ class EvaluationCard:
             except ValidationError as e:
                 if validate == 'error':
                     raise e
-                logger.warning(f'WARNING! Card validation failed with error:\n{e}')        
-        
+                logger.warning(
+                    f'WARNING! Card validation failed with error:\n{e}'
+                )
+
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
 
@@ -308,6 +314,45 @@ class EvaluationCard:
             results.append(status)
             print(f'Wrote claim output to {results_fpath}')
 
+        raw_symbol_metadata = self.evaluations[0].symbols.parse_metadata()
+        
+        if raw_symbol_metadata:
+            with safer.open(
+                card_output_path / 'symbol_metadata.json',
+                'w',
+                temp_file=SAFER_USE_TEMPFILE,
+            ) as f:
+                json.dump(raw_symbol_metadata, f, indent=2, ensure_ascii=False)
+
+            metric_definitions = Metric.build_metrics_from_symbol_metadata(
+                raw_symbol_metadata
+            )
+
+            calculated_metrics = {}
+            for met in metric_definitions:
+                runs = []
+                for eval in self.evaluations:
+                    symbol_value = eval.symbols().get(met.name)
+                    if symbol_value is None:
+                        logger.error(
+                            f'Metric {met.name} cannot be mapped to a Symbol value'
+                        )
+                        break
+                    else:
+                        runs.append(symbol_value)
+                display_name = raw_symbol_metadata[met.name].get(
+                    'display_name', met.name
+                )
+                calculated_metrics[display_name] = met.calculate(runs)
+
+            if calculated_metrics:
+                metric_statement = (
+                    '================================\n Evaluation Metrics:\n'
+                )
+                for metric, value in calculated_metrics.items():
+                    metric_statement += f'  {metric}: {value: .3f}\n'
+                print(metric_statement[:-1])
+
         total = len(results)
 
         def percentage(count):
@@ -331,6 +376,9 @@ class EvaluationCard:
             'claim_aggregation_strategy': self.claim_aggregation_strategy,
             'claims': [e._execution_hash for e in self.evaluations],
         }
+
+        if raw_symbol_metadata and calculated_metrics:
+            aggregate_verdict['metrics'] = calculated_metrics
 
         with safer.open(
             card_output_path / 'verdict.json', 'w', temp_file=SAFER_USE_TEMPFILE
@@ -784,6 +832,7 @@ class Symbol:
         self.type = spec.get('type', 'List[int]')
         self.definition = spec.get('python', '')
         self.dependencies = spec.get('depends_on', [])
+        self.metadata = spec.get('metadata')
 
     def eval(self, context: Dict[str, Any] = {}) -> Any:
         """
@@ -948,8 +997,84 @@ class Symbols:
             or (type(v) == list and type(v[0]) == int)
         }
 
+    def parse_metadata(self) -> Dict[str, Any]:
+        metadata = {}
+        for name, symbol in self.symbols.items():
+            if symbol.metadata is not None:
+                metadata[name] = symbol.metadata
+        return metadata
+
     def __call__(self) -> Dict[str, Any]:
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
+
+
+class Metric:
+    def __init__(
+        self,
+        name: str,
+        comparator: Dict[str, Any],
+        function: Callable[[List[float]], float],
+    ) -> None:
+        self.name = name
+        self.comparator = comparator
+        self.function = function
+
+    def calculate(self, runs: List[float]) -> float:
+        print(f'Computing {self.name} Metric')
+        return self.function(runs)
+
+    @classmethod
+    def build_metrics_from_symbol_metadata(
+        cls, symbol_metadata: Dict[str, Any]
+    ) -> List[Self]:
+        metrics = []
+        for name, metadata in symbol_metadata.items():
+            metric_metadata = metadata.get('define_metric')
+            if metric_metadata is not None:
+                agg_strategy = metric_metadata.get(
+                    'aggregation_strategy', DEFAULT_METRIC_AGGREGATION_STRATEGY
+                )
+                stategy_name = agg_strategy.get('type')
+                parameters = agg_strategy.get('parameters', {})
+
+                match stategy_name:
+                    case 'max':
+                        reduce_fn = max
+                    case 'min':
+                        reduce_fn = min
+                    case 'mean':
+                        reduce_fn = lambda runs: sum(runs) / len(runs)
+                    case 'threshold':
+                        threshold = parameters.get('threshold')
+                        if threshold is not None:
+                            reduce_fn = lambda runs: all(
+                                run > threshold for run in runs
+                            )
+                        else:
+                            logger.warning(
+                                'Threshold Metric does not specify a threshold value. Ignoring.'
+                            )
+                            reduce_fn = None
+                    case 'custom':
+                        # Python function
+                        raise NotImplementedError
+                    case _:
+                        logger.warning(
+                            'Unrecognized Metric Aggregation Strategy; Please select one of {max, min, mean, threshold}'
+                        )
+                        reduce_fn = None
+
+                lower_is_better = metric_metadata.get('lower_is_better', True)
+
+                if reduce_fn is not None:
+                    metrics.append(
+                        cls(
+                            name,
+                            {'lower_is_better': lower_is_better},
+                            reduce_fn,
+                        )
+                    )
+        return metrics
 
 
 def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
