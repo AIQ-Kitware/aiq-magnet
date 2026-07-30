@@ -25,7 +25,7 @@ class MetricAggregationStrategySchema(BaseModel):
     parameters: dict[str, float] | None = None
 
 class MetricSymbolSchema(BaseModel):
-    objective: MetricObjective = MetricObjective.MINIMIZE
+    objective: MetricObjective = MetricObjective.MAXIMIZE
     aggregation_strategy: MetricAggregationStrategySchema
 
 class SymbolMetadataSchema(BaseModel):
