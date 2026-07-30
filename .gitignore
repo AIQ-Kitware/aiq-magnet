@@ -8,3 +8,5 @@ docs/build/
 
 .ipynb_checkpoints/
 .coverage
+
+results
