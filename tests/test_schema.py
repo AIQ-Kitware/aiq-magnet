@@ -1,7 +1,9 @@
+from importlib.resources import files
+
 import pytest
 import yaml
-from importlib.resources import files
 from pydantic import ValidationError
+
 from magnet.schema import EvaluationCardSchema
 
 
@@ -25,5 +27,43 @@ def test_valid_card_passes_validation(simple_card):
 ])
 def test_invalid_card_fails_validation(simple_card, broken_card):
     card = {**simple_card, **broken_card}
+    with pytest.raises(ValidationError):
+        EvaluationCardSchema.model_validate(card)
+
+
+def test_threshold_metric_requires_threshold_parameter(simple_card):
+    card = {
+        **simple_card,
+        'symbols': {
+            'score': {
+                'type': 'float',
+                'value': 0.5,
+                'metadata': {
+                    'define_metric': {
+                        'aggregation_strategy': {'type': 'threshold'},
+                    }
+                },
+            }
+        },
+    }
+    with pytest.raises(ValidationError):
+        EvaluationCardSchema.model_validate(card)
+
+
+def test_custom_metric_strategy_is_rejected(simple_card):
+    card = {
+        **simple_card,
+        'symbols': {
+            'score': {
+                'type': 'float',
+                'value': 0.5,
+                'metadata': {
+                    'define_metric': {
+                        'aggregation_strategy': {'type': 'custom'},
+                    }
+                },
+            }
+        },
+    }
     with pytest.raises(ValidationError):
         EvaluationCardSchema.model_validate(card)

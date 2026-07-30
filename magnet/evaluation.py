@@ -4,8 +4,10 @@ import os
 import sys
 from collections.abc import Callable
 from datetime import datetime
+from functools import partial
 from graphlib import TopologicalSorter
 from itertools import product
+from statistics import fmean
 from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
 
 import kwutil
@@ -315,7 +317,8 @@ class EvaluationCard:
             print(f'Wrote claim output to {results_fpath}')
 
         raw_symbol_metadata = self.evaluations[0].symbols.parse_metadata()
-        
+        calculated_metrics = {}
+
         if raw_symbol_metadata:
             with safer.open(
                 card_output_path / 'symbol_metadata.json',
@@ -327,30 +330,20 @@ class EvaluationCard:
             metric_definitions = Metric.build_metrics_from_symbol_metadata(
                 raw_symbol_metadata
             )
-
-            calculated_metrics = {}
-            for met in metric_definitions:
-                runs = []
-                for eval in self.evaluations:
-                    symbol_value = eval.symbols().get(met.name)
-                    if symbol_value is None:
-                        logger.error(
-                            f'Metric {met.name} cannot be mapped to a Symbol value'
-                        )
-                        break
-                    else:
-                        runs.append(symbol_value)
-                display_name = raw_symbol_metadata[met.name].get(
-                    'display_name', met.name
-                )
-                calculated_metrics[display_name] = met.calculate(runs)
+            calculated_metrics = _calculate_metrics(
+                metric_definitions,
+                self.evaluations,
+                raw_symbol_metadata,
+            )
 
             if calculated_metrics:
                 metric_statement = (
                     '================================\n Evaluation Metrics:\n'
                 )
-                for metric, value in calculated_metrics.items():
-                    metric_statement += f'  {metric}: {value: .3f}\n'
+                for metric_result in calculated_metrics.values():
+                    display_name = metric_result['display_name']
+                    value = _format_metric_value(metric_result['value'])
+                    metric_statement += f'  {display_name}: {value}\n'
                 print(metric_statement[:-1])
 
         total = len(results)
@@ -1008,18 +1001,38 @@ class Symbols:
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
 
+def _all_above_threshold(
+    runs: List[float], *, threshold: float
+) -> bool:
+    return all(run > threshold for run in runs)
+
+
+def _all_below_threshold(
+    runs: List[float], *, threshold: float
+) -> bool:
+    return all(run < threshold for run in runs)
+
+
+def _format_metric_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return str(value)
+    return f'{value:.3f}'
+
+
 class Metric:
     def __init__(
         self,
         name: str,
-        comparator: Dict[str, Any],
-        function: Callable[[List[float]], float],
+        lower_is_better: bool,
+        aggregation_strategy: Dict[str, Any],
+        function: Callable[[List[float]], Any],
     ) -> None:
         self.name = name
-        self.comparator = comparator
+        self.lower_is_better = lower_is_better
+        self.aggregation_strategy = aggregation_strategy
         self.function = function
 
-    def calculate(self, runs: List[float]) -> float:
+    def calculate(self, runs: List[float]) -> Any:
         print(f'Computing {self.name} Metric')
         return self.function(runs)
 
@@ -1034,47 +1047,80 @@ class Metric:
                 agg_strategy = metric_metadata.get(
                     'aggregation_strategy', DEFAULT_METRIC_AGGREGATION_STRATEGY
                 )
-                stategy_name = agg_strategy.get('type')
-                parameters = agg_strategy.get('parameters', {})
+                strategy_name = agg_strategy.get('type')
+                parameters = agg_strategy.get('parameters') or {}
+                lower_is_better = metric_metadata.get('lower_is_better')
+                if lower_is_better is None:
+                    lower_is_better = True
 
-                match stategy_name:
+                match strategy_name:
                     case 'max':
                         reduce_fn = max
                     case 'min':
                         reduce_fn = min
                     case 'mean':
-                        reduce_fn = lambda runs: sum(runs) / len(runs)
+                        reduce_fn = fmean
                     case 'threshold':
                         threshold = parameters.get('threshold')
-                        if threshold is not None:
-                            reduce_fn = lambda runs: all(
-                                run > threshold for run in runs
-                            )
-                        else:
+                        if threshold is None:
                             logger.warning(
                                 'Threshold Metric does not specify a threshold value. Ignoring.'
                             )
                             reduce_fn = None
-                    case 'custom':
-                        # Python function
-                        raise NotImplementedError
+                        elif lower_is_better:
+                            reduce_fn = partial(
+                                _all_below_threshold,
+                                threshold=threshold,
+                            )
+                        else:
+                            reduce_fn = partial(
+                                _all_above_threshold,
+                                threshold=threshold,
+                            )
                     case _:
                         logger.warning(
                             'Unrecognized Metric Aggregation Strategy; Please select one of {max, min, mean, threshold}'
                         )
                         reduce_fn = None
 
-                lower_is_better = metric_metadata.get('lower_is_better', True)
-
                 if reduce_fn is not None:
                     metrics.append(
                         cls(
                             name,
-                            {'lower_is_better': lower_is_better},
+                            lower_is_better,
+                            agg_strategy,
                             reduce_fn,
                         )
                     )
         return metrics
+
+
+def _calculate_metrics(
+    metric_definitions: List[Metric],
+    evaluations: List['EvaluationTask'],
+    symbol_metadata: Dict[str, Any],
+) -> Dict[str, Dict[str, Any]]:
+    calculated_metrics = {}
+    for metric in metric_definitions:
+        runs = []
+        for evaluation in evaluations:
+            symbol_value = evaluation.symbols().get(metric.name)
+            if symbol_value is None:
+                logger.error(
+                    f'Metric {metric.name} cannot be mapped to a Symbol value'
+                )
+                break
+            runs.append(symbol_value)
+        else:
+            metadata = symbol_metadata[metric.name]
+            display_name = metadata.get('display_name') or metric.name
+            calculated_metrics[metric.name] = {
+                'display_name': display_name,
+                'value': metric.calculate(runs),
+                'lower_is_better': metric.lower_is_better,
+                'aggregation_strategy': metric.aggregation_strategy,
+            }
+    return calculated_metrics
 
 
 def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
