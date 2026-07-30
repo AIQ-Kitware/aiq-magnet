@@ -51,7 +51,7 @@ symbols:
   base_score:
     metadata:
       display_name: "Average Exact Match"
-      displayed: True
+      display: True
       define_metric:
         lower_is_better: False
         aggregation_strategy:
@@ -83,7 +83,7 @@ symbols:
   helm_runs_path:
     metadata:
       display_name: "HELM Data Path"
-      displayed: True
+      display: True
     type: str
     value: './data/crfm-helm-public/lite/benchmark_output'
 

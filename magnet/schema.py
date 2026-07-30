@@ -23,7 +23,7 @@ class MetricSymbolSchema(BaseModel):
     aggregation_strategy: MetricAggregationStrategySchema
 
 class SymbolMetadataSchema(BaseModel):
-    displayed: bool | None = None
+    display: bool | None = None
     display_name: str | None = None
     define_metric: MetricSymbolSchema | None = None
 
@@ -47,7 +47,7 @@ class ClaimAggregationStrategyParameterSchema(BaseModel):
     threshold: float
 
 # TODO: If type == fraction, check that parameters[threshold] is defined and a float
-class ClaimAggregationStrategySchema(BaseModel): 
+class ClaimAggregationStrategySchema(BaseModel):
     type: str
     parameters: ClaimAggregationStrategyParameterSchema | None = None
     model_config = {'extra': 'allow'} # without this, seems like the extra fields disappear
@@ -119,7 +119,7 @@ class EvaluationCardSchema(BaseModel):
     # --- Backend (at most one) ---
     kwdagger: dict[str, Any] | None = None
     pipeline: dict[str, Any] | None = None
-    
+
     @model_validator(mode='after')
     def exclusive_backends(self) -> 'EvaluationCardSchema':
         if self.kwdagger is not None and self.pipeline is not None:
