@@ -1,10 +1,10 @@
 import builtins
 import json
+import operator
 import os
 import sys
 from collections.abc import Callable
 from datetime import datetime
-from functools import partial
 from graphlib import TopologicalSorter
 from itertools import product
 from statistics import fmean
@@ -21,7 +21,7 @@ from loguru import logger
 from pydantic import ValidationError
 from rich import print
 
-from magnet.schema import EvaluationCardSchema
+from magnet.schema import EvaluationCardSchema, MetricObjective
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -340,10 +340,12 @@ class EvaluationCard:
                 metric_statement = (
                     '================================\n Evaluation Metrics:\n'
                 )
-                for metric_result in calculated_metrics.values():
-                    display_name = metric_result['display_name']
-                    value = _format_metric_value(metric_result['value'])
-                    metric_statement += f'  {display_name}: {value}\n'
+                for metric, value in calculated_metrics.items():
+                    if isinstance(value, bool):
+                        display_value = str(value)
+                    else:
+                        display_value = f'{value: .3f}'
+                    metric_statement += f'  {metric}: {display_value}\n'
                 print(metric_statement[:-1])
 
         total = len(results)
@@ -1001,40 +1003,24 @@ class Symbols:
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
 
-def _all_above_threshold(
-    runs: List[float], *, threshold: float
-) -> bool:
-    return all(run > threshold for run in runs)
-
-
-def _all_below_threshold(
-    runs: List[float], *, threshold: float
-) -> bool:
-    return all(run < threshold for run in runs)
-
-
-def _format_metric_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return str(value)
-    return f'{value:.3f}'
+MetricValue = float | bool
+MetricReducer = Callable[[List[float]], MetricValue]
 
 
 class Metric:
     def __init__(
         self,
         name: str,
-        lower_is_better: bool,
-        aggregation_strategy: Dict[str, Any],
-        function: Callable[[List[float]], Any],
+        objective: MetricObjective,
+        reducer: MetricReducer,
     ) -> None:
         self.name = name
-        self.lower_is_better = lower_is_better
-        self.aggregation_strategy = aggregation_strategy
-        self.function = function
+        self.objective = objective
+        self.reducer = reducer
 
-    def calculate(self, runs: List[float]) -> Any:
+    def calculate(self, runs: List[float]) -> MetricValue:
         print(f'Computing {self.name} Metric')
-        return self.function(runs)
+        return self.reducer(runs)
 
     @classmethod
     def build_metrics_from_symbol_metadata(
@@ -1049,49 +1035,54 @@ class Metric:
                 )
                 strategy_name = agg_strategy.get('type')
                 parameters = agg_strategy.get('parameters') or {}
-                lower_is_better = metric_metadata.get('lower_is_better')
-                if lower_is_better is None:
-                    lower_is_better = True
+                objective = MetricObjective(
+                    metric_metadata.get('objective', MetricObjective.MINIMIZE)
+                )
 
                 match strategy_name:
                     case 'max':
-                        reduce_fn = max
+                        reducer = max
                     case 'min':
-                        reduce_fn = min
+                        reducer = min
                     case 'mean':
-                        reduce_fn = fmean
+                        reducer = fmean
                     case 'threshold':
                         threshold = parameters.get('threshold')
                         if threshold is None:
                             logger.warning(
                                 'Threshold Metric does not specify a threshold value. Ignoring.'
                             )
-                            reduce_fn = None
-                        elif lower_is_better:
-                            reduce_fn = partial(
-                                _all_below_threshold,
-                                threshold=threshold,
-                            )
+                            reducer = None
                         else:
-                            reduce_fn = partial(
-                                _all_above_threshold,
-                                threshold=threshold,
+                            comparison = (
+                                operator.lt
+                                if objective is MetricObjective.MINIMIZE
+                                else operator.gt
                             )
+
+                            def threshold_reducer(
+                                runs: List[float],
+                                threshold: float = threshold,
+                                comparison: Callable[
+                                    [float, float], bool
+                                ] = comparison,
+                            ) -> bool:
+                                return all(
+                                    comparison(run, threshold) for run in runs
+                                )
+
+                            reducer = threshold_reducer
+                    case 'custom':
+                        # Python function
+                        raise NotImplementedError
                     case _:
                         logger.warning(
                             'Unrecognized Metric Aggregation Strategy; Please select one of {max, min, mean, threshold}'
                         )
-                        reduce_fn = None
+                        reducer = None
 
-                if reduce_fn is not None:
-                    metrics.append(
-                        cls(
-                            name,
-                            lower_is_better,
-                            agg_strategy,
-                            reduce_fn,
-                        )
-                    )
+                if reducer is not None:
+                    metrics.append(cls(name, objective, reducer))
         return metrics
 
 
@@ -1099,7 +1090,7 @@ def _calculate_metrics(
     metric_definitions: List[Metric],
     evaluations: List['EvaluationTask'],
     symbol_metadata: Dict[str, Any],
-) -> Dict[str, Dict[str, Any]]:
+) -> Dict[str, MetricValue]:
     calculated_metrics = {}
     for metric in metric_definitions:
         runs = []
@@ -1112,14 +1103,10 @@ def _calculate_metrics(
                 break
             runs.append(symbol_value)
         else:
-            metadata = symbol_metadata[metric.name]
-            display_name = metadata.get('display_name') or metric.name
-            calculated_metrics[metric.name] = {
-                'display_name': display_name,
-                'value': metric.calculate(runs),
-                'lower_is_better': metric.lower_is_better,
-                'aggregation_strategy': metric.aggregation_strategy,
-            }
+            display_name = symbol_metadata[metric.name].get(
+                'display_name', metric.name
+            )
+            calculated_metrics[display_name] = metric.calculate(runs)
     return calculated_metrics
 
 

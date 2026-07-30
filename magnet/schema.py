@@ -1,58 +1,44 @@
+from enum import StrEnum
 from typing import Any, Literal, Optional
-
 from pydantic import BaseModel, Field, model_validator
-
 
 class LinkSchema(BaseModel):
     title: str
     url: str
     type: str
 
-
 class SubmitterSchema(BaseModel):
     name: str
     email: str
-
 
 # TODO: this can be validated with a syntax check
 class ClaimSchema(BaseModel):
     python: str
 
-
-class MetricThresholdParametersSchema(BaseModel):
-    threshold: float
+class MetricObjective(StrEnum):
+    MINIMIZE = 'minimize'
+    MAXIMIZE = 'maximize'
 
 
 class MetricAggregationStrategySchema(BaseModel):
-    type: Literal['mean', 'max', 'min', 'threshold']
-    parameters: MetricThresholdParametersSchema | None = None
-
-    @model_validator(mode='after')
-    def confirm_threshold(self) -> 'MetricAggregationStrategySchema':
-        if self.type == 'threshold' and self.parameters is None:
-            raise ValueError(
-                'metric aggregation strategy of threshold requires threshold parameter'
-            )
-        return self
-
+    type: Literal["mean", "max", "min", "threshold", "custom"]
+    parameters: dict[str, float] | None = None
 
 class MetricSymbolSchema(BaseModel):
-    lower_is_better: bool | None = None
+    objective: MetricObjective = MetricObjective.MINIMIZE
     aggregation_strategy: MetricAggregationStrategySchema
-
 
 class SymbolMetadataSchema(BaseModel):
     display: bool | None = None
     display_name: str | None = None
     define_metric: MetricSymbolSchema | None = None
 
-
 class SymbolSchema(BaseModel):
     type: str | None = None
     value: Any | None = None
     sweep: list | None = None
-    depends_on: list[str] = Field(default_factory=list)  # TODO: modify "depends_on" to reference an actual symbol
-    python: str | None = None  # TODO: this can be validated with a syntax check
+    depends_on: list[str] = Field(default_factory=list) # TODO: modify "depends_on" to reference an actual symbol
+    python: str | None = None # TODO: this can be validated with a syntax check
     metadata: SymbolMetadataSchema | None = None
 
     @model_validator(mode='after')
@@ -63,16 +49,14 @@ class SymbolSchema(BaseModel):
             )
         return self
 
-
 class ClaimAggregationStrategyParameterSchema(BaseModel):
     threshold: float
-
 
 # TODO: If type == fraction, check that parameters[threshold] is defined and a float
 class ClaimAggregationStrategySchema(BaseModel):
     type: str
     parameters: ClaimAggregationStrategyParameterSchema | None = None
-    model_config = {'extra': 'allow'}  # without this, seems like the extra fields disappear
+    model_config = {'extra': 'allow'} # without this, seems like the extra fields disappear
 
     @model_validator(mode='after')
     def confirm_threshold(self) -> 'ClaimAggregationStrategySchema':
@@ -81,7 +65,6 @@ class ClaimAggregationStrategySchema(BaseModel):
                 "claim aggregation strategy of fraction requires threshold parameter"
             )
         return self
-
 
 class EvaluationCardSchema(BaseModel):
     """
