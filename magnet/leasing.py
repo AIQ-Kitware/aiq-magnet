@@ -64,7 +64,7 @@ from __future__ import annotations
 import os
 import shlex
 
-import kwdagger
+from magnet.containers import ContainerProcessNode
 
 __all__ = ['LeasedProcessNode', 'leasing_is_enabled', 'LEASING_ENVVAR']
 
@@ -100,9 +100,14 @@ def leasing_is_enabled() -> bool:
     return not os.environ.get(INSIDE_LEASE_ENVVAR)
 
 
-class LeasedProcessNode(kwdagger.ProcessNode):
+class LeasedProcessNode(ContainerProcessNode):
     """
-    A :class:`kwdagger.ProcessNode` that acquires its endpoints for its own job.
+    A node that acquires its endpoints for its own job.
+
+    Also a :class:`~magnet.containers.ContainerProcessNode`, so a node that
+    holds a model can equally run in a pinned image; the lease ends up
+    outside the container. Both layers are independently inert until asked
+    for.
 
     Subclasses declare :attr:`endpoint_params` -- the parameter names whose
     *values* are endpoint aliases in the catalog. Override
@@ -152,21 +157,29 @@ class LeasedProcessNode(kwdagger.ProcessNode):
                 names.append(value)
         return names
 
-    @property
-    def command(self) -> str:
+    def _wrap_command(self, command: str) -> str:
         """
-        The node's command, bracketed in a lease when one is needed.
+        Bracket the command in a lease when one is needed.
+
+        Called by :class:`~magnet.containers.ContainerProcessNode` *after* it
+        has applied any ``docker run`` wrapper, so the lease ends up outside
+        the container. That order matters: acquiring a lease needs the Docker
+        daemon and the shared ledger, both of which live on the host, and
+        being inside means the container inherits ``OPENAI_BASE_URL`` /
+        ``OPENAI_API_KEY`` from the lease with no extra plumbing.
+
+        Args:
+            command (str): the command as built so far.
 
         Returns:
             str
         """
-        base = super().command
         if not leasing_is_enabled():
-            return base
+            return command
         names = self.resolve_endpoints()
         if not names:
-            return base
-        return self._lease_prefix(names) + ' \\\n    ' + base
+            return command
+        return self._lease_prefix(names) + ' \\\n    ' + command
 
     def _lease_prefix(self, names: list[str]) -> str:
         # ONE --endpoint with a comma-separated list. `infer-stack run` takes
