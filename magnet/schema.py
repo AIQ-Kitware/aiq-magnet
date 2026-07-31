@@ -42,10 +42,15 @@ class SymbolSchema(BaseModel):
 
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
-        if self.value is None and self.sweep is None and self.python is None and (self.metadata is not None and self.metadata.define_metric is None):
-            raise ValueError(
-                "symbol must define at least one of: 'value', 'sweep', or 'python'"
-            )
+        if self.value is None and self.sweep is None and self.python is None:
+            if self.metadata is not None and self.metadata.define_metric is not None:
+                # Handle metric definitions in kwdagger/pipeline cards 
+                # (i.e. ignore test for symbols defined/calculated in user script)
+                return self
+            else:
+                raise ValueError(
+                    "symbol must define at least one of: 'value', 'sweep', or 'python'"
+                )
         return self
 
 class ClaimAggregationStrategyParameterSchema(BaseModel):
