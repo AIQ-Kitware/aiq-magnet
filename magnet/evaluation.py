@@ -2,27 +2,30 @@ import builtins
 import json
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import product
+from statistics import fmean
 from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
 
 import kwutil
+import safer
 import scriptconfig as scfg
 import ubelt as ub
 import yaml
 from kwdagger import Pipeline, ProcessNode
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
-from rich import print
-import safer
-
 from pydantic import ValidationError
-from magnet.schema import EvaluationCardSchema
+from rich import print
+
+from magnet.schema import EvaluationCardSchema, MetricObjective
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
 DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
+DEFAULT_METRIC_AGGREGATION_STRATEGY = {'type': 'mean'}
 
 
 class EvaluationConfig(scfg.DataConfig):
@@ -156,7 +159,9 @@ class EvaluationCard:
         model: ['claude-3.5-sonnet', 'gemini-1.5-pro-001']
     """
 
-    def __init__(self, path, output_path: str | os.PathLike[str], validate='error'):
+    def __init__(
+        self, path, output_path: str | os.PathLike[str], validate='error'
+    ):
         with open(path, 'r') as f:
             cfg = yaml.safe_load(f)
         if validate in ('error', 'warning'):
@@ -165,8 +170,10 @@ class EvaluationCard:
             except ValidationError as e:
                 if validate == 'error':
                     raise e
-                logger.warning(f'WARNING! Card validation failed with error:\n{e}')        
-        
+                logger.warning(
+                    f'WARNING! Card validation failed with error:\n{e}'
+                )
+
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
 
@@ -260,6 +267,16 @@ class EvaluationCard:
 
         claim_results_path = card_output_path / 'results'
 
+        raw_symbol_metadata = _parse_symbol_metadata(self.symbols)
+
+        if raw_symbol_metadata:
+            with safer.open(
+                card_output_path / 'symbol_metadata.json',
+                'w',
+                temp_file=SAFER_USE_TEMPFILE,
+            ) as f:
+                json.dump(raw_symbol_metadata, f, indent=2, ensure_ascii=False)
+
         if self.has_kwdagger:
             # Explicit kwdagger pipeline defined
             # Claim node handles symbols outside of EvaluationCard
@@ -308,6 +325,26 @@ class EvaluationCard:
             results.append(status)
             print(f'Wrote claim output to {results_fpath}')
 
+        calculated_metrics = {}
+
+        if raw_symbol_metadata:
+            metric_definitions = Metric.build_metrics_from_symbol_metadata(
+                raw_symbol_metadata
+            )
+            calculated_metrics = _calculate_metrics(
+                metric_definitions,
+                self.evaluations,
+                raw_symbol_metadata,
+            )
+
+            if calculated_metrics:
+                metric_statement = (
+                    '================================\n Evaluation Metrics:\n'
+                )
+                for metric, value in calculated_metrics.items():
+                    metric_statement += f'  {metric}: {value: .3f}\n'
+                print(metric_statement[:-1])
+
         total = len(results)
 
         def percentage(count):
@@ -331,6 +368,9 @@ class EvaluationCard:
             'claim_aggregation_strategy': self.claim_aggregation_strategy,
             'claims': [e._execution_hash for e in self.evaluations],
         }
+
+        if raw_symbol_metadata and calculated_metrics:
+            aggregate_verdict['metrics'] = calculated_metrics
 
         with safer.open(
             card_output_path / 'verdict.json', 'w', temp_file=SAFER_USE_TEMPFILE
@@ -656,6 +696,15 @@ class EvaluationTask:
         return ub.hash_data(self.symbols.simple_view())[:12]
 
 
+def _parse_symbol_metadata(symbols_spec: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = {}
+    for name, details in symbols_spec.items():
+        symbol_metadata = details.get('metadata')
+        if symbol_metadata is not None:
+            metadata[name] = symbol_metadata
+    return metadata
+
+
 def _reduce_results(results: List[str], reduce_spec: Dict[str, Any]) -> str:
     """
     Reduce per-sweep-point claim outcomes to a single card-level status.
@@ -784,6 +833,7 @@ class Symbol:
         self.type = spec.get('type', 'List[int]')
         self.definition = spec.get('python', '')
         self.dependencies = spec.get('depends_on', [])
+        self.metadata = spec.get('metadata')
 
     def eval(self, context: Dict[str, Any] = {}) -> Any:
         """
@@ -950,6 +1000,87 @@ class Symbols:
 
     def __call__(self) -> Dict[str, Any]:
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
+
+
+MetricValue = float
+MetricReducer = Callable[[List[float]], MetricValue]
+
+
+class Metric:
+    def __init__(
+        self,
+        name: str,
+        objective: MetricObjective,
+        reducer: MetricReducer,
+    ) -> None:
+        self.name = name
+        self.objective = objective
+        self.reducer = reducer
+
+    def aggregate_calculate(self, runs: List[float]) -> MetricValue:
+        print(f'Computing {self.name} Metric across all runs\n')
+        return self.reducer(runs)
+
+    @classmethod
+    def build_metrics_from_symbol_metadata(
+        cls, symbol_metadata: Dict[str, Any]
+    ) -> List[Self]:
+        metrics = []
+        for name, metadata in symbol_metadata.items():
+            metric_metadata = metadata.get('define_metric')
+            if metric_metadata is not None:
+                agg_strategy = metric_metadata.get(
+                    'aggregation_strategy', DEFAULT_METRIC_AGGREGATION_STRATEGY
+                )
+                strategy_name = agg_strategy.get('type')
+                parameters = agg_strategy.get('parameters') or {}
+                objective = MetricObjective(
+                    metric_metadata.get('objective', MetricObjective.MINIMIZE)
+                )
+
+                match strategy_name:
+                    case 'max':
+                        reducer = max
+                    case 'min':
+                        reducer = min
+                    case 'mean':
+                        reducer = fmean
+                    case 'custom':
+                        # Python function
+                        raise NotImplementedError
+                    case _:
+                        logger.warning(
+                            'Unrecognized Metric Aggregation Strategy; Please select one of {max, min, mean, custom}'
+                        )
+                        reducer = None
+
+                if reducer is not None:
+                    metrics.append(cls(name, objective, reducer))
+        return metrics
+
+
+def _calculate_metrics(
+    metric_definitions: List[Metric],
+    evaluations: List['EvaluationTask'],
+    symbol_metadata: Dict[str, Any],
+) -> Dict[str, MetricValue]:
+    calculated_metrics = {}
+    for metric in metric_definitions:
+        runs = []
+        for evaluation in evaluations:
+            symbol_value = evaluation.symbols().get(metric.name)
+            if symbol_value is None:
+                logger.error(
+                    f'Metric {metric.name} cannot be mapped to a Symbol value'
+                )
+                break
+            runs.append(symbol_value)
+        else:
+            display_name = symbol_metadata[metric.name].get(
+                'display_name', metric.name
+            )
+            calculated_metrics[display_name] = metric.aggregate_calculate(runs)
+    return calculated_metrics
 
 
 def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:

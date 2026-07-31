@@ -27,3 +27,42 @@ def test_invalid_card_fails_validation(simple_card, broken_card):
     card = {**simple_card, **broken_card}
     with pytest.raises(ValidationError):
         EvaluationCardSchema.model_validate(card)
+
+
+def test_metric_objective_is_an_enum(simple_card):
+    card = {
+        **simple_card,
+        'symbols': {
+            'score': {
+                'type': 'float',
+                'value': 0.5,
+                'metadata': {
+                    'define_metric': {
+                        'objective': 'increase',
+                        'aggregation_strategy': {'type': 'mean'},
+                    }
+                },
+            }
+        },
+    }
+    with pytest.raises(ValidationError):
+        EvaluationCardSchema.model_validate(card)
+
+
+def test_custom_metric_strategy_still_validates(simple_card):
+    card = {
+        **simple_card,
+        'symbols': {
+            'score': {
+                'type': 'float',
+                'value': 0.5,
+                'metadata': {
+                    'define_metric': {
+                        'objective': 'maximize',
+                        'aggregation_strategy': {'type': 'custom'},
+                    }
+                },
+            }
+        },
+    }
+    EvaluationCardSchema.model_validate(card)

@@ -49,6 +49,13 @@ symbols:
       - meta/llama-65b
 
   base_score:
+    metadata:
+      display_name: "Average Exact Match"
+      display: True
+      define_metric:
+        objective: maximize
+        aggregation_strategy:
+          type: 'mean'
     type: float
     depends_on:
       - base_model
@@ -74,6 +81,9 @@ symbols:
       comp_score = [(name, score) for name, score in exact_match_scores if name == comp_model][0][1]
 
   helm_runs_path:
+    metadata:
+      display_name: "HELM Data Path"
+      display: True
     type: str
     value: './data/crfm-helm-public/lite/benchmark_output'
 

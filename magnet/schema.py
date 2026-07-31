@@ -1,4 +1,5 @@
-from typing import Any, Optional
+from enum import StrEnum
+from typing import Any, Literal, Optional
 from pydantic import BaseModel, Field, model_validator
 
 class LinkSchema(BaseModel):
@@ -14,25 +15,60 @@ class SubmitterSchema(BaseModel):
 class ClaimSchema(BaseModel):
     python: str
 
+class MetricObjective(StrEnum):
+    MINIMIZE = 'minimize'
+    MAXIMIZE = 'maximize'
+
+class MetricAggregationStrategySchema(BaseModel):
+    type: Literal["mean", "max", "min", "custom"]
+    parameters: dict[str, float] | None = None
+
+class MetricSymbolSchema(BaseModel):
+    objective: MetricObjective = MetricObjective.MAXIMIZE
+    aggregation_strategy: MetricAggregationStrategySchema
+
+class SymbolMetadataSchema(BaseModel):
+    display: bool | None = None
+    display_name: str | None = None
+    define_metric: MetricSymbolSchema | None = None
+
 class SymbolSchema(BaseModel):
     type: str | None = None
     value: Any | None = None
     sweep: list | None = None
     depends_on: list[str] = Field(default_factory=list) # TODO: modify "depends_on" to reference an actual symbol
     python: str | None = None # TODO: this can be validated with a syntax check
+    metadata: SymbolMetadataSchema | None = None
 
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
         if self.value is None and self.sweep is None and self.python is None:
-            raise ValueError(
-                "symbol must define at least one of: 'value', 'sweep', or 'python'"
-            )
+            if self.metadata is not None and self.metadata.define_metric is not None:
+                # Handle metric definitions in kwdagger/pipeline cards 
+                # (i.e. ignore test for symbols defined/calculated in user script)
+                return self
+            else:
+                raise ValueError(
+                    "symbol must define at least one of: 'value', 'sweep', or 'python'"
+                )
         return self
 
+class ClaimAggregationStrategyParameterSchema(BaseModel):
+    threshold: float
+
 # TODO: If type == fraction, check that parameters[threshold] is defined and a float
-class ClaimAggregationStrategySchema(BaseModel): 
+class ClaimAggregationStrategySchema(BaseModel):
     type: str
+    parameters: ClaimAggregationStrategyParameterSchema | None = None
     model_config = {'extra': 'allow'} # without this, seems like the extra fields disappear
+
+    @model_validator(mode='after')
+    def confirm_threshold(self) -> 'ClaimAggregationStrategySchema':
+        if self.type == "fraction" and (self.parameters is None or self.parameters.threshold is None):
+            raise ValueError(
+                "claim aggregation strategy of fraction requires threshold parameter"
+            )
+        return self
 
 class EvaluationCardSchema(BaseModel):
     """
@@ -93,7 +129,7 @@ class EvaluationCardSchema(BaseModel):
     # --- Backend (at most one) ---
     kwdagger: dict[str, Any] | None = None
     pipeline: dict[str, Any] | None = None
-    
+
     @model_validator(mode='after')
     def exclusive_backends(self) -> 'EvaluationCardSchema':
         if self.kwdagger is not None and self.pipeline is not None:
