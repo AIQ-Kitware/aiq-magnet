@@ -28,6 +28,8 @@ claim:
 
 symbols:
   int_range_even:
+    metadata:
+      display_name: "Set of Even Numbers"
     type: List[int]
     python: |
       def create_even_range(start=-10, end=10):
@@ -35,6 +37,8 @@ symbols:
       int_range_even = create_even_range()
   
   int_range_odd:
+    metadata:
+      display_name: "Set of Odd Numbers"
     type: List[int]
     depends_on:
       - int_range_even
