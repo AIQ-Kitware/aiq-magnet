@@ -19,9 +19,8 @@ class MetricObjective(StrEnum):
     MINIMIZE = 'minimize'
     MAXIMIZE = 'maximize'
 
-
 class MetricAggregationStrategySchema(BaseModel):
-    type: Literal["mean", "max", "min", "threshold", "custom"]
+    type: Literal["mean", "max", "min", "custom"]
     parameters: dict[str, float] | None = None
 
 class MetricSymbolSchema(BaseModel):
@@ -43,7 +42,7 @@ class SymbolSchema(BaseModel):
 
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
-        if self.value is None and self.sweep is None and self.python is None:
+        if self.value is None and self.sweep is None and self.python is None and (self.metadata is not None and self.metadata.define_metric is None):
             raise ValueError(
                 "symbol must define at least one of: 'value', 'sweep', or 'python'"
             )

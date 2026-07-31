@@ -1,6 +1,5 @@
 import builtins
 import json
-import operator
 import os
 import sys
 from collections.abc import Callable
@@ -268,6 +267,16 @@ class EvaluationCard:
 
         claim_results_path = card_output_path / 'results'
 
+        raw_symbol_metadata = _parse_symbol_metadata(self.symbols)
+
+        if raw_symbol_metadata:
+            with safer.open(
+                card_output_path / 'symbol_metadata.json',
+                'w',
+                temp_file=SAFER_USE_TEMPFILE,
+            ) as f:
+                json.dump(raw_symbol_metadata, f, indent=2, ensure_ascii=False)
+
         if self.has_kwdagger:
             # Explicit kwdagger pipeline defined
             # Claim node handles symbols outside of EvaluationCard
@@ -316,17 +325,9 @@ class EvaluationCard:
             results.append(status)
             print(f'Wrote claim output to {results_fpath}')
 
-        raw_symbol_metadata = self.evaluations[0].symbols.parse_metadata()
         calculated_metrics = {}
 
         if raw_symbol_metadata:
-            with safer.open(
-                card_output_path / 'symbol_metadata.json',
-                'w',
-                temp_file=SAFER_USE_TEMPFILE,
-            ) as f:
-                json.dump(raw_symbol_metadata, f, indent=2, ensure_ascii=False)
-
             metric_definitions = Metric.build_metrics_from_symbol_metadata(
                 raw_symbol_metadata
             )
@@ -341,11 +342,7 @@ class EvaluationCard:
                     '================================\n Evaluation Metrics:\n'
                 )
                 for metric, value in calculated_metrics.items():
-                    if isinstance(value, bool):
-                        display_value = str(value)
-                    else:
-                        display_value = f'{value: .3f}'
-                    metric_statement += f'  {metric}: {display_value}\n'
+                    metric_statement += f'  {metric}: {value: .3f}\n'
                 print(metric_statement[:-1])
 
         total = len(results)
@@ -699,6 +696,15 @@ class EvaluationTask:
         return ub.hash_data(self.symbols.simple_view())[:12]
 
 
+def _parse_symbol_metadata(symbols_spec: Dict[str, Any]) -> Dict[str, Any]:
+    metadata = {}
+    for name, details in symbols_spec.items():
+        symbol_metadata = details.get('metadata')
+        if symbol_metadata is not None:
+            metadata[name] = symbol_metadata
+    return metadata
+
+
 def _reduce_results(results: List[str], reduce_spec: Dict[str, Any]) -> str:
     """
     Reduce per-sweep-point claim outcomes to a single card-level status.
@@ -992,18 +998,11 @@ class Symbols:
             or (type(v) == list and type(v[0]) == int)
         }
 
-    def parse_metadata(self) -> Dict[str, Any]:
-        metadata = {}
-        for name, symbol in self.symbols.items():
-            if symbol.metadata is not None:
-                metadata[name] = symbol.metadata
-        return metadata
-
     def __call__(self) -> Dict[str, Any]:
         return {symbol: self.symbols[symbol].value for symbol in self.symbols}
 
 
-MetricValue = float | bool
+MetricValue = float
 MetricReducer = Callable[[List[float]], MetricValue]
 
 
@@ -1018,8 +1017,8 @@ class Metric:
         self.objective = objective
         self.reducer = reducer
 
-    def calculate(self, runs: List[float]) -> MetricValue:
-        print(f'Computing {self.name} Metric')
+    def aggregate_calculate(self, runs: List[float]) -> MetricValue:
+        print(f'Computing {self.name} Metric across all runs\n')
         return self.reducer(runs)
 
     @classmethod
@@ -1046,38 +1045,12 @@ class Metric:
                         reducer = min
                     case 'mean':
                         reducer = fmean
-                    case 'threshold':
-                        threshold = parameters.get('threshold')
-                        if threshold is None:
-                            logger.warning(
-                                'Threshold Metric does not specify a threshold value. Ignoring.'
-                            )
-                            reducer = None
-                        else:
-                            comparison = (
-                                operator.lt
-                                if objective is MetricObjective.MINIMIZE
-                                else operator.gt
-                            )
-
-                            def threshold_reducer(
-                                runs: List[float],
-                                threshold: float = threshold,
-                                comparison: Callable[
-                                    [float, float], bool
-                                ] = comparison,
-                            ) -> bool:
-                                return all(
-                                    comparison(run, threshold) for run in runs
-                                )
-
-                            reducer = threshold_reducer
                     case 'custom':
                         # Python function
                         raise NotImplementedError
                     case _:
                         logger.warning(
-                            'Unrecognized Metric Aggregation Strategy; Please select one of {max, min, mean, threshold}'
+                            'Unrecognized Metric Aggregation Strategy; Please select one of {max, min, mean, custom}'
                         )
                         reducer = None
 
@@ -1106,7 +1079,7 @@ def _calculate_metrics(
             display_name = symbol_metadata[metric.name].get(
                 'display_name', metric.name
             )
-            calculated_metrics[display_name] = metric.calculate(runs)
+            calculated_metrics[display_name] = metric.aggregate_calculate(runs)
     return calculated_metrics
 
 

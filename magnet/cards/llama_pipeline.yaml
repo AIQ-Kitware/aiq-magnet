@@ -61,5 +61,12 @@ symbols:
   threshold:
     type: float
     value: 0.1
-
+  base_score:
+    metadata:
+      display_name: "Average Exact Match"
+      display: True
+      define_metric:
+        objective: 'maximize'
+        aggregation_strategy:
+          type: 'mean'
 
