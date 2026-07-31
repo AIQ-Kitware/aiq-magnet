@@ -3,14 +3,19 @@ r"""
 Example of to prepare precomputed HEIM metrics
 """
 
-import ubelt as ub
+from __future__ import annotations
+
+from typing import Any, Sequence
+
+import kwconf
 import kwutil
-import scriptconfig as scfg
+import ubelt as ub
+
 import magnet
 from magnet.utils.util_pandas import DotDictDataFrame
 
 
-class PrepareHeimResultsConfig(scfg.DataConfig):
+class PrepareHeimResultsConfig(kwconf.Config):
     r"""
     Read all HEIM results and output them in a simple JSON format.
 
@@ -44,19 +49,29 @@ class PrepareHeimResultsConfig(scfg.DataConfig):
 
     """
 
-    output_dir = scfg.Value('./heim_results', help=ub.paragraph(
-        '''
-        Directory where output json files will be written.
-        '''))
+    output_dir: str = kwconf.Value(
+        './heim_results',
+        help=ub.paragraph(
+            '''
+            Directory where output json files will be written.
+            '''
+        ),
+    )
 
-    download_dir = scfg.Value('/data/crfm-helm-public', help=ub.paragraph(
-        '''
-        This is where the heim/benchmark_output/runs/v1.*/* results should be.
-        They will be downloaded if needed.
-        '''))
+    download_dir: str = kwconf.Value(
+        '/data/crfm-helm-public',
+        help=ub.paragraph(
+            '''
+            This is where the heim/benchmark_output/runs/v1.*/* results should be.
+            They will be downloaded if needed.
+            '''
+        ),
+    )
 
 
-def main(argv=None, **kwargs):
+def main(
+    argv: Sequence[str] | str | bool | None = None, **kwargs: Any
+) -> None:
     """
     Example:
         >>> # xdoctest: +SKIP

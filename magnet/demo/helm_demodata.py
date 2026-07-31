@@ -1,25 +1,31 @@
-import scriptconfig as scfg
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import kwconf
 
 
-class HelmDemoConfig(scfg.DataConfig):
+class HelmDemoConfig(kwconf.Config):
     """
     Configuration for generating helm demo outputs
     """
-    run_entries = scfg.Value(
-        [
-            "mmlu:subject=philosophy,model=openai/gpt2",
-            "mmlu:subject=anatomy,model=openai/gpt2",
-            "mmlu:subject=anatomy,model=eleutherai/pythia-1b-v0",
-            "mmlu:subject=philosophy,model=eleutherai/pythia-1b-v0",
+    run_entries: list[str] = kwconf.Value(
+        default_factory=lambda: [
+            'mmlu:subject=philosophy,model=openai/gpt2',
+            'mmlu:subject=anatomy,model=openai/gpt2',
+            'mmlu:subject=anatomy,model=eleutherai/pythia-1b-v0',
+            'mmlu:subject=philosophy,model=eleutherai/pythia-1b-v0',
         ],
+        parser='yaml',
         help='Benchmark run entries',
     )
-    suite = scfg.Value("my-suite", help="Name of the helm suite")
-    max_eval_instances = scfg.Value(7, help="Maximum eval instances")
-    num_threads = scfg.Value(1, help="Number of threads")
+    suite: str = kwconf.Value('my-suite', help='Name of the helm suite')
+    max_eval_instances: int = kwconf.Value(7, help='Maximum eval instances')
+    num_threads: int = kwconf.Value(1, help='Number of threads')
 
 
-def ensure_helm_demo_outputs(**kwargs):
+def ensure_helm_demo_outputs(**kwargs: Any) -> Path:
     """
     Create a cached set of helm outputs for testing.
 
@@ -61,7 +67,7 @@ def ensure_helm_demo_outputs(**kwargs):
     return dpath
 
 
-def grab_helm_demo_outputs():
+def grab_helm_demo_outputs() -> Path:
     """
     Downloads offical pre-computed results instead of computing them
     """

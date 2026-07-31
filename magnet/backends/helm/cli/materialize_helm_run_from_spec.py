@@ -87,28 +87,28 @@ import os
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
+import kwconf
 import kwutil
-import scriptconfig as scfg
-
 from loguru import logger
 
 # Reuse the run-entry materializer's scaffolding verbatim (plan section 4). These
 # are package-internal helpers; importing them keeps the two CLIs symmetric and
 # means a fix to discovery/matching/local-config benefits both paths.
 from magnet.backends.helm.cli.materialize_helm_run import (
+    _CMD_STREAM_TAIL_BYTES,
+    _capture_process_context,
+    _coerce_optional_str_list,
+    _normalize_optional_pathish,
     find_best_precomputed_run,
     find_run_in_out_dpath,
     prepare_local_helm_config,
     write_helm_log_config,
-    _capture_process_context,
-    _normalize_optional_pathish,
-    _CMD_STREAM_TAIL_BYTES,
 )
 
 
-class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
+class MaterializeHelmRunFromSpecConfig(kwconf.Config):
     """
     Replay a single fully-resolved HELM ``run_spec.json`` faithfully.
 
@@ -119,7 +119,7 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
     the model identity always replays verbatim (substitution is by-name).
     """
 
-    run_entry = scfg.Value(
+    run_entry: str | None = kwconf.Value(
         None,
         help=(
             "HELM run-entry description string, e.g. "
@@ -128,10 +128,10 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
             "replayed); it is never re-parsed through helm-run."
         ),
         tags=['algo_param'],
-        type=str,
+        parser=str,
     )
 
-    run_spec_json = scfg.Value(
+    run_spec_json: str | None = kwconf.Value(
         None,
         help=(
             "Explicit path to a run_spec.json to replay. When set, discovery is "
@@ -139,23 +139,24 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
             "form). Wins over --run-entry/--precomputed-root if both are given."
         ),
         tags=['algo_param'],
-        type=str,
+        parser=str,
     )
 
-    suite = scfg.Value(
+    suite: str = kwconf.Value(
         'default-suite',
         help='HELM suite name to use for output layout (and run_benchmarking --suite).',
         tags=['algo_param'],
     )
 
-    out_dpath = scfg.Value(
+    out_dpath: str | None = kwconf.Value(
         None,
         help='Output directory (kwdagger node output directory).',
         tags=['out_path'],
     )
 
-    precomputed_root = scfg.Value(
-        [],
+    precomputed_root: str | list[str] | None = kwconf.Value(
+        default_factory=list,
+        parser='yaml',
         help=(
             'In discovery mode this is the RECIPE SOURCE: the root searched for '
             'the official run dir whose run_spec.json is replayed (not just a '
@@ -164,9 +165,9 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['in_param'],
     )
 
-    max_eval_instances = scfg.Value(
+    max_eval_instances: int | None = kwconf.Value(
         None,
-        type=int,
+        parser=int,
         help=(
             'When set, substituted into the resolved recipe: '
             'adapter_spec.max_eval_instances is replaced verbatim (truncating to '
@@ -175,9 +176,9 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    model_deployment = scfg.Value(
+    model_deployment: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional deployment-rewrite target. When set, '
             'adapter_spec.model_deployment is rewritten to this LOCAL deployment '
@@ -193,13 +194,13 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    require_per_instance_stats = scfg.Value(
+    require_per_instance_stats: bool = kwconf.Value(
         True,
         help='Require per_instance_stats.json when locating the produced run dir.',
         tags=['algo_param'],
     )
 
-    mode = scfg.Value(
+    mode: str = kwconf.Value(
         'compute_if_missing',
         choices=['reuse_only', 'compute_if_missing', 'force_recompute'],
         help=(
@@ -211,30 +212,30 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['perf_param'],
     )
 
-    materialize = scfg.Value(
+    materialize: str = kwconf.Value(
         'symlink',
         choices=['symlink', 'copy'],
         help='Accepted for flag-compatibility; unused (the from-spec path computes).',
         tags=['perf_param'],
     )
 
-    num_threads = scfg.Value(
+    num_threads: int = kwconf.Value(
         1,
-        type=int,
+        parser=int,
         help='Passed to run_benchmarking (parallelism).',
         tags=['perf_param'],
     )
 
-    local_path = scfg.Value(
+    local_path: str = kwconf.Value(
         'prod_env',
-        type=str,
+        parser=str,
         help='HELM local config path. Relative paths are resolved inside out_dpath.',
         tags=['perf_param'],
     )
 
-    model_deployments_fpath = scfg.Value(
+    model_deployments_fpath: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional path to a HELM model_deployments.yaml override copied into '
             '<local_path>/model_deployments.yaml before replay. This is the '
@@ -244,9 +245,9 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    model_metadata_fpath = scfg.Value(
+    model_metadata_fpath: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional path to a HELM model_metadata.yaml sidecar copied into '
             '<local_path>/model_metadata.yaml before replay. Registers net-new '
@@ -255,9 +256,9 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    tokenizer_configs_fpath = scfg.Value(
+    tokenizer_configs_fpath: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional path to a HELM tokenizer_configs.yaml sidecar copied into '
             '<local_path>/tokenizer_configs.yaml before replay. Registers net-new '
@@ -266,34 +267,38 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    enable_huggingface_models = scfg.Value(
+    enable_huggingface_models: list[str] | None = kwconf.Value(
         None,
-        type=str,
+        parser=_coerce_optional_str_list,
         help='Optional YAML-encoded list, mirrored from helm-run --enable-huggingface-models.',
         tags=['algo_param'],
     )
 
-    enable_local_huggingface_models = scfg.Value(
+    enable_local_huggingface_models: list[str] | None = kwconf.Value(
         None,
-        type=str,
+        parser=_coerce_optional_str_list,
         help='Optional YAML-encoded list, mirrored from helm-run --enable-local-huggingface-models.',
         tags=['algo_param'],
     )
 
-    done_fname = scfg.Value(
+    done_fname: str = kwconf.Value(
         'DONE',
         help='Name of the sentinel file written last when the node is complete.',
         tags=['out_path', 'primary'],
     )
 
-    manifest_fname = scfg.Value(
+    manifest_fname: str = kwconf.Value(
         'adapter_manifest.json',
         help='Name of the JSON manifest describing what happened.',
         tags=['out_path'],
     )
 
     @classmethod
-    def main(cls, argv=None, **kwargs) -> dict:
+    def main(
+        cls,
+        argv: Sequence[str] | str | bool | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """
         Entry point. Returns (and writes) the adapter manifest.
 
@@ -328,10 +333,10 @@ class MaterializeHelmRunFromSpecConfig(scfg.DataConfig):
         # rendered ``--model_deployment=None`` / empty value collapses to None
         # (pure by-name replay) rather than a literal deployment named "None".
         config.model_deployment = _normalize_optional_pathish(config.model_deployment)
-        config.enable_huggingface_models = kwutil.Yaml.coerce(
+        config.enable_huggingface_models = _coerce_optional_str_list(
             config.enable_huggingface_models
         )
-        config.enable_local_huggingface_models = kwutil.Yaml.coerce(
+        config.enable_local_huggingface_models = _coerce_optional_str_list(
             config.enable_local_huggingface_models
         )
 

@@ -1,20 +1,22 @@
-import json
+from __future__ import annotations
 
+import json
+from typing import Any, Sequence
+
+import kwconf
 import kwutil
-import scriptconfig as scfg
 import ubelt as ub
 
 from magnet.backends.helm.helm_outputs import HelmOutputs
 from magnet.backends.helm.helm_outputs import HelmSuiteRuns
 
 
-class ExampleLlamaEndpointCLI(scfg.DataConfig):
+class ExampleLlamaEndpointCLI(kwconf.Config):
     """
     Stub for a prediction algorithm that grabs relevant scores from HELM precomputed results
     """
 
-    base_model = scfg.Value(
-        None,
+    base_model: str = kwconf.Value(
         required=True,
         help=ub.paragraph(
             """
@@ -24,8 +26,7 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    comp_model = scfg.Value(
-        None,
+    comp_model: str = kwconf.Value(
         required=True,
         help=ub.paragraph(
             """
@@ -35,7 +36,7 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    threshold = scfg.Value(
+    threshold: float = kwconf.Value(
         0.1,
         help=ub.paragraph(
             """
@@ -45,7 +46,7 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    helm_runs_path = scfg.Value(
+    helm_runs_path: str = kwconf.Value(
         './data/crfm-helm-public/lite/benchmark_output',
         help=ub.paragraph(
             """
@@ -55,7 +56,7 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    results_fpath = scfg.Value(
+    results_fpath: str = kwconf.Value(
         'results.json',
         help=ub.paragraph(
             """
@@ -66,7 +67,11 @@ class ExampleLlamaEndpointCLI(scfg.DataConfig):
     )
 
     @classmethod
-    def main(cls, argv=None, **kwargs):
+    def main(
+        cls,
+        argv: Sequence[str] | str | bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose=True)
 
         run_data = {

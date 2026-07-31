@@ -1,18 +1,20 @@
-import json
+from __future__ import annotations
 
-import scriptconfig as scfg
+import json
+from typing import Any, Sequence
+
+import kwconf
 import ubelt as ub
 
 
-class ConsistencyClaimCLI(scfg.DataConfig):
+class ConsistencyClaimCLI(kwconf.Config):
     """
     Llama consistency example claim representation.
 
     In lieu of the Claim definition in evaluation.py, this offers a more flexible injest -> evaluate -> write option.
     """
 
-    symbols_fpath = scfg.Value(
-        None,
+    symbols_fpath: str = kwconf.Value(
         required=True,
         help=ub.paragraph(
             """
@@ -22,7 +24,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
         tags=['in_path'],
     )
 
-    verdict_fpath = scfg.Value(
+    verdict_fpath: str = kwconf.Value(
         'verdict.json',
         help=ub.paragraph(
             """
@@ -33,7 +35,11 @@ class ConsistencyClaimCLI(scfg.DataConfig):
     )
 
     @classmethod
-    def main(cls, argv=None, **kwargs):
+    def main(
+        cls,
+        argv: Sequence[str] | str | bool | None = None,
+        **kwargs: Any,
+    ) -> None:
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose=True)
 
         verdict_json = {

@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-import scriptconfig as scfg
+from __future__ import annotations
+
+import kwconf
 
 
-class DownloadModalCLI(scfg.ModalCLI):
+class DownloadModalCLI(kwconf.ModalCLI):
     """
     Download precomputed results for different benchmarking backends.
     """

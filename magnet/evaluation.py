@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import builtins
 import json
 import os
@@ -7,11 +9,11 @@ from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import product
 from statistics import fmean
-from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
+from typing import Any, Dict, List, Self, Sequence, Tuple, get_args, get_origin
 
+import kwconf
 import kwutil
 import safer
-import scriptconfig as scfg
 import ubelt as ub
 import yaml
 from kwdagger import Pipeline, ProcessNode
@@ -20,9 +22,8 @@ from loguru import logger
 from pydantic import ValidationError
 from rich import print
 
-from magnet.utils.util_logger import setup_logging
-from pydantic import ValidationError
 from magnet.schema import EvaluationCardSchema, MetricObjective
+from magnet.utils.util_logger import setup_logging
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -30,7 +31,7 @@ DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
 DEFAULT_METRIC_AGGREGATION_STRATEGY = {'type': 'mean'}
 
 
-class EvaluationConfig(scfg.DataConfig):
+class EvaluationConfig(kwconf.Config):
     """
     Resolve an Evaluation Card
     """
@@ -47,43 +48,44 @@ class EvaluationConfig(scfg.DataConfig):
       python -m magnet.evaluation magnet/cards/simple.yaml
     """
 
-    path = scfg.Value(
-        None, required=True, position=1, help='Path to evaluation card YAML'
+    path: str = kwconf.Value(
+        required=True, position=1, help='Path to evaluation card YAML'
     )
 
-    output_path = scfg.Value(
+    output_path: str = kwconf.Value(
         './evaluation_runs', help='Root data path for saved results'
     )
 
-    override = scfg.Value(
+    override: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help='Override symbol values (e.g. --override dataset: legalbench\nnum_replicates: 5)',
     )
 
-    jobs = scfg.Value(
+    jobs: int = kwconf.Value(
         1,
-        type=int,
+        parser=int,
         help=(
             'Number of evaluation jobs. Use 1 for serial execution, '
             '-1 for all available CPUs when using joblib.'
         ),
     )
 
-    parallel_backend = scfg.Value(
+    parallel_backend: str = kwconf.Value(
         'loky',
-        type=str,
+        parser=str,
         choices=['loky', 'threading', 'multiprocessing'],
         help='Joblib backend used when --jobs is not 1.',
     )
 
-    verbose = scfg.Value(
-        False, isflag=True, help='Verbose log output', group='logging'
+    verbose: bool = kwconf.Flag(
+        False, help='Verbose log output', group='logging'
     )
 
-    validate = scfg.Value(
+    validation: str = kwconf.Value(
         'error',
-        type=str,
+        alias=['validate'],
+        parser=str,
         choices=['only', 'error', 'warning', 'off'],
         help=(
             "'only': validate schema and exit. "
@@ -92,6 +94,15 @@ class EvaluationConfig(scfg.DataConfig):
             "'off': skip validation entirely."
         ),
     )
+
+    @classmethod
+    def main(
+        cls,
+        argv: Sequence[str] | str | bool | None = None,
+        **kwargs: Any,
+    ) -> None:
+        main(argv=argv, **kwargs)
+
 
 # Claim Resolution (pulled out as standalone function for
 # multiprocessing support)
@@ -1096,7 +1107,9 @@ def _calculate_metrics(
     return calculated_metrics
 
 
-def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
+def main(
+    argv: Sequence[str] | str | bool | None = None, **kwargs: Any
+) -> None:
     args = EvaluationConfig.cli(
         argv=argv,
         data=kwargs,
@@ -1105,7 +1118,7 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         special_options=False,
     )
 
-    if args.validate == 'only':
+    if args.validation == 'only':
         try:
             with open(args.path, 'r') as f:
                 cfg = yaml.safe_load(f)
@@ -1117,8 +1130,9 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
             sys.exit(1)
         return
 
-
-    card = EvaluationCard(args.path, args.output_path, validate=args.validate)
+    card = EvaluationCard(
+        args.path, args.output_path, validate=args.validation
+    )
     if args.override is not None:
         card.replace(args.override)
 
@@ -1131,7 +1145,6 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
 
 
 __cli__ = EvaluationConfig
-__cli__.main = main
 
 if __name__ == '__main__':
     main(sys.argv[1:])
