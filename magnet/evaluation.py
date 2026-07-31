@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import builtins
 import json
 import os
@@ -9,11 +7,11 @@ from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import product
 from statistics import fmean
-from typing import Any, Dict, List, Self, Sequence, Tuple, get_args, get_origin
+from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
 
-import kwconf
 import kwutil
 import safer
+import kwconf as scfg
 import ubelt as ub
 import yaml
 from kwdagger import Pipeline, ProcessNode
@@ -22,8 +20,9 @@ from loguru import logger
 from pydantic import ValidationError
 from rich import print
 
-from magnet.schema import EvaluationCardSchema, MetricObjective
 from magnet.utils.util_logger import setup_logging
+from pydantic import ValidationError
+from magnet.schema import EvaluationCardSchema, MetricObjective
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -31,7 +30,7 @@ DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
 DEFAULT_METRIC_AGGREGATION_STRATEGY = {'type': 'mean'}
 
 
-class EvaluationConfig(kwconf.Config):
+class EvaluationConfig(scfg.Config):
     """
     Resolve an Evaluation Card
     """
@@ -48,21 +47,21 @@ class EvaluationConfig(kwconf.Config):
       python -m magnet.evaluation magnet/cards/simple.yaml
     """
 
-    path: str = kwconf.Value(
-        required=True, position=1, help='Path to evaluation card YAML'
+    path: str = scfg.Value(
+        None, required=True, position=1, help='Path to evaluation card YAML'
     )
 
-    output_path: str = kwconf.Value(
+    output_path: str = scfg.Value(
         './evaluation_runs', help='Root data path for saved results'
     )
 
-    override: str | None = kwconf.Value(
+    override: str | None = scfg.Value(
         None,
         parser=str,
         help='Override symbol values (e.g. --override dataset: legalbench\nnum_replicates: 5)',
     )
 
-    jobs: int = kwconf.Value(
+    jobs: int = scfg.Value(
         1,
         parser=int,
         help=(
@@ -71,21 +70,18 @@ class EvaluationConfig(kwconf.Config):
         ),
     )
 
-    parallel_backend: str = kwconf.Value(
+    parallel_backend: str = scfg.Value(
         'loky',
         parser=str,
         choices=['loky', 'threading', 'multiprocessing'],
         help='Joblib backend used when --jobs is not 1.',
     )
 
-    verbose: bool = kwconf.Flag(
-        False, help='Verbose log output', group='logging'
+    verbose: bool = scfg.Value(
+        False, isflag=True, help='Verbose log output', group='logging'
     )
 
-    # Note: there is a kwconf bug where validate is a public attribute.
-    # This works around it, but this is a kwconf issue that will be fixed.
-    # And the old name will become valid again.
-    validation: str = kwconf.Value(
+    validation: str = scfg.Value(
         'error',
         alias=['validate'],
         parser=str,
@@ -97,15 +93,6 @@ class EvaluationConfig(kwconf.Config):
             "'off': skip validation entirely."
         ),
     )
-
-    @classmethod
-    def main(
-        cls,
-        argv: Sequence[str] | str | bool | None = None,
-        **kwargs: Any,
-    ) -> None:
-        main(argv=argv, **kwargs)
-
 
 # Claim Resolution (pulled out as standalone function for
 # multiprocessing support)
@@ -1110,9 +1097,7 @@ def _calculate_metrics(
     return calculated_metrics
 
 
-def main(
-    argv: Sequence[str] | str | bool | None = None, **kwargs: Any
-) -> None:
+def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
     args = EvaluationConfig.cli(
         argv=argv,
         data=kwargs,
@@ -1133,9 +1118,8 @@ def main(
             sys.exit(1)
         return
 
-    card = EvaluationCard(
-        args.path, args.output_path, validate=args.validation
-    )
+
+    card = EvaluationCard(args.path, args.output_path, validate=args.validation)
     if args.override is not None:
         card.replace(args.override)
 
@@ -1148,6 +1132,7 @@ def main(
 
 
 __cli__ = EvaluationConfig
+__cli__.main = main
 
 if __name__ == '__main__':
     main(sys.argv[1:])

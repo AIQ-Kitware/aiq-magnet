@@ -50,25 +50,27 @@ Example:
     >>> assert len(existing) == 14, 'should have only downloaded a few results'
 """
 
-from __future__ import annotations
-
 import re
 import shutil
 import sys
-from functools import cached_property
-from typing import Any, Sequence
-
-import kwconf
 import ubelt as ub
+import kwconf as scfg
+from functools import cached_property
+from typing import List
 from loguru import logger
 
 from magnet.utils.util_logger import setup_logging
 
 
-class DownloadHelmConfig(kwconf.Config):
+class DownloadHelmConfig(scfg.Config):
     """
     Download HELM benchmark run artifacts from the public GCS bucket.
     """
+
+    # hack, scriptconfig should allow modals to overwrite this in the context
+    # of usage, not definition in a future version, for now this does what we
+    # want.
+    # __command__ = 'helm'
 
     __epilog__ = """
     Usage:
@@ -111,28 +113,29 @@ class DownloadHelmConfig(kwconf.Config):
         .. [1] https://crfm-helm.readthedocs.io/en/latest/downloading_raw_results/
         .. [2] https://console.cloud.google.com/storage/browser/crfm-helm-public
     """
-    download_dir: str = kwconf.Value(
+    download_dir: str = scfg.Value(
         '', alias=['dir'], position=1, help='Destination directory'
     )
-    benchmark: str = kwconf.Value(
+    benchmark: str = scfg.Value(
         'lite',
         position=2,
         help='Benchmark name (e.g., lite, helm, classic). Use a kwutil.MultiPattern for multi-select (e.g. "lite|ewok" or "regex:.*")',
     )
-    version: str = kwconf.Value(
+    version: str = scfg.Value(
         'latest',
         position=3,
         help='Benchmark version (e.g. v1.9.0). If latest/auto, uses most recent. You may also use a kwutil.MultiPattern to select multiple versions.',
     )
-    stop_on_error: bool = kwconf.Flag(
+    stop_on_error: bool = scfg.Value(
         False,
+        isflag=True,
         group='behavior',
         help='When downloading multiple benchmarks/versions, stop on first error',
     )
 
-    runs: str | list[str] | None = kwconf.Value(
+    runs: str | list[str] | None = scfg.Value(
         None,
-        parser='yaml',
+        parser=str,
         help=ub.paragraph(
             """
             Optional glob pattern (or kwutil MultiPattern) to match specific
@@ -142,13 +145,15 @@ class DownloadHelmConfig(kwconf.Config):
         ),
     )  # empty means "download all runs in the version"
 
-    list_benchmarks: bool = kwconf.Flag(
+    list_benchmarks: bool = scfg.Value(
         False,
+        isflag=True,
         group='listers',
         help='List available benchmarks and exit',
     )
-    list_versions: bool = kwconf.Flag(
+    list_versions: bool = scfg.Value(
         False,
+        isflag=True,
         group='listers',
         help=ub.paragraph(
             """
@@ -156,8 +161,9 @@ class DownloadHelmConfig(kwconf.Config):
             """
         ),
     )
-    list_runs: bool = kwconf.Flag(
+    list_runs: bool = scfg.Value(
         False,
+        isflag=True,
         group='listers',
         help=ub.paragraph(
             """
@@ -166,20 +172,21 @@ class DownloadHelmConfig(kwconf.Config):
         ),
     )
 
-    verbose: bool = kwconf.Flag(
-        False, help='Verbose output', group='logging'
+    verbose: bool = scfg.Value(
+        False, isflag=True, help='Verbose output', group='logging'
     )
-    bucket: str = kwconf.Value(
+    bucket: str = scfg.Value(
         'gs://crfm-helm-public',
         help='The storage bucket to download from. No need to change this.',
         group='behavior',
     )
-    checksum: bool = kwconf.Flag(
+    checksum: bool = scfg.Value(
         False,
+        isflag=True,
         help='Enable checksum-based comparison',
         group='behavior',
     )
-    backend: str = kwconf.Value(
+    backend: str = scfg.Value(
         'fsspec',
         choices=['gsutil', 'fsspec'],
         group='behavior',
@@ -190,19 +197,12 @@ class DownloadHelmConfig(kwconf.Config):
             """
         ),
     )
-    install: bool = kwconf.Flag(
+    install: bool = scfg.Value(
         False,
+        isflag=True,
         group='behavior',
         help='Auto-install gsutil on Debian/Ubuntu. Only relevant for gsutil backend',
     )
-
-    @classmethod
-    def main(
-        cls,
-        argv: Sequence[str] | str | bool | None = None,
-        **kwargs: Any,
-    ) -> int:
-        return main(argv=argv, **kwargs)
 
 
 class ExitError(RuntimeError):
@@ -372,7 +372,7 @@ class GsutilStorageBackend:
             ub.cmd(c, verbose=3)
 
     # ---- protocol ----
-    def list_dirs(self, prefix: str) -> list[str]:
+    def list_dirs(self, prefix: str) -> List[str]:
         logger.debug(f'list_dirs: {prefix}')
         # Normalize to gs://...
         prefix = prefix.rstrip('/') + '/'
@@ -418,7 +418,7 @@ class FsspecStorageBackend:
             )
         self.fs = fsspec.filesystem('gcs', token='anon')
 
-    def list_dirs(self, prefix: str) -> list[str]:
+    def list_dirs(self, prefix: str) -> List[str]:
         """
         Ignore:
             self = FsspecStorageBackend('gs://crfm-helm-public')
@@ -588,7 +588,7 @@ class HelmRemoteStore:
         return f'{self.bucket}/{benchmark}/benchmark_output/runs'
 
     # --- list API ---
-    def list_benchmarks(self) -> list[str]:
+    def list_benchmarks(self) -> List[str]:
         # everything at bucket root are candidate benchmarks; filter out non-bench dirs
         names = set(self.backend.list_dirs(self.bucket))
         # Non-benchmark directories that share the bucket root.
@@ -601,7 +601,7 @@ class HelmRemoteStore:
         }
         return sorted(names - blocklist)
 
-    def list_versions(self, benchmark: str) -> list[str]:
+    def list_versions(self, benchmark: str) -> List[str]:
         """
         Example:
             >>> # xdoctest: +REQUIRES(module:gcsfs)
@@ -627,7 +627,7 @@ class HelmRemoteStore:
         vers = self.list_versions(benchmark)
         return vers[-1] if vers else ''
 
-    def list_runs(self, benchmark: str, version: str) -> list[str]:
+    def list_runs(self, benchmark: str, version: str) -> List[str]:
         root = self._runs_root(benchmark)
         return self.backend.list_dirs(f'{root}/{version}')
 
@@ -648,7 +648,7 @@ class HelmRemoteStore:
         benchmark: str,
         version: str,
         dest: ub.Path,
-        run_ids: list[str],
+        run_ids: List[str],
         *,
         checksum: bool = False,
     ) -> None:
@@ -774,9 +774,7 @@ def _do_requested_download(
     return 0
 
 
-def main(
-    argv: Sequence[str] | str | bool | None = None, **kwargs: Any
-) -> int:
+def main(argv=None, **kwargs) -> int:
     args = DownloadHelmConfig.cli(
         argv=argv, data=kwargs, strict=True, special_options=False
     )
@@ -815,7 +813,7 @@ def main(
             print(name)
         return 0
 
-    def resolve_benchmarks(selector: str) -> list[str]:
+    def resolve_benchmarks(selector: str) -> List[str]:
         """Resolve benchmark selector.
 
         - If the selector looks like a single identifier, we assume it refers
@@ -839,7 +837,7 @@ def main(
         )
         return matched
 
-    def resolve_versions(benchmark: str, selector: str) -> list[str]:
+    def resolve_versions(benchmark: str, selector: str) -> List[str]:
         """Resolve version selector for a benchmark.
 
         - 'latest' / 'auto' resolves to the most recent version.
@@ -974,6 +972,7 @@ def main(
 
 
 __cli__ = DownloadHelmConfig
+__cli__.main = main
 
 if __name__ == '__main__':
     sys.exit(main(sys.argv[1:]))

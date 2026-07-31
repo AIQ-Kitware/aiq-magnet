@@ -1,22 +1,20 @@
-from __future__ import annotations
-
 import json
-from typing import Any, Sequence
 
-import kwconf
 import kwutil
+import kwconf as scfg
 import ubelt as ub
 
 from magnet.backends.helm.helm_outputs import HelmOutputs
 from magnet.backends.helm.helm_outputs import HelmSuiteRuns
 
 
-class ExampleLlamaEndpointCLI(kwconf.Config):
+class ExampleLlamaEndpointCLI(scfg.Config):
     """
     Stub for a prediction algorithm that grabs relevant scores from HELM precomputed results
     """
 
-    base_model: str = kwconf.Value(
+    base_model: str = scfg.Value(
+        None,
         required=True,
         help=ub.paragraph(
             """
@@ -26,7 +24,8 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         tags=['algo_param'],
     )
 
-    comp_model: str = kwconf.Value(
+    comp_model: str = scfg.Value(
+        None,
         required=True,
         help=ub.paragraph(
             """
@@ -36,7 +35,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         tags=['algo_param'],
     )
 
-    threshold: float = kwconf.Value(
+    threshold: float = scfg.Value(
         0.1,
         help=ub.paragraph(
             """
@@ -46,7 +45,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         tags=['algo_param'],
     )
 
-    helm_runs_path: str = kwconf.Value(
+    helm_runs_path: str = scfg.Value(
         './data/crfm-helm-public/lite/benchmark_output',
         help=ub.paragraph(
             """
@@ -56,7 +55,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         tags=['algo_param'],
     )
 
-    results_fpath: str = kwconf.Value(
+    results_fpath: str = scfg.Value(
         'results.json',
         help=ub.paragraph(
             """
@@ -67,11 +66,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
     )
 
     @classmethod
-    def main(
-        cls,
-        argv: Sequence[str] | str | bool | None = None,
-        **kwargs: Any,
-    ) -> None:
+    def main(cls, argv=None, **kwargs):
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose=True)
 
         run_data = {

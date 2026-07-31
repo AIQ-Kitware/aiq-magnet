@@ -28,65 +28,60 @@ Usage:
 from __future__ import annotations
 
 import json
-from typing import Any, Sequence
+from typing import Any, Dict
+import kwconf as scfg
 
-import kwconf
 
-
-class InspectHelmModelsConfig(kwconf.Config):
+class InspectHelmModelsConfig(scfg.Config):
     """
     Pandas-based inspection of HELM model deployments.
     """
 
     # Output / formatting
-    format: str = kwconf.Value(
+    format: str = scfg.Value(
         'table',
         help='Output format',
         choices=['table', 'csv', 'json', 'jsonl', 'md'],
     )
-    max_rows: int | None = kwconf.Value(
-        None, parser=int, help='Max rows to print (None = no limit)'
-    )
-    columns: list[str] | None = kwconf.Value(
+    max_rows: int | None = scfg.Value(None, help='Max rows to print (None = no limit)')
+    columns: list[str] | None = scfg.Value(
         None,
         help='Subset of columns to show (space-separated)',
         nargs='*',
     )
 
     # Selection / filtering / shaping
-    query: str | None = kwconf.Value(
+    query: str | None = scfg.Value(
         None,
+        parser=str,
         help='Pandas DataFrame.query string (uses column names). Example: "deprecated == False"',
     )
-    sort: list[str] | None = kwconf.Value(
+    sort: list[str] | None = scfg.Value(
         None,
         help='Column(s) to sort by',
         nargs='*',
     )
-    groupby: str | None = kwconf.Value(
+    groupby: str | None = scfg.Value(
         None,
+        parser=str,
         help='If set, group by this column and show deployment counts per group',
     )
 
     # Client spec options
-    include_client_args: bool = kwconf.Flag(
-        False, help='Include client_spec.args as a dict column'
+    include_client_args: bool = scfg.Value(
+        False, isflag=True, help='Include client_spec.args as a dict column'
     )
-    flatten_client_args: bool = kwconf.Flag(
-        False, help='Flatten client_spec.args into individual columns'
+    flatten_client_args: bool = scfg.Value(
+        False, isflag=True, help='Flatten client_spec.args into individual columns'
     )
-    client_args_prefix: str = kwconf.Value(
+    client_args_prefix: str = scfg.Value(
         'client_', help='Prefix for flattened client args columns'
     )
 
-    verbose: bool = kwconf.Flag(False, help='if True also print the config')
+    verbose: bool = scfg.Value(False, help='if True also print the config')
 
     @classmethod
-    def main(
-        cls,
-        argv: Sequence[str] | str | bool | None = None,
-        **kwargs: Any,
-    ) -> int:
+    def main(cls, argv=None, **kwargs) -> int:
         """
         Example:
             >>> # xdoctest: +SKIP(test is not idempotent)
@@ -102,18 +97,18 @@ class InspectHelmModelsConfig(kwconf.Config):
         import pandas as pd
 
         df = _build_deployments_df(
-            include_client_args=cfg.include_client_args,
-            flatten_client_args=cfg.flatten_client_args,
-            client_args_prefix=cfg.client_args_prefix,
+            include_client_args=cfg['include_client_args'],
+            flatten_client_args=cfg['flatten_client_args'],
+            client_args_prefix=cfg['client_args_prefix'],
         )
 
         # Filtering: query first (safe-ish), then where (python expr)
-        if cfg.query:
-            df = df.query(cfg.query).copy()
+        if cfg['query']:
+            df = df.query(cfg['query']).copy()
 
         # Grouping summary
-        if cfg.groupby:
-            gcol = cfg.groupby
+        if cfg['groupby']:
+            gcol = cfg['groupby']
             if gcol not in df.columns:
                 raise SystemExit(
                     f'--groupby column {gcol!r} not found. Available: {list(df.columns)}'
@@ -138,29 +133,29 @@ class InspectHelmModelsConfig(kwconf.Config):
             df = out
 
         # Sort + columns
-        if cfg.sort:
-            for col in cfg.sort:
+        if cfg['sort']:
+            for col in cfg['sort']:
                 if col not in df.columns:
                     raise SystemExit(
                         f'--sort column {col!r} not found. Available: {list(df.columns)}'
                     )
             df = df.sort_values(
-                cfg.sort, kind='stable', na_position='last'
+                list(cfg['sort']), kind='stable', na_position='last'
             )
 
-        if cfg.columns:
-            for col in cfg.columns:
+        if cfg['columns']:
+            for col in cfg['columns']:
                 if col not in df.columns:
                     raise SystemExit(
                         f'--columns value {col!r} not found. Available: {list(df.columns)}'
                     )
-            df = df[cfg.columns].copy()
+            df = df[list(cfg['columns'])].copy()
 
         # Limit printing
-        if cfg.max_rows is not None:
-            df = df.head(cfg.max_rows)
+        if cfg['max_rows'] is not None:
+            df = df.head(int(cfg['max_rows']))
 
-        fmt = cfg.format
+        fmt = cfg['format']
         if fmt == 'table':
             # Best-effort width management for terminals
             with pd.option_context(
@@ -212,7 +207,7 @@ def _build_deployments_df(
     for dep in model_deployment_registry.ALL_MODEL_DEPLOYMENTS:
         cs = getattr(dep, 'client_spec', None)
 
-        row: dict[str, Any] = {
+        row: Dict[str, Any] = {
             'deployment': getattr(dep, 'name', None),
             'model_name': getattr(dep, 'model_name', None),
             'tokenizer_name': getattr(dep, 'tokenizer_name', None),
