@@ -82,6 +82,9 @@ class EvaluationConfig(kwconf.Config):
         False, help='Verbose log output', group='logging'
     )
 
+    # Note: there is a kwconf bug where validate is a public attribute.
+    # This works around it, but this is a kwconf issue that will be fixed.
+    # And the old name will become valid again.
     validation: str = kwconf.Value(
         'error',
         alias=['validate'],
