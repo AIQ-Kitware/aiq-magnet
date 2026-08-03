@@ -1134,27 +1134,8 @@ __cli__ = EvaluationConfig
 __cli__.main = main
 
 if __name__ == '__main__':
-    # Re-enter through the imported module rather than calling the copy of
-    # `main` defined above.
-    #
-    # `python -m magnet.evaluation` executes this file under the name
-    # `__main__`, so every class in it is a `__main__` class. `evaluate`
-    # dispatches to joblib, whose loky backend pickles `__main__` classes BY
-    # VALUE -- code, and every module global the methods reference. Those
-    # globals include the loguru `logger`, and once `setup_logging` has added
-    # a file sink the logger owns state that cannot be pickled: a
-    # `multiprocessing.SimpleQueue` with `enqueue=True`, an open append-mode
-    # file without it. Any run with `--jobs > 1` then dies with a bare
-    # "Could not pickle the task to send it to the workers".
-    #
-    # Importing first gives us a second, ordinary `magnet.evaluation` module
-    # whose classes pickle by reference, which is what loky wants. Nothing at
-    # module scope here has side effects, so evaluating it twice is cheap.
-    #
-    # Localising the loguru import instead was tried and is not enough: the
-    # reference reappears through other objects in the pickled graph, so it
-    # only moves the failure. This fixes the mechanism -- no module global,
-    # present or future, can reach the workers by value.
+    # Prevent pickling errors by re-entering through the imported module rather
+    # than calling the copy in the `__main__` namespace.
     from magnet.evaluation import main as _main_by_reference
 
     _main_by_reference(sys.argv[1:])
