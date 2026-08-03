@@ -82,8 +82,10 @@ __all__ = [
     'ContainerProcessNode',
     'containerization_is_enabled',
     'container_prefix',
+    'forwarded_env',
     'IMAGE_ENVVAR',
     'MOUNTS_ENVVAR',
+    'FORWARD_ENV_ENVVAR',
 ]
 
 #: Image to run node commands in. Unset => run on the host, as before.
@@ -98,24 +100,49 @@ MOUNTS_ENVVAR = 'MAGNET_NODE_MOUNTS'
 #: reservations, an alternate network, a registry credential mount.
 DOCKER_ARGS_ENVVAR = 'MAGNET_NODE_DOCKER_ARGS'
 
-#: Environment variables forwarded into the container by name, so their
-#: values are read at job time rather than baked into the command. The
-#: OPENAI_* pair is what a surrounding lease exports; the rest are the knobs
-#: a node legitimately reads.
-FORWARDED_ENV = (
+#: Colon- or comma-separated extra variable names to forward, on top of
+#: :data:`DEFAULT_FORWARDED_ENV`. This is how a pipeline's own configuration
+#: reaches its nodes: MAGNET has no business knowing what those variables are
+#: called, so it does not enumerate them.
+FORWARD_ENV_ENVVAR = 'MAGNET_NODE_FORWARD_ENV'
+
+#: Variables forwarded into every containerized node, by name -- so the value
+#: is read at job time rather than baked into a command string rendered much
+#: earlier. The OPENAI_* pair is what a surrounding lease exports; the rest
+#: are generic runtime settings, not anything specific to one evaluation.
+DEFAULT_FORWARDED_ENV = (
     'OPENAI_BASE_URL',
     'OPENAI_API_KEY',
-    'OC_BACKEND_FACTORY',
-    'OC_MOCK_BASE_URL',
-    'OC_MOCK_API_KEY',
-    'CONTEXTUAL_DRAG_ENDPOINT',
-    'CONTEXTUAL_DRAG_ENDPOINT_MODEL',
-    'CONTEXTUAL_DRAG_ENDPOINT_API_KEY',
     'PYTHONPATH',
     'HF_TOKEN',
+    'HF_HOME',
     'TRANSFORMERS_OFFLINE',
     'HF_HUB_OFFLINE',
 )
+
+
+def forwarded_env() -> list[str]:
+    """
+    Variable names to forward into the container, in a stable order.
+
+    Returns:
+        list[str]: :data:`DEFAULT_FORWARDED_ENV` followed by whatever
+            :data:`FORWARD_ENV_ENVVAR` adds, deduplicated.
+
+    Example:
+        >>> import os
+        >>> os.environ['MAGNET_NODE_FORWARD_ENV'] = 'MY_FACTORY,MY_URL'
+        >>> names = forwarded_env()
+        >>> names[0], names[-2:]
+        ('OPENAI_BASE_URL', ['MY_FACTORY', 'MY_URL'])
+    """
+    names = list(DEFAULT_FORWARDED_ENV)
+    raw = os.environ.get(FORWARD_ENV_ENVVAR, '')
+    for chunk in raw.replace(',', ':').split(':'):
+        chunk = chunk.strip()
+        if chunk and chunk not in names:
+            names.append(chunk)
+    return names
 
 
 def containerization_is_enabled() -> bool:
@@ -161,7 +188,7 @@ def container_prefix() -> str:
         # cache directory (matplotlib, huggingface) fails without this.
         '-e', 'HOME=/tmp',
     ]
-    for name in FORWARDED_ENV:
+    for name in forwarded_env():
         parts += ['-e', name]
     parts += shlex.split(os.environ.get(DOCKER_ARGS_ENVVAR, ''))
     parts.append(image)

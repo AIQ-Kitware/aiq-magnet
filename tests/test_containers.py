@@ -9,6 +9,7 @@ import kwdagger
 import pytest
 
 from magnet.containers import (
+    FORWARD_ENV_ENVVAR,
     IMAGE_ENVVAR,
     MOUNTS_ENVVAR,
     ContainerProcessNode,
@@ -38,6 +39,7 @@ def _clean_env(monkeypatch):
     monkeypatch.delenv(LEASING_ENVVAR, raising=False)
     monkeypatch.delenv(IMAGE_ENVVAR, raising=False)
     monkeypatch.delenv(MOUNTS_ENVVAR, raising=False)
+    monkeypatch.delenv(FORWARD_ENV_ENVVAR, raising=False)
 
 
 def _node(cls, config):
@@ -90,6 +92,30 @@ def test_the_endpoint_env_is_forwarded_by_name(monkeypatch):
     assert '-e OPENAI_BASE_URL' in command
     assert '-e OPENAI_API_KEY' in command
     assert 'OPENAI_BASE_URL=' not in command
+
+
+def test_a_pipelines_own_variables_are_forwarded_on_request(monkeypatch):
+    """MAGNET must not need to know what an evaluation calls its settings."""
+    _on(monkeypatch)
+    monkeypatch.setenv(FORWARD_ENV_ENVVAR, 'SOME_BACKEND_FACTORY,SOME_URL')
+    command = _node(Work, {'task': 't'}).command
+    assert '-e SOME_BACKEND_FACTORY' in command
+    assert '-e SOME_URL' in command
+
+
+def test_the_defaults_are_generic(monkeypatch):
+    """Nothing evaluation-specific may be baked into the default set.
+
+    A generic framework naming one evaluation's variables is a design smell
+    -- and a disclosure risk, since not every evaluation repo is public and
+    this one is. Whitelisting recognised prefixes means a new default has to
+    be a well-known variable or an explicit decision.
+    """
+    from magnet.containers import DEFAULT_FORWARDED_ENV
+
+    allowed = ('OPENAI_', 'HF_', 'PYTHON', 'TRANSFORMERS_')
+    for name in DEFAULT_FORWARDED_ENV:
+        assert name.startswith(allowed), name
 
 
 def test_the_lease_wraps_the_container_not_the_other_way_round(monkeypatch):
