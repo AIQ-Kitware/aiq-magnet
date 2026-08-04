@@ -159,4 +159,4 @@ def helm_single_run_pipeline():
     nodes = {
         'materialize_helm_run': MaterializeHelmRunNode(),
     }
-    return kwdagger.Pipeline(nodes)
+    return kwdagger.Pipeline(list(nodes.values()))
