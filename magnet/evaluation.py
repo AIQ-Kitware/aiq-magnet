@@ -356,7 +356,7 @@ class EvaluationCard:
                 )
                 for metric, value in calculated_metrics.items():
                     metric_statement += f'  {metric}: {value: .3f}\n'
-                print(metric_statement[:-1])
+                logger.info(metric_statement[:-1])
 
         total = len(results)
 
@@ -1031,7 +1031,7 @@ class Metric:
         self.reducer = reducer
 
     def aggregate_calculate(self, runs: List[float]) -> MetricValue:
-        print(f'Computing {self.name} Metric across all runs\n')
+        logger.info(f'Computing {self.name} Metric across all runs\n')
         return self.reducer(runs)
 
     @classmethod
