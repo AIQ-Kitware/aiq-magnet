@@ -42,6 +42,6 @@ def llama_pipeline():
         nodes['claim_eval'].inputs['symbols_fpath']
     )
 
-    dag = kwdagger.Pipeline(nodes)
+    dag = kwdagger.Pipeline(list(nodes.values()))
     dag.build_nx_graphs()
     return dag
