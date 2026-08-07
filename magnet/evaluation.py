@@ -478,7 +478,7 @@ class GenericPipelineProcessor:
             results_fpath
 
         >>> for attr in ['name', 'executable', 'algo_params', 'out_paths']:
-        >>>    print(getattr(pipeline.dag.nodes['predict_node'], attr))
+        >>>    print(getattr(pipeline.dag.node_dict['predict_node'], attr))
         predict_node
         python -m magnet.examples.llama_consistency.llama_predict
         ['base_model', 'comp_model']
@@ -548,7 +548,7 @@ class GenericPipelineProcessor:
 
         # Glob all results json (only one node in pipeline)
         paths = self.root_dpath.glob(
-            f'**/{self.dag.nodes[next(iter(self.dag.nodes))].out_paths["results_fpath"]}'
+            f'**/{self.dag.node_dict[next(iter(self.dag.node_dict))].out_paths["results_fpath"]}'
         )
 
         for symbol_resolution in paths:
