@@ -377,25 +377,6 @@ class MaterializeHelmRunConfig(kwconf.Config):
         tags=['algo_param'],
     )
 
-    # extra_helm_args = kwconf.Value(
-    #     [],
-    #     nargs='*',
-    #     help="Extra args appended to helm-run command (advanced use).",
-    #     tags=['algo_param'],
-    # )
-
-    # log_level = kwconf.Value(
-    #     'INFO',
-    #     help='Logging level for this script (loguru).',
-    #     tags=['perf_param'],
-    # )
-
-    # log_fname = kwconf.Value(
-    #     'materialize_helm_run.log',
-    #     help='if specified, also log to a file name',
-    #     tags=['perf_param'],
-    # )
-
     done_fname: str = kwconf.Value(
         'DONE',
         help='Name of sentinel file written in out_dpath when the node is complete.',
