@@ -29,6 +29,57 @@ DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
 DEFAULT_METRIC_AGGREGATION_STRATEGY = {'type': 'mean'}
 
 
+
+def resolve_queue_backend(requested: str | None = None) -> str:
+    """
+    Choose the cmd_queue backend a card's DAG is scheduled onto.
+
+    Args:
+        requested (str | None): an explicit choice. ``None`` reads
+            ``MAGNET_QUEUE_BACKEND``, then falls back to ``'tmux'``.
+
+    Returns:
+        str: a backend cmd_queue reports as available.
+
+    Prefer ``tmux`` even at size 1. It costs nothing over ``serial`` for a
+    linear pipeline -- the same jobs run in the same order -- but it gives a
+    live monitor and a separate log file per job, instead of one interleaved
+    stream in the terminal that started the run. On a multi-hour card that
+    difference is the whole debugging story: with ``serial`` you find out what
+    a node did by scrolling, and a node's output is tangled with the
+    orchestrator's.
+
+    ``serial`` remains right for CI, for pytest, and for anywhere tmux is not
+    installed -- which is why an unavailable backend degrades to it with a
+    notice rather than raising.
+
+    Example:
+        >>> from magnet.evaluation import resolve_queue_backend
+        >>> resolve_queue_backend('serial')
+        'serial'
+    """
+    import cmd_queue
+
+    if requested is None:
+        requested = os.environ.get('MAGNET_QUEUE_BACKEND') or 'tmux'
+    requested = requested.strip()
+
+    try:
+        available = set(cmd_queue.Queue.available_backends())
+    except Exception:
+        return requested
+
+    if requested in available:
+        return requested
+    if requested != 'serial':
+        logger.warning(
+            f'queue backend {requested!r} is not available '
+            f'(have: {sorted(available)}); falling back to serial. '
+            'Install tmux for a live monitor and per-job logs.'
+        )
+    return 'serial'
+
+
 class EvaluationConfig(kwconf.Config):
     """
     Resolve an Evaluation Card
@@ -74,6 +125,18 @@ class EvaluationConfig(kwconf.Config):
         parser=str,
         choices=['loky', 'threading', 'multiprocessing'],
         help='Joblib backend used when --jobs is not 1.',
+    )
+
+    queue_backend: str | None = kwconf.Value(
+        None,
+        parser=str,
+        help=(
+            'cmd_queue backend the card DAG is scheduled onto: tmux, serial, '
+            'slurm, airflow. Defaults to $MAGNET_QUEUE_BACKEND, then tmux, '
+            'falling back to serial when unavailable. Prefer tmux even at '
+            'size 1: same jobs in the same order, but with a live monitor and '
+            'a separate log per job instead of one interleaved stream.'
+        ),
     )
 
     verbose: bool = kwconf.Value(
@@ -555,9 +618,11 @@ class GenericPipelineProcessor:
         self.dag.build_nx_graphs()
 
     def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
+        self, backend: str | None = None, skip_existing: bool = True,
+        **kwargs: Any
     ) -> None:
         self.define_kwdagger()
+        backend = resolve_queue_backend(backend)
 
         kwdagger_params = {'pipeline': self.dag, 'matrix': self.matrix}
 
@@ -680,8 +745,10 @@ class KWDaggerProcessor:
         self.symbols = []
 
     def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
+        self, backend: str | None = None, skip_existing: bool = True,
+        **kwargs: Any
     ) -> None:
+        backend = resolve_queue_backend(backend)
         kwd_config = ScheduleEvaluationConfig(
             params=self.spec,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
@@ -1247,6 +1314,12 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
     card = EvaluationCard(args.path, args.output_path, validate=validate)
     if args.override is not None:
         card.replace(args.override)
+
+    if args.queue_backend:
+        # One source of truth: the resolver reads this, and so does any nested
+        # dispatch. Threading a parameter through evaluate() would miss the
+        # dispatch calls that run from collect_terminal_result().
+        os.environ['MAGNET_QUEUE_BACKEND'] = args.queue_backend
 
     card.evaluate(
         jobs=args.jobs,
