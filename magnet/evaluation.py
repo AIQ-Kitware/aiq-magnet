@@ -21,7 +21,6 @@ from pydantic import ValidationError
 from rich import print
 
 from magnet.utils.util_logger import setup_logging
-from pydantic import ValidationError
 from magnet.schema import EvaluationCardSchema, MetricObjective
 
 SAFER_USE_TEMPFILE = not ub.WIN32
@@ -81,9 +80,8 @@ class EvaluationConfig(scfg.Config):
         False, isflag=True, help='Verbose log output', group='logging'
     )
 
-    validation: str = scfg.Value(
+    validate: str = scfg.Value(
         'error',
-        alias=['validate'],
         parser=str,
         choices=['only', 'error', 'warning', 'off'],
         help=(
@@ -93,6 +91,7 @@ class EvaluationConfig(scfg.Config):
             "'off': skip validation entirely."
         ),
     )
+
 
 # Claim Resolution (pulled out as standalone function for
 # multiprocessing support)
@@ -1106,7 +1105,7 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         special_options=False,
     )
 
-    if args.validation == 'only':
+    if args.validate == 'only':
         try:
             with open(args.path, 'r') as f:
                 cfg = yaml.safe_load(f)
@@ -1119,7 +1118,7 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         return
 
 
-    card = EvaluationCard(args.path, args.output_path, validate=args.validation)
+    card = EvaluationCard(args.path, args.output_path, validate=args.validate)
     if args.override is not None:
         card.replace(args.override)
 

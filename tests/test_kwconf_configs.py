@@ -36,9 +36,9 @@ def test_validate_alias():
     evaluation_cfg = EvaluationConfig.cli(
         argv=['card.yaml', '--validate', 'warning']
     )
-    assert evaluation_cfg.validation == 'warning'
+    assert evaluation_cfg.valiate == 'warning'
 
     evaluation_cfg = EvaluationConfig.cli(
         argv=False, data={'path': 'card.yaml', 'validate': 'off'}
     )
-    assert evaluation_cfg.validation == 'off'
+    assert evaluation_cfg.valiate == 'off'
