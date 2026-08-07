@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
 
 import kwutil
 import safer
-import kwconf as scfg
+import kwconf
 import ubelt as ub
 import yaml
 from kwdagger import Pipeline, ProcessNode
@@ -29,7 +29,7 @@ DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
 DEFAULT_METRIC_AGGREGATION_STRATEGY = {'type': 'mean'}
 
 
-class EvaluationConfig(scfg.Config):
+class EvaluationConfig(kwconf.Config):
     """
     Resolve an Evaluation Card
     """
@@ -46,21 +46,21 @@ class EvaluationConfig(scfg.Config):
       python -m magnet.evaluation magnet/cards/simple.yaml
     """
 
-    path: str = scfg.Value(
+    path: str = kwconf.Value(
         None, required=True, position=1, help='Path to evaluation card YAML'
     )
 
-    output_path: str = scfg.Value(
+    output_path: str = kwconf.Value(
         './evaluation_runs', help='Root data path for saved results'
     )
 
-    override: str | None = scfg.Value(
+    override: str | None = kwconf.Value(
         None,
         parser=str,
         help='Override symbol values (e.g. --override dataset: legalbench\nnum_replicates: 5)',
     )
 
-    jobs: int = scfg.Value(
+    jobs: int = kwconf.Value(
         1,
         parser=int,
         help=(
@@ -69,18 +69,18 @@ class EvaluationConfig(scfg.Config):
         ),
     )
 
-    parallel_backend: str = scfg.Value(
+    parallel_backend: str = kwconf.Value(
         'loky',
         parser=str,
         choices=['loky', 'threading', 'multiprocessing'],
         help='Joblib backend used when --jobs is not 1.',
     )
 
-    verbose: bool = scfg.Value(
+    verbose: bool = kwconf.Value(
         False, isflag=True, help='Verbose log output', group='logging'
     )
 
-    validate: str = scfg.Value(
+    validate: str = kwconf.Value(
         'error',
         parser=str,
         choices=['only', 'error', 'warning', 'off'],

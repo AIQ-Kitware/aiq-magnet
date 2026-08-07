@@ -1,19 +1,19 @@
 import json
 
 import kwutil
-import kwconf as scfg
+import kwconf
 import ubelt as ub
 
 from magnet.backends.helm.helm_outputs import HelmOutputs
 from magnet.backends.helm.helm_outputs import HelmSuiteRuns
 
 
-class ExampleLlamaEndpointCLI(scfg.Config):
+class ExampleLlamaEndpointCLI(kwconf.Config):
     """
     Stub for a prediction algorithm that grabs relevant scores from HELM precomputed results
     """
 
-    base_model: str = scfg.Value(
+    base_model: str = kwconf.Value(
         None,
         required=True,
         help=ub.paragraph(
@@ -24,7 +24,7 @@ class ExampleLlamaEndpointCLI(scfg.Config):
         tags=['algo_param'],
     )
 
-    comp_model: str = scfg.Value(
+    comp_model: str = kwconf.Value(
         None,
         required=True,
         help=ub.paragraph(
@@ -35,7 +35,7 @@ class ExampleLlamaEndpointCLI(scfg.Config):
         tags=['algo_param'],
     )
 
-    threshold: float = scfg.Value(
+    threshold: float = kwconf.Value(
         0.1,
         help=ub.paragraph(
             """
@@ -45,7 +45,7 @@ class ExampleLlamaEndpointCLI(scfg.Config):
         tags=['algo_param'],
     )
 
-    helm_runs_path: str = scfg.Value(
+    helm_runs_path: str = kwconf.Value(
         './data/crfm-helm-public/lite/benchmark_output',
         help=ub.paragraph(
             """
@@ -55,7 +55,7 @@ class ExampleLlamaEndpointCLI(scfg.Config):
         tags=['algo_param'],
     )
 
-    results_fpath: str = scfg.Value(
+    results_fpath: str = kwconf.Value(
         'results.json',
         help=ub.paragraph(
             """

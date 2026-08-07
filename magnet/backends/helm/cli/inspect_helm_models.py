@@ -29,56 +29,56 @@ from __future__ import annotations
 
 import json
 from typing import Any, Dict
-import kwconf as scfg
+import kwconf
 
 
-class InspectHelmModelsConfig(scfg.Config):
+class InspectHelmModelsConfig(kwconf.Config):
     """
     Pandas-based inspection of HELM model deployments.
     """
 
     # Output / formatting
-    format: str = scfg.Value(
+    format: str = kwconf.Value(
         'table',
         help='Output format',
         choices=['table', 'csv', 'json', 'jsonl', 'md'],
     )
-    max_rows: int | None = scfg.Value(None, help='Max rows to print (None = no limit)')
-    columns: list[str] | None = scfg.Value(
+    max_rows: int | None = kwconf.Value(None, help='Max rows to print (None = no limit)')
+    columns: list[str] | None = kwconf.Value(
         None,
         help='Subset of columns to show (space-separated)',
         nargs='*',
     )
 
     # Selection / filtering / shaping
-    query: str | None = scfg.Value(
+    query: str | None = kwconf.Value(
         None,
         parser=str,
         help='Pandas DataFrame.query string (uses column names). Example: "deprecated == False"',
     )
-    sort: list[str] | None = scfg.Value(
+    sort: list[str] | None = kwconf.Value(
         None,
         help='Column(s) to sort by',
         nargs='*',
     )
-    groupby: str | None = scfg.Value(
+    groupby: str | None = kwconf.Value(
         None,
         parser=str,
         help='If set, group by this column and show deployment counts per group',
     )
 
     # Client spec options
-    include_client_args: bool = scfg.Value(
+    include_client_args: bool = kwconf.Value(
         False, isflag=True, help='Include client_spec.args as a dict column'
     )
-    flatten_client_args: bool = scfg.Value(
+    flatten_client_args: bool = kwconf.Value(
         False, isflag=True, help='Flatten client_spec.args into individual columns'
     )
-    client_args_prefix: str = scfg.Value(
+    client_args_prefix: str = kwconf.Value(
         'client_', help='Prefix for flattened client args columns'
     )
 
-    verbose: bool = scfg.Value(False, help='if True also print the config')
+    verbose: bool = kwconf.Value(False, help='if True also print the config')
 
     @classmethod
     def main(cls, argv=None, **kwargs) -> int:

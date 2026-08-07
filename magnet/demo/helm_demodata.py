@@ -1,11 +1,11 @@
-import kwconf as scfg
+import kwconf
 
 
-class HelmDemoConfig(scfg.Config):
+class HelmDemoConfig(kwconf.Config):
     """
     Configuration for generating helm demo outputs
     """
-    run_entries: list[str] = scfg.Value(
+    run_entries: list[str] = kwconf.Value(
         [
             "mmlu:subject=philosophy,model=openai/gpt2",
             "mmlu:subject=anatomy,model=openai/gpt2",
@@ -15,9 +15,9 @@ class HelmDemoConfig(scfg.Config):
         parser='yaml',
         help='Benchmark run entries',
     )
-    suite: str = scfg.Value("my-suite", help="Name of the helm suite")
-    max_eval_instances: int = scfg.Value(7, help="Maximum eval instances")
-    num_threads: int = scfg.Value(1, help="Number of threads")
+    suite: str = kwconf.Value("my-suite", help="Name of the helm suite")
+    max_eval_instances: int = kwconf.Value(7, help="Maximum eval instances")
+    num_threads: int = kwconf.Value(1, help="Number of threads")
 
 
 def ensure_helm_demo_outputs(**kwargs):
