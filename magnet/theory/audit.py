@@ -49,6 +49,19 @@ class TheoryAuditCLI(scfg.DataConfig):
         ),
         tags=['in_path'],
     )
+    site_root = scfg.Value(
+        None,
+        nargs='+',
+        help=ub.paragraph(
+            """
+            ``package=directory`` mapping used to check that externally
+            declared ``site=`` references still point at real code; repeatable.
+            An edge declared away from its code site carries a string, and
+            nothing about a string keeps it true -- this is what catches it
+            going stale.
+            """
+        ),
+    )
     format = scfg.Value(
         'text',
         choices=['text', 'json'],
@@ -74,6 +87,7 @@ class TheoryAuditCLI(scfg.DataConfig):
         report = audit(
             sources=_as_list(config['source']),
             indexes=_as_list(config['index']),
+            site_roots=_parse_roots(_as_list(config['site_root'])),
         )
 
         if config['format'] == 'json':
@@ -157,17 +171,19 @@ class AuditReport:
         return '\n'.join(lines)
 
 
-def audit(sources, indexes=()) -> AuditReport:
+def audit(sources, indexes=(), site_roots=None) -> AuditReport:
     """
     Parse ``sources``, resolve against ``indexes``, and report.
 
     Args:
         sources: files or directories to parse.
         indexes: theorem indexes or ``formalization.yaml`` files.
+        site_roots: package -> directory, for validating declared ``site=``
+            references. Omitting it skips that check rather than passing it.
     """
     from magnet.theory.basis import TheoreticalBasis
     from magnet.theory.index import load
-    from magnet.theory.static import StaticLedger, extract_tree, lint
+    from magnet.theory.static import StaticLedger, check_sites, extract_tree, lint
 
     formalizations = [load(path) for path in indexes]
 
@@ -176,8 +192,21 @@ def audit(sources, indexes=()) -> AuditReport:
         ledger.extend(extract_tree(source))
 
     issues = lint(ledger, formalizations)
+    if site_roots:
+        issues.extend(check_sites(ledger, site_roots))
     basis = TheoreticalBasis.from_ledger(ledger, formalizations)
     return AuditReport(ledger, issues, basis, formalizations)
+
+
+def _parse_roots(items) -> dict:
+    """Parse ``package=directory`` arguments."""
+    roots = {}
+    for item in items:
+        package, sep, directory = str(item).partition('=')
+        if not sep:
+            raise ValueError(f'--site-root expects package=directory, got {item!r}')
+        roots[package.strip()] = directory.strip()
+    return roots
 
 
 def _as_list(value):
