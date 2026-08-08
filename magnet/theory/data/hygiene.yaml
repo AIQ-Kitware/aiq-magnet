@@ -1,0 +1,169 @@
+# Shared evaluation-hygiene statements.
+#
+# Most empirical evaluation claims are not backed by a bespoke theorem, and
+# never will be. But they are not assumption-free either: they lean on the same
+# handful of premises over and over -- that the evaluation sample is iid, that
+# the automatic scorer tracks what it proxies, that the sample is large enough
+# for the threshold being asserted, that the threshold was not chosen after
+# looking. Those premises are shared, so the statements about them can be too.
+#
+# The point of this library is that a card with no theory of its own still has
+# somewhere to attach its assumptions. "There is no theorem here" is a finding
+# worth recording precisely; "there is nothing to say about this card" is not,
+# and it is usually false.
+#
+# The workhorse is Concentration.mean_within_tolerance. It turns "where does the
+# 0.05 threshold come from?" from a rhetorical question into a computable one:
+# given your tolerance and your confidence, what sample size do you need, and do
+# you have it? A card that grounds here and cannot discharge `hn` has learned
+# something specific, and it needed no bespoke theory to learn it.
+#
+# Every statement here is UNPROVED -- `proof: unknown`, `review: draft`. They are
+# stated, not formalized. Hoeffding and split-conformal coverage are both within
+# reach of Mathlib and are the obvious first two to actually prove; the
+# measurement bundle at the end is definitional and is not a proof target at
+# all. Stating them is still most of the value, because a statement cannot be
+# written without naming its hypotheses, and naming them is what the cards need.
+
+version: 1
+
+project:
+  name: "Evaluation hygiene"
+  review: "draft"
+  note: >
+    Shared statements every evaluation card can ground on, independent of
+    whether its method has a theory. Nothing here is formalized yet; proof
+    status is unknown throughout and should stay that way until a Lean
+    development exists. Hypothesis binder names are the contract -- cards draw
+    edges against them, so renaming one breaks every card that used it.
+
+theorems:
+
+  - declaration: "Hygiene.Concentration.mean_within_tolerance"
+    review: "draft"
+    informal: >
+      A sample mean of bounded iid draws is within a stated tolerance of the
+      population mean, with a stated confidence, once the sample is large
+      enough. Hoeffding's inequality.
+    conclusion: >
+      P(|sampleMean X n - populationMean X| >= eps) <= delta,
+      whenever n >= ceil(log(2/delta) / (2 * eps^2)).
+    note: >
+      The sample-size hypothesis `hn` is the one worth computing rather than
+      asserting. At eps = 0.05 and delta = 0.05 it needs n >= 738; at eps = 0.01
+      it needs n >= 18445. Many cards report thresholds finer than their
+      evaluation sets can support, and this is the statement that makes that
+      visible.
+    hypotheses:
+      - name: "hiid"
+        informal: "the evaluation instances are independent and identically distributed draws from the target distribution"
+      - name: "hbdd"
+        informal: "the per-instance score is bounded in a known range, typically [0,1]"
+      - name: "hn"
+        informal: "the sample size is at least the Hoeffding bound for the asserted tolerance and confidence"
+
+  - declaration: "Hygiene.Concentration.paired_difference_within_tolerance"
+    review: "draft"
+    informal: >
+      A difference of two sample means, measured on paired instances, is within
+      a stated tolerance of the population difference. The form most threshold
+      cards actually take -- an accuracy drop, a lift, a gap.
+    conclusion: >
+      P(|(sampleMean A n - sampleMean B n) - (populationMean A - populationMean B)| >= eps) <= delta,
+      whenever n >= ceil(log(2/delta) / (2 * eps^2)) for the per-instance difference.
+    note: >
+      Pairing matters: the tolerance is on the difference sequence, not on each
+      arm separately, so a card that evaluates both arms on the same instances
+      needs a smaller n than one that does not. A card that pairs but computes
+      the bound as though it did not is being conservative; one that does not
+      pair but assumes it did is not.
+    hypotheses:
+      - name: "hiid"
+        informal: "the instances are iid draws from the target distribution"
+      - name: "hbdd"
+        informal: "both per-instance scores are bounded in a known range"
+      - name: "hpaired"
+        informal: "both conditions are evaluated on the same instances, so the difference is a per-instance quantity"
+      - name: "hn"
+        informal: "the sample size is at least the bound for the asserted tolerance and confidence"
+
+  - declaration: "Hygiene.Conformal.marginal_coverage_of_exchangeable"
+    review: "draft"
+    informal: >
+      Split (inductive) conformal prediction attains its nominal marginal
+      coverage, distribution-free, under exchangeability of the calibration and
+      test scores.
+    conclusion: >
+      1 - alpha <= P(Y_test in C_alpha(X_test)) <= 1 - alpha + 1/(n_cal + 1)
+    note: >
+      An order-statistics argument, not a distributional one: no assumption is
+      made about the residuals. That is exactly what makes substituting a
+      Gaussian interval -- mean plus or minus two standard deviations -- a
+      strictly stronger and unproven claim, even though it looks like the same
+      95 percent.
+    hypotheses:
+      - name: "hexch"
+        informal: "the calibration and test nonconformity scores are exchangeable"
+      - name: "hsplit"
+        informal: >
+          the calibration split is used ONLY for the quantile: the predictor,
+          the score function, and any model selection are fixed before it is
+          touched
+      - name: "hscore_fixed"
+        informal: "the nonconformity score function does not depend on the calibration data"
+      - name: "hquantile"
+        informal: "the interval is formed from the empirical (1-alpha) quantile of the calibration scores"
+
+  - declaration: "Hygiene.Inference.threshold_exceeds_sampling_error"
+    review: "draft"
+    informal: >
+      An observed statistic exceeding a threshold is evidence about the
+      population only when the threshold exceeds what sampling noise alone would
+      produce, at the confidence being claimed, after accounting for how many
+      comparisons were made.
+    conclusion: >
+      If the observed statistic exceeds `threshold` and `threshold` exceeds the
+      sampling error at level delta / m, then the population statistic is
+      positive with confidence 1 - delta.
+    note: >
+      This is where a bare "drag >= 0.05" or "AUC >= 0.65" card should ground
+      when it has nothing else. Its three hypotheses are the three questions to
+      ask such a card, and all three are checkable from the card itself: was the
+      threshold fixed in advance, is n big enough, and how many comparisons were
+      run.
+    hypotheses:
+      - name: "hprespecified"
+        informal: "the threshold was fixed before the results were seen"
+      - name: "hn_sufficient"
+        informal: "the sample size supports resolving a difference of this size at the claimed confidence"
+      - name: "hmultiple"
+        informal: >
+          the confidence level accounts for the number of comparisons in the
+          family -- models, datasets, metrics, and sweep points all count
+
+  - declaration: "Hygiene.Measurement.measured_score_tracks_construct"
+    review: "draft"
+    informal: >
+      What a card measures is what it claims to be measuring: the automatic
+      scorer tracks the construct, the evaluation data is not in training, and
+      the measurement is stable under nuisance variation.
+    conclusion: >
+      The measured statistic is an estimate of the construct the claim is about.
+    note: >
+      DEFINITIONAL, not a theorem, and it is listed as a statement anyway so
+      that cards have a place to record these assumptions instead of leaving
+      them unwritten. Do not try to prove it. Its value is entirely in forcing
+      three questions to be answered per card, and in making an unanswered one
+      show up as unaccounted.
+    hypotheses:
+      - name: "hscorer"
+        informal: >
+          the automatic scorer agrees with the construct it proxies -- exact
+          match for correctness, an n-gram overlap for translation quality, a
+          judge model for helpfulness
+      - name: "hcontam"
+        informal: "the evaluation instances are not in the models' training data"
+      - name: "hstable"
+        informal: >
+          the measurement is stable under nuisance variation: decoding seed,
+          prompt ordering, formatting, and hardware
