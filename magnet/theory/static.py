@@ -51,6 +51,7 @@ __all__ = [
     'extract_file',
     'extract_tree',
     'lint',
+    'check_sites',
     'THEORY_MODULES',
     'SKIP_DIRECTORIES',
 ]
@@ -323,6 +324,125 @@ def lint(ledger: StaticLedger, formalizations: Sequence = ()) -> list[Issue]:
     if formalizations:
         issues.extend(_lint_against(ledger, formalizations))
     return issues
+
+
+def check_sites(ledger: StaticLedger, roots: dict, repo_root='.') -> list[Issue]:
+    """
+    Verify that externally declared ``site=`` references still point at code.
+
+    An edge declared *at* its code site moves with the code. An edge declared
+    elsewhere carries a ``site=`` string instead, and nothing about a string
+    keeps it true -- which is the same rot that invalidated every ``file:line``
+    in the first hand-drawn edge table within five weeks. This is the check that
+    makes the external form survivable.
+
+    Three things are verified, in increasing strength:
+
+    * the module resolves to a file at all;
+    * the line number is inside that file;
+    * an ``anchor`` -- a literal expected on that line -- still matches.
+
+    Only the third actually detects a shifted line, so declare anchors on the
+    edges that matter. A site with no anchor is reported as unanchored rather
+    than passing silently, because "the line exists" is not evidence that it is
+    the right line.
+
+    Args:
+        ledger: extracted annotations.
+        roots: top-level package name -> directory holding it.
+        repo_root: base for relative root paths.
+
+    Example:
+        >>> import tempfile, pathlib
+        >>> d = pathlib.Path(tempfile.mkdtemp())
+        >>> (d / 'pkg').mkdir()
+        >>> _ = (d / 'pkg' / 'mod.py').write_text('a = 1\\nb = LinearRegression()\\n')
+        >>> ledger = extract_source(
+        ...     "from magnet.theory import assumes\\n"
+        ...     "assumes('P::h', site='pkg.mod:2', anchor='LinearRegression')\\n",
+        ...     filename='edges.py')
+        >>> check_sites(ledger, {'pkg': str(d)})
+        []
+    """
+    import ubelt as ub
+
+    issues: list[Issue] = []
+    for annotation in ledger.annotations:
+        site = annotation.options.get('site')
+        if not isinstance(site, str):
+            continue
+        base, _, line = site.rpartition(':')
+        if not base:
+            base, line = site, ''
+        parts = base.split('.')
+        root = roots.get(parts[0])
+        if root is None:
+            issues.append(
+                Issue('unknown-site-root', f'no source root for package {parts[0]!r}', annotation)
+            )
+            continue
+
+        # `roots` maps a package to the directory it lives *in*, so the package
+        # name stays part of the path.
+        path = _resolve_module(ub.Path(repo_root) / root, parts)
+        if path is None:
+            issues.append(
+                Issue('missing-site-file', f'{site!r} does not resolve to a file', annotation)
+            )
+            continue
+
+        if not line.isdigit():
+            continue  # a symbol reference, not a line; nothing to drift
+
+        number = int(line)
+        text = path.read_text().splitlines()
+        if not (0 < number <= len(text)):
+            issues.append(
+                Issue(
+                    'site-line-out-of-range',
+                    f'{path} has {len(text)} lines; {site!r} names line {number}',
+                    annotation,
+                )
+            )
+            continue
+
+        anchor = annotation.options.get('anchor')
+        if not isinstance(anchor, str):
+            issues.append(
+                Issue(
+                    'unanchored-site',
+                    f'{site!r} has no anchor, so a line shift would go unnoticed',
+                    annotation,
+                )
+            )
+        elif anchor not in text[number - 1]:
+            issues.append(
+                Issue(
+                    'anchor-mismatch',
+                    f'{site!r} expected {anchor!r} but line {number} is '
+                    f'{text[number - 1].strip()!r}',
+                    annotation,
+                )
+            )
+    return issues
+
+
+def _resolve_module(root, parts: Sequence[str]):
+    """
+    Find the file a dotted path names, longest prefix first.
+
+    Tries ``.py``, then ``.yaml``/``.yml`` -- evaluation cards are YAML and are
+    referenced through the same dotted convention -- then a package directory.
+    """
+    for n in range(len(parts), 0, -1):
+        stem = root.joinpath(*parts[:n])
+        for suffix in ('.py', '.yaml', '.yml'):
+            candidate = stem.with_suffix(suffix)
+            if candidate.exists():
+                return candidate
+        if (stem / '__init__.py').exists():
+            return stem / '__init__.py'
+    return None
 
 
 def _lint_against(ledger: StaticLedger, formalizations: Sequence) -> list[Issue]:

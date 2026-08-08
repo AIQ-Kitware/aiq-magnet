@@ -174,6 +174,7 @@ class Edge(_Activatable):
         review=ReviewStatus.DRAFT,
         kind: str | None = None,
         site=None,
+        anchor: str | None = None,
         observe: bool = True,
         witness_params=None,
         registry=None,
@@ -194,6 +195,11 @@ class Edge(_Activatable):
         #: itself -- that lesson is why the verb exists.
         self.kind = kind
         self.site = CodeSite.parse(site) if isinstance(site, str) else site
+        #: A literal expected on the referenced line. Only meaningful for an
+        #: edge declared away from its code site: the site is then a string,
+        #: and nothing about a string keeps it true. The anchor is what lets
+        #: `magnet.theory.static.check_sites` notice the line has moved.
+        self.anchor = anchor
         self.observe = observe
         self.witness_params = tuple(witness_params) if witness_params else None
         self.observations: list[Observation] = []
@@ -263,6 +269,7 @@ class Edge(_Activatable):
             'review': str(self.review),
             'freshness': str(self.freshness),
             'site': str(self.site) if self.site else None,
+            'anchor': self.anchor,
             'informal': self.informal,
             'note': self.note,
             'evidence': self.evidence,
@@ -294,6 +301,7 @@ class Grounding(_Activatable):
         formalization=None,
         review=ReviewStatus.DRAFT,
         site=None,
+        anchor: str | None = None,
         observe: bool = True,
         witness_params=None,
         registry=None,
@@ -301,6 +309,7 @@ class Grounding(_Activatable):
         self.ref: HypothesisRef = parse_ref(ref)
         self.informal = informal
         self.note = note
+        self.anchor = anchor
         self.formalization = formalization
         self.review = ReviewStatus(review)
         self.site = CodeSite.parse(site) if isinstance(site, str) else site
@@ -322,6 +331,7 @@ class Grounding(_Activatable):
             'review': str(self.review),
             'freshness': str(self.freshness),
             'site': str(self.site) if self.site else None,
+            'anchor': self.anchor,
             'witness': self.witnessed,
         }
 
