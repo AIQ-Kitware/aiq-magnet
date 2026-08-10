@@ -1,17 +1,17 @@
 import json
 
-import scriptconfig as scfg
+import kwconf
 import ubelt as ub
 
 
-class ConsistencyClaimCLI(scfg.DataConfig):
+class ConsistencyClaimCLI(kwconf.Config):
     """
     Llama consistency example claim representation.
 
     In lieu of the Claim definition in evaluation.py, this offers a more flexible injest -> evaluate -> write option.
     """
 
-    symbols_fpath = scfg.Value(
+    symbols_fpath: str = kwconf.Value(
         None,
         required=True,
         help=ub.paragraph(
@@ -22,11 +22,11 @@ class ConsistencyClaimCLI(scfg.DataConfig):
         tags=['in_path'],
     )
 
-    verdict_fpath = scfg.Value(
+    verdict_fpath: str = kwconf.Value(
         'verdict.json',
         help=ub.paragraph(
             """
-        Output path for claim verdict. 
+        Output path for claim verdict.
         """
         ),
         tags=['out_path', 'primary'],
@@ -47,7 +47,7 @@ class ConsistencyClaimCLI(scfg.DataConfig):
         model_scores = json.loads(ub.Path(config.symbols_fpath).read_text())[
             'result'
         ]
-        symbols = model_scores.copy() # avoid adding __builtins__
+        symbols = model_scores.copy()  # avoid adding __builtins__
         # Copied from magnet.evaluation.Claim evaluate
         try:
             exec(claim_str, model_scores)

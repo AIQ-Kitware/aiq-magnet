@@ -143,7 +143,7 @@ from typing import Iterable, Iterator, Optional
 
 import ubelt as ub
 import kwutil
-import scriptconfig as scfg
+import kwconf
 import sys
 
 from loguru import logger
@@ -251,81 +251,83 @@ def _capture_process_context(out_dpath: Path, config) -> dict:
     return ctx.obj
 
 
-class MaterializeHelmRunConfig(scfg.DataConfig):
+class MaterializeHelmRunConfig(kwconf.Config):
     """
     Materialize HELM results either by computing them directly or pulling them
     from a precomputed cache.
     """
 
-    run_entry = scfg.Value(
+    run_entry: str | None = kwconf.Value(
         None,
         help="Single HELM run-entry description string, e.g. 'mmlu:subject=philosophy,model=openai/gpt2'",
         tags=['algo_param'],
-        type=str,
+        parser=str,
     )
 
-    suite = scfg.Value(
+    suite: str = kwconf.Value(
         'default-suite',
         help='HELM suite name to use for output layout (and for helm-run --suite). DO NOT USE.',
         tags=['algo_param'],
     )
 
-    out_dpath = scfg.Value(
+    out_dpath: str | None = kwconf.Value(
         None,
+        parser=str,
         help='Output directory (kwdagger node output directory).',
         tags=['out_path'],
     )
 
-    precomputed_root = scfg.Value(
+    precomputed_root: str | list[str] = kwconf.Value(
         [],
+        parser='yaml',
         help='directory to search for existing HELM outputs (may contain nested benchmark_output dirs).',
         tags=['in_param'],
     )
 
-    max_eval_instances = scfg.Value(
+    max_eval_instances: int | None = kwconf.Value(
         None,
-        type=int,
+        parser=int,
         help='Treat as part of identity. If set, only reuse runs matching this instance count (when inferable).',
         tags=['algo_param'],
     )
 
-    require_per_instance_stats = scfg.Value(
+    require_per_instance_stats: bool = kwconf.Value(
         True,
         help='Require per_instance_stats.json to exist when reusing / validating outputs.',
         tags=['algo_param'],
     )
 
-    mode = scfg.Value(
+    mode: str = kwconf.Value(
         'compute_if_missing',
         choices=['reuse_only', 'compute_if_missing', 'force_recompute'],
         help='reuse_only: never compute; compute_if_missing: reuse else run helm; force_recompute: always run helm.',
         tags=['perf_param'],
     )
 
-    materialize = scfg.Value(
+    materialize: str = kwconf.Value(
         'symlink',
         choices=['symlink', 'copy'],
         help='How to materialize reused outputs into out_dpath.',
         tags=['perf_param'],
     )
 
-    num_threads = scfg.Value(
+    num_threads: int = kwconf.Value(
         1,
-        type=int,
+        parser=int,
         help='Passed to helm-run --num-threads.',
         tags=['perf_param'],
     )
 
-    local_path = scfg.Value(
+    local_path: str = kwconf.Value(
         'prod_env',
-        type=str,
+        parser=str,
         help='Passed to helm-run --local-path. Relative paths are resolved inside out_dpath.',
         tags=['perf_param'],
     )
 
-    model_deployments_fpath = scfg.Value(
+    model_deployments_fpath: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional path to a HELM model_deployments.yaml file that will be copied '
             'into <local_path>/model_deployments.yaml before invoking helm-run.'
@@ -333,9 +335,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    model_metadata_fpath = scfg.Value(
+    model_metadata_fpath: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional path to a HELM model_metadata.yaml file that will be copied '
             'into <local_path>/model_metadata.yaml before invoking helm-run. '
@@ -344,9 +346,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    tokenizer_configs_fpath = scfg.Value(
+    tokenizer_configs_fpath: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional path to a HELM tokenizer_configs.yaml file that will be copied '
             'into <local_path>/tokenizer_configs.yaml before invoking helm-run. '
@@ -355,9 +357,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    enable_huggingface_models = scfg.Value(
+    enable_huggingface_models: str | list[str] | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional YAML-encoded list passed through to helm-run '
             '--enable-huggingface-models. Example: \'[repo-a, repo-b]\''
@@ -365,9 +367,9 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    enable_local_huggingface_models = scfg.Value(
+    enable_local_huggingface_models: str | list[str] | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=(
             'Optional YAML-encoded list passed through to helm-run '
             '--enable-local-huggingface-models. Example: \'[/models/a, /models/b]\''
@@ -375,32 +377,13 @@ class MaterializeHelmRunConfig(scfg.DataConfig):
         tags=['algo_param'],
     )
 
-    # extra_helm_args = scfg.Value(
-    #     [],
-    #     nargs='*',
-    #     help="Extra args appended to helm-run command (advanced use).",
-    #     tags=['algo_param'],
-    # )
-
-    # log_level = scfg.Value(
-    #     'INFO',
-    #     help='Logging level for this script (loguru).',
-    #     tags=['perf_param'],
-    # )
-
-    # log_fname = scfg.Value(
-    #     'materialize_helm_run.log',
-    #     help='if specified, also log to a file name',
-    #     tags=['perf_param'],
-    # )
-
-    done_fname = scfg.Value(
+    done_fname: str = kwconf.Value(
         'DONE',
         help='Name of sentinel file written in out_dpath when the node is complete.',
         tags=['out_path', 'primary'],
     )
 
-    manifest_fname = scfg.Value(
+    manifest_fname: str = kwconf.Value(
         'adapter_manifest.json',
         help='Name of a small JSON manifest written in out_dpath describing what happened.',
         tags=['out_path'],

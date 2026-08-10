@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
 
 import kwutil
 import safer
-import scriptconfig as scfg
+import kwconf
 import ubelt as ub
 import yaml
 from kwdagger import Pipeline, ProcessNode
@@ -21,7 +21,6 @@ from pydantic import ValidationError
 from rich import print
 
 from magnet.utils.util_logger import setup_logging
-from pydantic import ValidationError
 from magnet.schema import EvaluationCardSchema, MetricObjective
 
 SAFER_USE_TEMPFILE = not ub.WIN32
@@ -30,7 +29,7 @@ DEFAULT_CLAIM_AGGREGATION_STRATEGY = {'type': 'all'}
 DEFAULT_METRIC_AGGREGATION_STRATEGY = {'type': 'mean'}
 
 
-class EvaluationConfig(scfg.DataConfig):
+class EvaluationConfig(kwconf.Config):
     """
     Resolve an Evaluation Card
     """
@@ -47,43 +46,43 @@ class EvaluationConfig(scfg.DataConfig):
       python -m magnet.evaluation magnet/cards/simple.yaml
     """
 
-    path = scfg.Value(
+    path: str = kwconf.Value(
         None, required=True, position=1, help='Path to evaluation card YAML'
     )
 
-    output_path = scfg.Value(
+    output_path: str = kwconf.Value(
         './evaluation_runs', help='Root data path for saved results'
     )
 
-    override = scfg.Value(
+    override: str | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help='Override symbol values (e.g. --override dataset: legalbench\nnum_replicates: 5)',
     )
 
-    jobs = scfg.Value(
+    jobs: int = kwconf.Value(
         1,
-        type=int,
+        parser=int,
         help=(
             'Number of evaluation jobs. Use 1 for serial execution, '
             '-1 for all available CPUs when using joblib.'
         ),
     )
 
-    parallel_backend = scfg.Value(
+    parallel_backend: str = kwconf.Value(
         'loky',
-        type=str,
+        parser=str,
         choices=['loky', 'threading', 'multiprocessing'],
         help='Joblib backend used when --jobs is not 1.',
     )
 
-    verbose = scfg.Value(
+    verbose: bool = kwconf.Value(
         False, isflag=True, help='Verbose log output', group='logging'
     )
 
-    validate = scfg.Value(
+    validate: str = kwconf.Value(
         'error',
-        type=str,
+        parser=str,
         choices=['only', 'error', 'warning', 'off'],
         help=(
             "'only': validate schema and exit. "
@@ -92,6 +91,7 @@ class EvaluationConfig(scfg.DataConfig):
             "'off': skip validation entirely."
         ),
     )
+
 
 # Claim Resolution (pulled out as standalone function for
 # multiprocessing support)
@@ -478,7 +478,7 @@ class GenericPipelineProcessor:
             results_fpath
 
         >>> for attr in ['name', 'executable', 'algo_params', 'out_paths']:
-        >>>    print(getattr(pipeline.dag.nodes['predict_node'], attr))
+        >>>    print(getattr(pipeline.dag.node_dict['predict_node'], attr))
         predict_node
         python -m magnet.examples.llama_consistency.llama_predict
         ['base_model', 'comp_model']
@@ -519,7 +519,7 @@ class GenericPipelineProcessor:
             node = ProcessNode(name=node_name, **node_params)
             nodes[node_name] = node
 
-        self.dag = Pipeline(nodes)
+        self.dag = Pipeline(list(nodes.values()))
         self.dag.build_nx_graphs()
 
     def dispatch(
@@ -548,7 +548,7 @@ class GenericPipelineProcessor:
 
         # Glob all results json (only one node in pipeline)
         paths = self.root_dpath.glob(
-            f'**/{self.dag.nodes[next(iter(self.dag.nodes))].out_paths["results_fpath"]}'
+            f'**/{self.dag.node_dict[next(iter(self.dag.node_dict))].out_paths["results_fpath"]}'
         )
 
         for symbol_resolution in paths:

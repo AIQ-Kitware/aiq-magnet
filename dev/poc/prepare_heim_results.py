@@ -5,12 +5,12 @@ Example of to prepare precomputed HEIM metrics
 
 import ubelt as ub
 import kwutil
-import scriptconfig as scfg
+import kwconf
 import magnet
 from magnet.utils.util_pandas import DotDictDataFrame
 
 
-class PrepareHeimResultsConfig(scfg.DataConfig):
+class PrepareHeimResultsConfig(kwconf.Config):
     r"""
     Read all HEIM results and output them in a simple JSON format.
 
@@ -44,12 +44,12 @@ class PrepareHeimResultsConfig(scfg.DataConfig):
 
     """
 
-    output_dir = scfg.Value('./heim_results', help=ub.paragraph(
+    output_dir: str = kwconf.Value('./heim_results', help=ub.paragraph(
         '''
         Directory where output json files will be written.
         '''))
 
-    download_dir = scfg.Value('/data/crfm-helm-public', help=ub.paragraph(
+    download_dir: str = kwconf.Value('/data/crfm-helm-public', help=ub.paragraph(
         '''
         This is where the heim/benchmark_output/runs/v1.*/* results should be.
         They will be downloaded if needed.
