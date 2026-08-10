@@ -11,13 +11,13 @@ Example:
     >>> # Test version works
     >>> MagnetCLI.main(argv=['--version'])
 """
-import scriptconfig as scfg
+import kwconf
 from magnet.cli.download_cli import DownloadModalCLI
 from magnet.evaluation import EvaluationConfig
 from magnet import __version__
 
 
-class MagnetCLI(scfg.ModalCLI):
+class MagnetCLI(kwconf.ModalCLI):
     """
     Top level MAGNET CLI
     """

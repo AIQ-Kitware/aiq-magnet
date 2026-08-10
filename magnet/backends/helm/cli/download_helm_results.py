@@ -54,7 +54,7 @@ import re
 import shutil
 import sys
 import ubelt as ub
-import scriptconfig as scfg
+import kwconf
 from functools import cached_property
 from typing import List
 from loguru import logger
@@ -62,7 +62,7 @@ from loguru import logger
 from magnet.utils.util_logger import setup_logging
 
 
-class DownloadHelmConfig(scfg.DataConfig):
+class DownloadHelmConfig(kwconf.Config):
     """
     Download HELM benchmark run artifacts from the public GCS bucket.
     """
@@ -113,29 +113,29 @@ class DownloadHelmConfig(scfg.DataConfig):
         .. [1] https://crfm-helm.readthedocs.io/en/latest/downloading_raw_results/
         .. [2] https://console.cloud.google.com/storage/browser/crfm-helm-public
     """
-    download_dir = scfg.Value(
+    download_dir: str = kwconf.Value(
         '', alias=['dir'], position=1, help='Destination directory'
     )
-    benchmark = scfg.Value(
+    benchmark: str = kwconf.Value(
         'lite',
         position=2,
         help='Benchmark name (e.g., lite, helm, classic). Use a kwutil.MultiPattern for multi-select (e.g. "lite|ewok" or "regex:.*")',
     )
-    version = scfg.Value(
+    version: str = kwconf.Value(
         'latest',
         position=3,
         help='Benchmark version (e.g. v1.9.0). If latest/auto, uses most recent. You may also use a kwutil.MultiPattern to select multiple versions.',
     )
-    stop_on_error = scfg.Value(
+    stop_on_error: bool = kwconf.Value(
         False,
         isflag=True,
         group='behavior',
         help='When downloading multiple benchmarks/versions, stop on first error',
     )
 
-    runs = scfg.Value(
+    runs: str | list[str] | None = kwconf.Value(
         None,
-        type=str,
+        parser=str,
         help=ub.paragraph(
             """
             Optional glob pattern (or kwutil MultiPattern) to match specific
@@ -145,13 +145,13 @@ class DownloadHelmConfig(scfg.DataConfig):
         ),
     )  # empty means "download all runs in the version"
 
-    list_benchmarks = scfg.Value(
+    list_benchmarks: bool = kwconf.Value(
         False,
         isflag=True,
         group='listers',
         help='List available benchmarks and exit',
     )
-    list_versions = scfg.Value(
+    list_versions: bool = kwconf.Value(
         False,
         isflag=True,
         group='listers',
@@ -161,7 +161,7 @@ class DownloadHelmConfig(scfg.DataConfig):
             """
         ),
     )
-    list_runs = scfg.Value(
+    list_runs: bool = kwconf.Value(
         False,
         isflag=True,
         group='listers',
@@ -172,21 +172,21 @@ class DownloadHelmConfig(scfg.DataConfig):
         ),
     )
 
-    verbose = scfg.Value(
+    verbose: bool = kwconf.Value(
         False, isflag=True, help='Verbose output', group='logging'
     )
-    bucket = scfg.Value(
+    bucket: str = kwconf.Value(
         'gs://crfm-helm-public',
         help='The storage bucket to download from. No need to change this.',
         group='behavior',
     )
-    checksum = scfg.Value(
+    checksum: bool = kwconf.Value(
         False,
         isflag=True,
         help='Enable checksum-based comparison',
         group='behavior',
     )
-    backend = scfg.Value(
+    backend: str = kwconf.Value(
         'fsspec',
         choices=['gsutil', 'fsspec'],
         group='behavior',
@@ -197,7 +197,7 @@ class DownloadHelmConfig(scfg.DataConfig):
             """
         ),
     )
-    install = scfg.Value(
+    install: bool = kwconf.Value(
         False,
         isflag=True,
         group='behavior',

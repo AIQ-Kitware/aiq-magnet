@@ -172,6 +172,7 @@ dependencies = [
     { name = "fsspec" },
     { name = "h5py" },
     { name = "kwarray" },
+    { name = "kwconf" },
     { name = "kwdagger" },
     { name = "kwutil" },
     { name = "lazy-loader" },
@@ -185,7 +186,6 @@ dependencies = [
     { name = "rich" },
     { name = "ruamel-yaml" },
     { name = "scikit-learn" },
-    { name = "scriptconfig" },
     { name = "typing-extensions" },
     { name = "ubelt" },
 ]
@@ -232,6 +232,7 @@ requires-dist = [
     { name = "gcsfs", marker = "extra == 'optional'", specifier = ">=2024.9" },
     { name = "h5py", specifier = ">=3.14" },
     { name = "kwarray", specifier = ">=0.7.1" },
+    { name = "kwconf", git = "https://github.com/Erotemic/kwconf.git?rev=8e8e9c4992451d5d5442c338b32b47c02dab8bcb" },
     { name = "kwdagger", specifier = ">=0.2.3" },
     { name = "kwutil", specifier = ">=0.3.8" },
     { name = "lazy-loader", specifier = ">=0.4" },
@@ -250,7 +251,6 @@ requires-dist = [
     { name = "rich", specifier = ">=14.1" },
     { name = "ruamel-yaml", specifier = ">=0.17.22" },
     { name = "scikit-learn", specifier = ">=1.7.1" },
-    { name = "scriptconfig", specifier = ">=0.8.4" },
     { name = "sphinx", marker = "extra == 'docs'", specifier = ">=4.3.2" },
     { name = "sphinx-autoapi", marker = "extra == 'docs'", specifier = ">=1.8.4" },
     { name = "sphinx-autobuild", marker = "extra == 'docs'", specifier = ">=2021.3.14" },
@@ -1517,6 +1517,11 @@ sdist = { url = "https://files.pythonhosted.org/packages/51/09/0e555288cdedf3eac
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b2/a2/89e0bcbaa742950581cb6213a33b0f96f3d3e8e7e6186db2b98afb16ec38/kwarray-0.7.1-py3-none-any.whl", hash = "sha256:378eacfeeae27ee967eaa15c49f5141c8ce1f0cf869c1aea8139bf216c6d7f4b", size = 108944, upload-time = "2024-10-18T04:06:05.16Z" },
 ]
+
+[[package]]
+name = "kwconf"
+version = "0.10.1"
+source = { git = "https://github.com/Erotemic/kwconf.git?rev=8e8e9c4992451d5d5442c338b32b47c02dab8bcb#8e8e9c4992451d5d5442c338b32b47c02dab8bcb" }
 
 [[package]]
 name = "kwdagger"
