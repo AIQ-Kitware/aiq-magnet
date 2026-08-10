@@ -68,21 +68,18 @@ def test_validate_alias():
     assert evaluation_cfg['validate'] == 'off'
 
 
-def test_validate_option_is_only_readable_as_an_item():
+def test_validate_behavior_has_not_changed():
     """
-    The ``validate`` option cannot be read as an attribute, and never will be.
-
-    ``kwconf.Config.validate()`` is a method, and a method wins attribute
-    lookup over a config value. This is asserted rather than merely avoided
-    because the failure is silent: ``args.validate`` yields a bound method,
-    which compares unequal to every mode, so the card is parsed with schema
-    validation off no matter what was asked for.
+    Kwconf.Config defines a ``.validate`` method, and we have a validate
+    CLI key, which shadows it. For some reason claude thought that the method
+    would win, but it seems the user value wins. This test just asserts
+    that behavior so we get a red dashboard if it ever changes.
     """
     cfg = EvaluationConfig.cli(argv=['card.yaml', '--validate', 'error'])
 
     assert cfg['validate'] == 'error'
-    assert callable(cfg.validate)
-    assert cfg.validate != 'error'
+    assert not callable(cfg.validate), ('The user item shadows the .validate method')
+    assert cfg.validate == 'error'
 
 
 def test_no_config_option_shadows_a_config_method():
