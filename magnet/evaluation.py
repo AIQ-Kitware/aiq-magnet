@@ -1105,7 +1105,13 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         special_options=False,
     )
 
-    if args.validate == 'only':
+    # Item access, not `args.validate`: the option shares its name with
+    # `kwconf.Config.validate`, and the method wins attribute lookup. Reading it
+    # as an attribute yields a bound method, which silently compares unequal to
+    # every mode and turns validation off. See tests/test_kwconf_configs.py.
+    validate = args['validate']
+
+    if validate == 'only':
         try:
             with open(args.path, 'r') as f:
                 cfg = yaml.safe_load(f)
@@ -1117,8 +1123,7 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
             sys.exit(1)
         return
 
-
-    card = EvaluationCard(args.path, args.output_path, validate=args.validate)
+    card = EvaluationCard(args.path, args.output_path, validate=validate)
     if args.override is not None:
         card.replace(args.override)
 
