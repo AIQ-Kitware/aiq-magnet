@@ -1,62 +1,24 @@
 """
 kwdagger nodes that lease their own inference endpoints.
 
-The obvious way to run a card against a served model is to wrap the whole
-evaluation in one lease::
-
-    infer-stack run --endpoint cohort -- python -m magnet.evaluation card.yaml
-
-That works, and it is wrong as soon as the models are real.  It holds every
-model in the cohort for the entire run -- including while the cheap
-aggregation and analysis nodes run, which need no model at all -- so an
-eight-model cohort occupies eight GPUs from the first token to the last
-statistic.  It also means the DAG cannot say anything about what it needs:
-the lease lives in a shell script beside the pipeline instead of in it.
-
-Here the lease is a property of the node.  A node declares which of its
-parameters name endpoints, and its rendered command becomes::
+Wrapping a whole evaluation in one lease holds every model in the cohort for
+the entire run, including while the analysis nodes that need no model at all
+are running. Here the lease is a property of the node: it declares which of its
+parameters name endpoints, and its command renders as::
 
     infer-stack run --endpoint <alias> ... -- <the original command>
 
-so the endpoint is acquired when that job starts and released when it ends,
-whatever else the DAG is doing.  Three things follow:
+so an endpoint is held for the jobs that use it and no longer. Concurrency
+becomes infer-stack's problem -- kwdagger may have eight jobs in flight and
+infer-stack coalesces the ones wanting the same model -- and switching from a
+simulator to a real GPU is `INFER_STACK_CATALOG`, not a code change.
 
-* **Utilization is correct by construction.** A GPU is held for the jobs
-  that use it and no longer. Nodes that touch no model never appear to the
-  scheduler as if they did.
-* **Concurrency is infer-stack's problem, not the card's.** kwdagger may
-  have ``--jobs 8`` in flight; infer-stack coalesces jobs that want the same
-  model onto one deployment and queues the ones that do not fit. Neither
-  side has to know the other's limits.
-* **A rehearsal and a real run are the same pipeline.** The node names an
-  endpoint *alias*; which server that resolves to is the catalog's business.
-  Switching from a simulator to a real GPU is `INFER_STACK_CATALOG`, not a
-  code change.
+The cost: with ``reclaim: stop`` a cohort with more models than GPUs reloads
+weights repeatedly. Use ``reclaim: keep-warm``, where the lease bounds
+entitlement rather than container lifetime.
 
-The cost is honest and worth stating: with ``reclaim: stop`` a model is torn
-down between jobs, so a cohort with more models than GPUs will reload
-weights repeatedly. Real catalogs should use ``reclaim: keep-warm``, which
-leaves a released deployment up until something else needs the GPU -- the
-lease then bounds *entitlement*, not container lifetime.
-
-Leasing is **opt-in** (``MAGNET_PER_NODE_LEASING=1``). Without it a
-:class:`LeasedProcessNode` renders exactly the command a plain
-:class:`kwdagger.ProcessNode` would, because plenty of legitimate runs point
-at a server infer-stack does not manage.
-
-Example:
-    >>> import os, kwdagger
-    >>> os.environ['MAGNET_PER_NODE_LEASING'] = '1'
-    >>> from magnet.leasing import LeasedProcessNode
-    >>> class Infer(LeasedProcessNode):
-    ...     name = 'infer'
-    ...     executable = 'python -m mypkg.infer'
-    ...     endpoint_params = ('model_id',)
-    ...     algo_params = {'model_id': None}
-    >>> node = Infer()
-    >>> node.configure({'model_id': 'Qwen/Qwen3-8B'})
-    >>> print(node.command.split('--')[0].strip())
-    infer-stack run
+Opt-in via ``MAGNET_PER_NODE_LEASING=1``. Off by default because plenty of
+legitimate runs point at a server infer-stack does not manage.
 """
 
 from __future__ import annotations

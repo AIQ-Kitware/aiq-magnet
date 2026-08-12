@@ -41,17 +41,10 @@ def resolve_queue_backend(requested: str | None = None) -> str:
     Returns:
         str: a backend cmd_queue reports as available.
 
-    Prefer ``tmux`` even at size 1. It costs nothing over ``serial`` for a
-    linear pipeline -- the same jobs run in the same order -- but it gives a
-    live monitor and a separate log file per job, instead of one interleaved
-    stream in the terminal that started the run. On a multi-hour card that
-    difference is the whole debugging story: with ``serial`` you find out what
-    a node did by scrolling, and a node's output is tangled with the
-    orchestrator's.
-
-    ``serial`` remains right for CI, for pytest, and for anywhere tmux is not
-    installed -- which is why an unavailable backend degrades to it with a
-    notice rather than raising.
+    Defaults to ``tmux`` even at size 1: the same jobs run in the same order as
+    ``serial``, but with a live monitor and a separate log per job rather than
+    one interleaved stream. ``serial`` is right for CI and pytest, so an
+    unavailable backend degrades to it with a notice rather than raising.
 
     Example:
         >>> from magnet.evaluation import resolve_queue_backend

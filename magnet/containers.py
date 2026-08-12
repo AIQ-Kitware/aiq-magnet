@@ -1,74 +1,34 @@
 """
 kwdagger nodes that run their command inside a container.
 
-MAGNET itself stays on the host: it parses the card, compiles the DAG,
-resolves the gather edges and submits the queue.  What goes in a container
-is each *node's* command -- the process that actually does the work.  That
-split is deliberate:
+Orchestration outside, work inside. MAGNET parses the card, compiles the DAG
+and submits the queue on the host, because that needs the Docker socket, the
+infer-stack ledger and the host filesystem. What goes in a container is each
+node's command -- the process whose dependencies must be pinned and which runs
+many times, on many hosts.
 
-* The orchestrator needs the Docker socket, the infer-stack ledger and the
-  host filesystem. Putting it in a container means either nesting Docker or
-  handing a container control of the host's daemon.
-* The node is the thing whose dependencies must be pinned to be
-  reproducible. It is also the thing that runs many times, on many hosts,
-  possibly under Slurm.
-
-So the boundary is: **orchestration outside, work inside.**
-
-Layering with the lease
------------------------
-
-A node can be both leased and containerized, and the order is not
-arbitrary::
+A node can be both leased and containerized, and the order is not arbitrary::
 
     test -e <output> || \\
     infer-stack run --endpoint qwen3-8b -- \\
         docker run --rm --network host ... image python -m pkg.node ...
 
-The lease is *outside* the container because acquiring one needs the Docker
-daemon and the shared ledger, both of which live on the host. The container
-is *inside* because it is the thing that consumes the endpoint -- and being
-inside means it inherits ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` from the
-lease that wraps it, with no extra plumbing.
+The lease is outside because acquiring one needs the host's daemon and ledger.
+The container is inside because it consumes the endpoint, and being inside
+means it inherits ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` from the lease. The
+cache guard stays outermost, so a node whose output exists neither leases nor
+starts a container.
 
-The cache guard stays outermost, so a node whose output already exists
-neither leases nor starts a container.
-
-Mounting
---------
-
-The repository is mounted at **the same absolute path it has on the host**.
-kwdagger bakes absolute output paths into every command, and node configs
-carry paths relative to the run's working directory; keeping the paths
-identical means none of that has to be rewritten, and a path in a log is a
-path you can open. ``PYTHONPATH`` then points at the mounted sources, which
-take precedence over any copy baked into the image -- so editing a node does
-not mean rebuilding.
+The repository is mounted at the same absolute path it has on the host:
+kwdagger bakes absolute output paths into commands, so keeping them identical
+means nothing has to be rewritten and a path in a log is one you can open.
 
 TODO:
-    This is opt-in per node class, which means a pipeline has to inherit from
-    :class:`ContainerProcessNode` to get it. MAGNET knows the whole DAG at
-    compile time and could inject the wrapper into *every* node of a card
-    that asks for containerized execution, without the pipeline mentioning
-    containers at all -- the pipeline would then describe the work and the
-    card would describe where it runs. That is the right shape; this is the
-    hard-coded version of it.
-
-Example:
-    >>> import os
-    >>> os.environ['MAGNET_NODE_IMAGE'] = 'aiq-eval-node:latest'
-    >>> os.environ['MAGNET_NODE_MOUNTS'] = '/repo'
-    >>> from magnet.containers import ContainerProcessNode
-    >>> class Work(ContainerProcessNode):
-    ...     name = 'work'
-    ...     executable = 'python -m pkg.work'
-    >>> node = Work()
-    >>> node.configure({})
-    >>> prefix = node.command.split(' \\\\\\n')[0]
-    >>> prefix.startswith('docker run --rm --network host')
-    True
-    >>> '-v /repo:/repo' in prefix and prefix.endswith('aiq-eval-node:latest')
-    True
+    Opt-in per node class, so a pipeline must inherit from
+    :class:`ContainerProcessNode`. MAGNET knows the whole DAG at compile time
+    and could inject the wrapper into every node of a card that asks for
+    containerized execution, leaving the pipeline to describe the work and the
+    card to describe where it runs.
 """
 
 from __future__ import annotations
@@ -131,8 +91,9 @@ def forwarded_env() -> list[str]:
 
     Example:
         >>> import os
-        >>> os.environ['MAGNET_NODE_FORWARD_ENV'] = 'MY_FACTORY,MY_URL'
-        >>> names = forwarded_env()
+        >>> from unittest import mock
+        >>> with mock.patch.dict(os.environ, {'MAGNET_NODE_FORWARD_ENV': 'MY_FACTORY,MY_URL'}):
+        ...     names = forwarded_env()
         >>> names[0], names[-2:]
         ('OPENAI_BASE_URL', ['MY_FACTORY', 'MY_URL'])
     """
