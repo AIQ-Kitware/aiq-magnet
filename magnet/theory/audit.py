@@ -17,27 +17,27 @@ CommandLine:
 """
 import sys
 
-import scriptconfig as scfg
+import kwconf
 import ubelt as ub
 
 __all__ = ['TheoryAuditCLI', 'audit']
 
 
-class TheoryAuditCLI(scfg.DataConfig):
+class TheoryAuditCLI(kwconf.Config):
     """
     Report what a codebase assumes, and what proves it.
     """
 
     __command__ = 'audit'
 
-    source = scfg.Value(
+    source: list[str] = kwconf.Value(
         '.',
         position=1,
         nargs='+',
         help='source file or directory to parse; repeatable',
         tags=['in_path'],
     )
-    index = scfg.Value(
+    index: list[str] | None = kwconf.Value(
         None,
         nargs='+',
         help=ub.paragraph(
@@ -49,7 +49,7 @@ class TheoryAuditCLI(scfg.DataConfig):
         ),
         tags=['in_path'],
     )
-    site_root = scfg.Value(
+    site_root: list[str] | None = kwconf.Value(
         None,
         nargs='+',
         help=ub.paragraph(
@@ -62,13 +62,15 @@ class TheoryAuditCLI(scfg.DataConfig):
             """
         ),
     )
-    format = scfg.Value(
+    format: str = kwconf.Value(
         'text',
         choices=['text', 'json'],
         help='text for a readable report, json for a machine-readable one',
     )
-    out = scfg.Value(None, help='write the report here instead of stdout', tags=['out_path'])
-    strict = scfg.Value(
+    out: str | None = kwconf.Value(
+        None, help='write the report here instead of stdout', tags=['out_path']
+    )
+    strict: bool = kwconf.Value(
         False,
         isflag=True,
         help=ub.paragraph(
