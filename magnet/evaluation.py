@@ -97,18 +97,18 @@ class EvaluationConfig(kwconf.Config):
 # multiprocessing support)
 def _run_one(
     evaluation: 'EvaluationTask', claim_results_path: ub.Path
-) -> Tuple[str, ub.Path]:
+) -> Tuple[str, ub.Path, str, Dict[str, Any]]:
     status, _ = evaluation.execute()
-    results_fpath = (
-        claim_results_path / evaluation._execution_hash / 'verdict.json'
-    )
+    execution_hash = evaluation._execution_hash
+    resolved_symbols = evaluation.log['symbols']
+    results_fpath = claim_results_path / execution_hash / 'verdict.json'
     results_fpath.parent.ensuredir()
 
     with safer.open(results_fpath, 'w', temp_file=SAFER_USE_TEMPFILE) as f:
         json.dump(evaluation.log, f, indent=2, ensure_ascii=False)
         f.write('\n')
 
-    return status, results_fpath
+    return status, results_fpath, execution_hash, resolved_symbols
 
 
 class EvaluationCard:
@@ -334,8 +334,12 @@ class EvaluationCard:
             )
 
         results = []
-        for status, results_fpath in out:
+        resolved_symbols = []
+        claim_hashes = []
+        for status, results_fpath, execution_hash, symbols in out:
             results.append(status)
+            resolved_symbols.append(symbols)
+            claim_hashes.append(execution_hash)
             logger.info(f'Wrote claim output to {results_fpath}')
 
         calculated_metrics = {}
@@ -346,7 +350,7 @@ class EvaluationCard:
             )
             calculated_metrics = _calculate_metrics(
                 metric_definitions,
-                self.evaluations,
+                resolved_symbols,
                 raw_symbol_metadata,
             )
 
@@ -379,7 +383,7 @@ class EvaluationCard:
         aggregate_verdict = {
             'result': card_result,
             'claim_aggregation_strategy': self.claim_aggregation_strategy,
-            'claims': [e._execution_hash for e in self.evaluations],
+            'claims': claim_hashes,
         }
 
         if raw_symbol_metadata and calculated_metrics:
@@ -683,7 +687,7 @@ class EvaluationTask:
         self.claim = claim
         self.symbols = symbols
         self.output_msg = ''
-        self.log = ''
+        self.log: Dict[str, Any] = {}
 
     def execute(self) -> Tuple[str, str]:
         self.symbols.resolve()
@@ -1074,14 +1078,18 @@ class Metric:
 
 def _calculate_metrics(
     metric_definitions: List[Metric],
-    evaluations: List['EvaluationTask'],
+    evaluations: List['EvaluationTask'] | List[Dict[str, Any]],
     symbol_metadata: Dict[str, Any],
 ) -> Dict[str, MetricValue]:
     calculated_metrics = {}
     for metric in metric_definitions:
         runs = []
         for evaluation in evaluations:
-            symbol_value = evaluation.symbols().get(metric.name)
+            if isinstance(evaluation, dict):
+                symbols = evaluation
+            else:
+                symbols = evaluation.symbols()
+            symbol_value = symbols.get(metric.name)
             if symbol_value is None:
                 logger.error(
                     f'Metric {metric.name} cannot be mapped to a Symbol value'
