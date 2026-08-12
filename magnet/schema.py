@@ -53,6 +53,15 @@ class SymbolSchema(BaseModel):
                 )
         return self
 
+class GroundingSchema(BaseModel):
+    declaration: str
+    informal: str = ''
+    note: str = ''
+
+class TheorySchema(BaseModel):
+    formalizations: list[str] = Field(default_factory=list)
+    grounds: list[GroundingSchema] = Field(default_factory=list)
+
 class ClaimAggregationStrategyParameterSchema(BaseModel):
     threshold: float
 
@@ -125,6 +134,9 @@ class EvaluationCardSchema(BaseModel):
     # --- Evaluation configuration ---
     claim_aggregation_strategy: ClaimAggregationStrategySchema | None = None
     symbols: dict[str, SymbolSchema] | None = None
+
+    # --- What the claim is grounded on (optional) ---
+    theory: TheorySchema | None = None
 
     # --- Backend (at most one) ---
     kwdagger: dict[str, Any] | None = None

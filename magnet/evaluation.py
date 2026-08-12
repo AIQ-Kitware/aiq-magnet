@@ -22,6 +22,7 @@ from rich import print
 
 from magnet.utils.util_logger import setup_logging
 from magnet.schema import EvaluationCardSchema, MetricObjective
+from magnet.theory.cards import basis_from_card
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -182,6 +183,9 @@ class EvaluationCard:
 
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
+        # Formalization paths in the theory block are relative to the card.
+        self.card_dpath = ub.Path(path).parent
+        self.basis = None
 
         self.title = cfg.get('title', '')
         self.description = cfg.get('description', '')
@@ -390,6 +394,14 @@ class EvaluationCard:
         ) as f:
             json.dump(aggregate_verdict, f, indent=2, ensure_ascii=False)
             f.write('\n')
+
+        self.basis = basis_from_card(self.original_card, root=self.card_dpath)
+        if self.basis is not None:
+            with safer.open(
+                card_output_path / 'theory.json', 'w', temp_file=SAFER_USE_TEMPFILE
+            ) as f:
+                json.dump(self.basis.to_dict(), f, indent=2, ensure_ascii=False, default=str)
+                f.write('\n')
 
         self.claim.status = card_result
         return card_result
