@@ -233,7 +233,7 @@ requires-dist = [
     { name = "h5py", specifier = ">=3.14" },
     { name = "kwarray", specifier = ">=0.7.1" },
     { name = "kwconf", specifier = ">=0.11.0" },
-    { name = "kwdagger", specifier = ">=0.2.6" },
+    { name = "kwdagger", specifier = ">=0.4.0" },
     { name = "kwutil", specifier = ">=0.3.8" },
     { name = "lazy-loader", specifier = ">=0.4" },
     { name = "loguru", specifier = ">=0.7.3" },
