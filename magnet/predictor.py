@@ -1,23 +1,31 @@
 from typing import Any
+from enum import StrEnum, auto
 
 import rich
 from rich.markup import escape
 import ubelt as ub
 import pandas as pd
 import kwarray
+from loguru import logger
 
 from magnet.backends.helm.helm_outputs import HelmRuns, HelmSuites
 from magnet.data_splits import TestSplit, TrainSplit
 
+class Policy(StrEnum):
+    ERROR = auto()
+    WARN = auto()
+    IGNORE = auto()
 
 class Predictor:
     def __init__(self,
                  num_example_runs=3,
                  num_eval_samples=20,
-                 random_seed=1):
+                 random_seed=1,
+                 insufficient_eval_sample_policy=Policy.WARN):
         self.num_example_runs = num_example_runs
         self.num_eval_samples = num_eval_samples
         self.random_seed = random_seed
+        self.insufficient_eval_sample_policy = insufficient_eval_sample_policy
 
     def run_spec_filter(self, run_spec):
         # To be overridden; likely only want to use this filter *OR*
@@ -84,7 +92,14 @@ class Predictor:
         _full_eval_per_instance_stats_df = _all_per_instance_stats_df[_all_per_instance_stats_df['run_spec.name'] == eval_run]
 
         if self.num_eval_samples > len(_full_eval_scenario_state_df):
-            raise RuntimeError("Not enough rows in eval scenario_state to sample")
+            if self.insufficient_eval_sample_policy == Policy.ERROR:
+                raise RuntimeError("Not enough rows in eval scenario_state to sample")
+            elif self.insufficient_eval_sample_policy == Policy.WARN:
+                logger.warning("Not enough rows in eval_scenario_state to sample")
+            elif self.insufficient_eval_sample_policy == Policy.IGNORE:
+                pass
+            else:
+                raise ValueError("Unknown insufficient_eval_sample_policy")
 
         # Sample up to `self.num_eval_samples` random instances from
         # scenario_states
@@ -260,7 +275,7 @@ class RunPredictor(Predictor):
         # More human readable float
         rounded_human_table = human_table.round(3)
 
-        rich.print(escape(rounded_human_table.to_string()))
+        logger.info(escape(rounded_human_table.to_string()))
 
         return human_table
 
