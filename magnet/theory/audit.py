@@ -183,7 +183,12 @@ def audit(sources, indexes=(), site_roots=None) -> AuditReport:
     """
     from magnet.theory.basis import TheoreticalBasis
     from magnet.theory.index import load
-    from magnet.theory.static import StaticLedger, check_sites, extract_tree, lint
+    from magnet.theory.static import (
+        StaticLedger,
+        check_sites,
+        extract_tree,
+        lint,
+    )
 
     formalizations = [load(path) for path in indexes]
 

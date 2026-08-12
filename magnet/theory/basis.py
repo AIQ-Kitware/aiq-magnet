@@ -13,7 +13,7 @@ belongs next to the verdict, because VERIFIED standing on two assumptions
 nobody has examined is a materially weaker statement than VERIFIED standing on
 none, and without this accounting nothing in the system can tell them apart.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Iterable, Sequence
 
 from magnet.theory.model import (
@@ -210,6 +210,11 @@ class TheoreticalBasis:
         registry for any hypothesis of a grounding statement, because the
         relaxations are usually in code the card calls rather than code it
         contains.
+
+        A grounding that names its ``formalization=`` contributes it here, so a
+        card that declares where its theorem came from does not also have to be
+        handed the same body a second time. Explicitly passed formalizations
+        come first, and win when both name the same declaration.
         """
         groundings = list(extra_groundings)
         edges = []
@@ -233,10 +238,18 @@ class TheoreticalBasis:
                 if edge.ref.declaration in grounded:
                     push(edge)
 
+        bodies = list(formalizations)
+        known = {id(f) for f in bodies}
+        for grounding in groundings:
+            body = getattr(grounding, 'formalization', None)
+            if body is not None and id(body) not in known:
+                known.add(id(body))
+                bodies.append(body)
+
         return cls(
             groundings=tuple(groundings),
             edges=tuple(edges),
-            formalizations=tuple(formalizations),
+            formalizations=tuple(bodies),
         )
 
     @classmethod

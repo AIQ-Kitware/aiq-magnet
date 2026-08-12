@@ -40,7 +40,12 @@ a clean bill of health.
 import os
 from typing import Any, Iterator, Sequence
 
-from magnet.theory.model import KERNEL_AXIOMS, Formalization, Hypothesis, Theorem
+from magnet.theory.model import (
+    KERNEL_AXIOMS,
+    Formalization,
+    Hypothesis,
+    Theorem,
+)
 
 #: The hygiene library shipped alongside this module.
 HYGIENE_PATH = os.path.join(os.path.dirname(__file__), 'data', 'hygiene.yaml')

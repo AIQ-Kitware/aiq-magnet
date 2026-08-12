@@ -17,9 +17,9 @@ from magnet.theory import (
     Relation,
     ReviewStatus,
     Severity,
+    Theorem,
     TheoreticalBasis,
     TheoryRegistry,
-    Theorem,
     approximates,
     assumes,
     checks,
@@ -280,6 +280,42 @@ def test_complete_coverage(formalization, registry):
     assert coverage.is_complete
     assert coverage.max_severity is Severity.NONE
     assert coverage.summary() == 'standing on 4 assumptions: 4 discharged'
+
+
+def test_grounding_contributes_the_formalization_it_names(formalization, registry):
+    # A card that says where its theorem came from should not have to be handed
+    # the same body a second time. When it was, the statement resolved to a
+    # placeholder with no hypotheses, so every assumption came back accounted
+    # for -- the exact failure the unaccounted list exists to catch.
+    basis = TheoreticalBasis.collect(
+        registry=None,
+        extra_groundings=[
+            grounds(
+                'Paper.Section.main',
+                formalization=formalization,
+                registry=registry,
+            )
+        ],
+    )
+    coverage = basis.coverage()
+
+    assert basis.formalizations == (formalization,)
+    assert not coverage.is_complete
+    assert sorted(h.name for h in coverage.unaccounted) == ['hiid', 'hlim', 'hvar', 'psi']
+
+
+def test_explicit_formalization_wins_over_the_grounding_s(formalization, registry):
+    other = Formalization(name='Other', theorems=[Theorem('Paper.Section.main')])
+    basis = TheoreticalBasis.collect(
+        registry=None,
+        extra_groundings=[
+            grounds('Paper.Section.main', formalization=other, registry=registry)
+        ],
+        formalizations=[formalization],
+    )
+
+    assert basis.formalizations == (formalization, other)
+    assert len(basis.coverage().unaccounted) == 4
 
 
 def test_unenumerated_statement_never_reads_as_complete(registry):

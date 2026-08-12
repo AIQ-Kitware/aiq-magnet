@@ -58,8 +58,18 @@ Teams annotating their own code do not need MAGNET installed:
 :mod:`magnet.theory.shim` is a dependency-free file to vendor, in which every
 predicate is a no-op.
 """
-from magnet.theory.basis import AssumptionCoverage, CoverageReport, TheoreticalBasis
-from magnet.theory.index import hygiene, load, load_index, load_manifest, save_index
+from magnet.theory.basis import (
+    AssumptionCoverage,
+    CoverageReport,
+    TheoreticalBasis,
+)
+from magnet.theory.index import (
+    hygiene,
+    load,
+    load_index,
+    load_manifest,
+    save_index,
+)
 from magnet.theory.model import (
     KERNEL_AXIOMS,
     Check,
