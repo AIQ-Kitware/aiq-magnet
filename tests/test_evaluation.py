@@ -3,10 +3,7 @@ import json
 from magnet.evaluation import EvaluationCard
 
 
-def test_evaluation_preserves_metrics(tmp_path):
-    card_fpath = tmp_path / 'card.yaml'
-    card_fpath.write_text(
-        """
+TEST_CARD_TEXT = """
 claim:
   python: |
     assert score >= 0
@@ -28,7 +25,10 @@ symbols:
     python: |
       score = x
 """
-    )
+
+def test_evaluation_preserves_metrics(tmp_path):
+    card_fpath = tmp_path / 'card.yaml'
+    card_fpath.write_text(TEST_CARD_TEXT)
 
     output_path = tmp_path / 'results'
 
@@ -64,30 +64,7 @@ symbols:
 
 def test_parallel_evaluation_preserves_metrics(tmp_path):
     card_fpath = tmp_path / 'card.yaml'
-    card_fpath.write_text(
-        """
-claim:
-  python: |
-    assert score >= 0
-
-symbols:
-  x:
-    sweep: [1.0, 3.0]
-
-  score:
-    metadata:
-      display_name: "Average Score"
-      define_metric:
-        objective: maximize
-        aggregation_strategy:
-          type: mean
-    type: float
-    depends_on:
-      - x
-    python: |
-      score = x
-"""
-    )
+    card_fpath.write_text(TEST_CARD_TEXT)
 
     output_path = tmp_path / 'results'
 
