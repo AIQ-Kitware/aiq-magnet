@@ -251,6 +251,9 @@ class EvaluationCard:
         # explicit kwdagger spec
         self.has_kwdagger = 'kwdagger' in cfg
         self.kwdagger = cfg.get('kwdagger')
+        if self.has_kwdagger:
+            self.kwdagger = _resolve_pipeline_path(
+                self.kwdagger, self.card_dpath)
 
         # populate ProcessNode(s) programmatically
         self.has_pipeline = 'pipeline' in cfg
@@ -915,6 +918,56 @@ class EvaluationTask:
     @property
     def _execution_hash(self) -> str:
         return ub.hash_data(self.symbols.simple_view())[:12]
+
+
+def _resolve_pipeline_path(
+    kwdagger_spec: Dict[str, Any], card_dpath: ub.Path
+) -> Dict[str, Any]:
+    """
+    Make a relative pipeline file path mean the same thing from any directory.
+
+    A card may name a pipeline file rather than inline the DAG or name a Python
+    callable. Such a path resolves against the card's directory, matching how
+    the theory block's formalization paths already work.
+
+    Args:
+        kwdagger_spec (Dict[str, Any]): the card's ``kwdagger`` block.
+        card_dpath (ub.Path): the directory holding the card.
+
+    Returns:
+        Dict[str, Any]: the spec, with any relative pipeline path made absolute.
+
+    Example:
+        >>> import ubelt as ub
+        >>> from magnet.evaluation import _resolve_pipeline_path
+        >>> spec = {'pipeline': 'module.func()'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        'module.func()'
+        >>> spec = {'pipeline': {'nodes': {}}}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        {'nodes': {}}
+        >>> spec = {'pipeline': 'dag.yaml'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        '/cards/dag.yaml'
+        >>> spec = {'pipeline': '/abs/dag.yaml'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        '/abs/dag.yaml'
+    """
+    pipeline = kwdagger_spec.get('pipeline')
+    if not isinstance(pipeline, str):
+        return kwdagger_spec
+    if '::' in pipeline:
+        return kwdagger_spec
+    if pipeline.rsplit('.', 1)[-1].lower() not in {'yaml', 'yml', 'json'}:
+        return kwdagger_spec
+
+    path = ub.Path(pipeline)
+    if not path.is_absolute():
+        path = card_dpath / path
+
+    resolved = dict(kwdagger_spec)
+    resolved['pipeline'] = os.fspath(path)
+    return resolved
 
 
 def _parse_symbol_metadata(symbols_spec: Dict[str, Any]) -> Dict[str, Any]:
