@@ -286,7 +286,7 @@ class EvaluationCard:
         """
         Handle overrides in symbol field by replacing 'value' entries and appending to sweeps
         """
-        override = kwutil.Yaml.coerce(override_str)
+        override = _plain_data(kwutil.Yaml.coerce(override_str))
 
         for key, value in override.items():
             if key not in self.symbols:
@@ -968,6 +968,47 @@ def _resolve_pipeline_path(
     resolved = dict(kwdagger_spec)
     resolved['pipeline'] = os.fspath(path)
     return resolved
+
+
+def _plain_data(data: Any) -> Any:
+    """
+    Rebuild YAML data out of plain dicts, lists and scalars.
+
+    The loader returns round-trip types that carry formatting. Those reach
+    ``original_card`` through an override and then fail in ``yaml.safe_dump``
+    when the run directory's copy of the card is written, with
+    ``RepresenterError: cannot represent an object``. Any list-valued override
+    hit this, so ``--override 'seed: [1, 2]'`` could not run at all.
+
+    Example:
+        >>> import kwutil
+        >>> from magnet.evaluation import _plain_data
+        >>> data = _plain_data(kwutil.Yaml.coerce('seed: [1, 2]'))
+        >>> type(data).__name__, type(data['seed']).__name__
+        ('dict', 'list')
+        >>> import yaml
+        >>> yaml.safe_dump(data)
+        'seed:\\n- 1\\n- 2\\n'
+        >>> quoted = kwutil.Yaml.coerce("cfg: ['a:b=c']")
+        >>> yaml.safe_dump(_plain_data(quoted))
+        'cfg:\\n- a:b=c\\n'
+    """
+    if isinstance(data, dict):
+        return {_plain_data(key): _plain_data(value)
+                for key, value in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [_plain_data(value) for value in data]
+    # Scalars need this too: a quoted string loads as a str subclass that
+    # remembers its quoting style, which safe_dump also refuses.
+    if isinstance(data, str):
+        return str(data)
+    if isinstance(data, bool):
+        return bool(data)
+    if isinstance(data, int):
+        return int(data)
+    if isinstance(data, float):
+        return float(data)
+    return data
 
 
 def _parse_symbol_metadata(symbols_spec: Dict[str, Any]) -> Dict[str, Any]:
