@@ -36,8 +36,7 @@ class SymbolSchema(BaseModel):
     type: str | None = None
     value: Any | None = None
     sweep: list | None = None
-    # `depends` is an accepted spelling of `depends_on`; both are in use in
-    # hand-written cards. See magnet.evaluation.Symbol.KNOWN_SPEC_KEYS.
+    # `depends` is an alias for `depends_on`.
     # TODO: modify "depends_on" to reference an actual symbol
     depends_on: list[str] = Field(
         default_factory=list,
@@ -52,11 +51,12 @@ class SymbolSchema(BaseModel):
         if isinstance(data, dict):
             depends_on = data.get('depends_on')
             depends = data.get('depends')
-            if depends_on is not None and depends is not None:
-                if list(depends_on) != list(depends):
-                    raise ValueError(
-                        '`depends_on` and `depends` are aliases and must agree'
-                    )
+            if (
+                depends_on is not None
+                and depends is not None
+                and depends_on != depends
+            ):
+                raise ValueError('`depends_on` and `depends` must agree')
         return data
 
     @model_validator(mode='after')

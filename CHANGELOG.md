@@ -7,14 +7,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
-* Evaluation card symbols may declare dependencies as either `depends_on` or
-  `depends`. Only the former was read, so the latter was silently dropped and
-  resolution order fell back to declaration order in the YAML.
+* Accept `depends` as an alias for `depends_on` in symbol dependencies.
 
 ### Changed
 
-* `magnet evaluate` now warns when a symbol spec contains an unrecognized key,
-  instead of ignoring it silently.
+* Warn on unrecognized symbol-spec keys.
 
 ## Version 0.0.2 -- Released 2026-05-08
 

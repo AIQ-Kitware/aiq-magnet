@@ -115,6 +115,6 @@ def test_symbol_dependency_aliases_must_not_disagree(simple_card):
     }
     with pytest.raises(
         ValidationError,
-        match='`depends_on` and `depends` are aliases and must agree',
+        match='`depends_on` and `depends` must agree',
     ):
         EvaluationCardSchema.model_validate(card)
