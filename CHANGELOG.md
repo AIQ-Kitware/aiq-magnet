@@ -3,6 +3,19 @@
 This changelog follows the specifications detailed in: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), although we have not yet reached a `1.0.0` release.
 
+## Unreleased
+
+### Fixed
+
+* Re-running an unchanged card reuses its run directory instead of creating a
+  new one stamped with the current second. The DAG's root lives inside that
+  directory, so a fresh name every run meant `skip_existing` always arrived at
+  an empty tree and recomputed every node. Editing the card changes its id and
+  still starts a new directory.
+* `EvaluationCard._run_hash` is computed once per instance rather than on every
+  read. It called `datetime.now()` on each read, so two readers disagreed about
+  where the run was written.
+
 ## Version 0.0.2 -- Released 2026-05-08
 
 ### Added
