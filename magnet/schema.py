@@ -46,6 +46,19 @@ class SymbolSchema(BaseModel):
     python: str | None = None # TODO: this can be validated with a syntax check
     metadata: SymbolMetadataSchema | None = None
 
+    @model_validator(mode='before')
+    @classmethod
+    def dependency_aliases_agree(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            depends_on = data.get('depends_on')
+            depends = data.get('depends')
+            if depends_on is not None and depends is not None:
+                if list(depends_on) != list(depends):
+                    raise ValueError(
+                        '`depends_on` and `depends` are aliases and must agree'
+                    )
+        return data
+
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
         if self.value is None and self.sweep is None and self.python is None:
