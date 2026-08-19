@@ -1,6 +1,6 @@
 from enum import StrEnum
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 class LinkSchema(BaseModel):
     title: str
@@ -36,7 +36,13 @@ class SymbolSchema(BaseModel):
     type: str | None = None
     value: Any | None = None
     sweep: list | None = None
-    depends_on: list[str] = Field(default_factory=list) # TODO: modify "depends_on" to reference an actual symbol
+    # `depends` is an accepted spelling of `depends_on`; both are in use in
+    # hand-written cards. See magnet.evaluation.Symbol.KNOWN_SPEC_KEYS.
+    # TODO: modify "depends_on" to reference an actual symbol
+    depends_on: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices('depends_on', 'depends'),
+    )
     python: str | None = None # TODO: this can be validated with a syntax check
     metadata: SymbolMetadataSchema | None = None
 

@@ -3,6 +3,19 @@
 This changelog follows the specifications detailed in: [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html), although we have not yet reached a `1.0.0` release.
 
+## Unreleased
+
+### Fixed
+
+* Evaluation card symbols may declare dependencies as either `depends_on` or
+  `depends`. Only the former was read, so the latter was silently dropped and
+  resolution order fell back to declaration order in the YAML.
+
+### Changed
+
+* `magnet evaluate` now warns when a symbol spec contains an unrecognized key,
+  instead of ignoring it silently.
+
 ## Version 0.0.2 -- Released 2026-05-08
 
 ### Added
