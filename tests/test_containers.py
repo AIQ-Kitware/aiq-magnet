@@ -150,3 +150,61 @@ def test_it_is_still_an_ordinary_kwdagger_node(monkeypatch):
     # Where a node runs must not change what it computes.
     assert 'docker' not in str(node.algo_id)
     assert 'docker' not in str(node.process_id)
+
+
+def test_a_declared_variables_value_is_captured_not_forwarded(monkeypatch):
+    """The environment that runs the command is not the one that rendered it.
+
+    A cmd_queue tmux worker created against an already-running server inherits
+    that server's environment, so a bare ``-e NAME`` for orchestrator
+    configuration forwards nothing and the node silently falls back to a
+    default.
+    """
+    _on(monkeypatch)
+    monkeypatch.setenv(FORWARD_ENV_ENVVAR, 'SOME_BACKEND_FACTORY')
+    monkeypatch.setenv('SOME_BACKEND_FACTORY', 'pkg.mod:factory')
+    command = _node(Work, {'task': 't'}).command
+    assert '-e SOME_BACKEND_FACTORY=pkg.mod:factory' in command
+
+
+def test_a_lease_variable_is_never_captured_even_when_set(monkeypatch):
+    """A lease value must come from the job, not the orchestrator's shell.
+
+    OPENAI_BASE_URL set in the orchestrator is not the endpoint this job
+    leased; baking it in would freeze the wrong URL over the one
+    ``infer-stack run`` writes at job time.
+    """
+    _on(monkeypatch)
+    monkeypatch.setenv('OPENAI_BASE_URL', 'http://stale-orchestrator/v1')
+    command = _node(Work, {'task': 't'}).command
+    assert '-e OPENAI_BASE_URL' in command
+    assert 'stale-orchestrator' not in command
+
+
+def test_a_node_may_declare_its_own_container_settings(monkeypatch):
+    """A node's own image, mounts and env override the process-wide ones."""
+    _on(monkeypatch)
+
+    class Declared(Work):
+        container_image = 'other:tag'
+        container_mounts = ['/a', '/b']
+        container_env = {'SOME_BACKEND_FACTORY': 'node.declared:factory'}
+
+    command = _node(Declared, {'task': 't'}).command
+    assert 'other:tag' in command
+    assert '-v /a:/a' in command and '-v /b:/b' in command
+    assert '-e SOME_BACKEND_FACTORY=node.declared:factory' in command
+    # The process-wide image is overridden, not appended to.
+    assert 'aiq-eval-node:latest' not in command
+
+
+def test_pythonpath_is_captured_not_left_bare(monkeypatch):
+    """PYTHONPATH is orchestrator configuration, not a lease value.
+
+    Left as a bare name it arrives empty in a cmd_queue tmux worker that did
+    not inherit it, and every import inside the node fails.
+    """
+    _on(monkeypatch)
+    monkeypatch.setenv('PYTHONPATH', '/repo:/repo/ta1/thing')
+    command = _node(Work, {'task': 't'}).command
+    assert '-e PYTHONPATH=/repo:/repo/ta1/thing' in command

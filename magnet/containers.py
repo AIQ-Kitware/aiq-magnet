@@ -34,6 +34,7 @@ TODO:
 from __future__ import annotations
 
 import os
+from typing import Any
 import shlex
 
 import kwdagger
@@ -46,6 +47,8 @@ __all__ = [
     'IMAGE_ENVVAR',
     'MOUNTS_ENVVAR',
     'FORWARD_ENV_ENVVAR',
+    'LEASE_ENV',
+    'DEFAULT_CAPTURED_ENV',
 ]
 
 #: Image to run node commands in. Unset => run on the host, as before.
@@ -66,19 +69,30 @@ DOCKER_ARGS_ENVVAR = 'MAGNET_NODE_DOCKER_ARGS'
 #: called, so it does not enumerate them.
 FORWARD_ENV_ENVVAR = 'MAGNET_NODE_FORWARD_ENV'
 
-#: Variables forwarded into every containerized node, by name -- so the value
-#: is read at job time rather than baked into a command string rendered much
-#: earlier. The OPENAI_* pair is what a surrounding lease exports; the rest
-#: are generic runtime settings, not anything specific to one evaluation.
-DEFAULT_FORWARDED_ENV = (
+#: Variables a surrounding lease supplies at job time: ``infer-stack run``
+#: writes them into the environment of the command it wraps, long after this
+#: string is rendered. Forwarded by name so docker reads them then; capturing a
+#: value here would freeze the orchestrator's shell over the endpoint the job
+#: actually leased.
+LEASE_ENV = (
     'OPENAI_BASE_URL',
     'OPENAI_API_KEY',
+)
+
+#: Variables that exist at render time and are not recreated later, so their
+#: values are captured. PYTHONPATH is the one that matters: left as a bare name
+#: it arrives empty in a cmd_queue tmux worker that did not inherit it, and
+#: every import in the node fails.
+DEFAULT_CAPTURED_ENV = (
     'PYTHONPATH',
     'HF_TOKEN',
     'HF_HOME',
     'TRANSFORMERS_OFFLINE',
     'HF_HUB_OFFLINE',
 )
+
+#: Every variable magnet forwards without being told to, in a stable order.
+DEFAULT_FORWARDED_ENV = LEASE_ENV + DEFAULT_CAPTURED_ENV
 
 
 def forwarded_env() -> list[str]:
@@ -98,32 +112,84 @@ def forwarded_env() -> list[str]:
         ('OPENAI_BASE_URL', ['MY_FACTORY', 'MY_URL'])
     """
     names = list(DEFAULT_FORWARDED_ENV)
-    raw = os.environ.get(FORWARD_ENV_ENVVAR, '')
-    for chunk in raw.replace(',', ':').split(':'):
-        chunk = chunk.strip()
-        if chunk and chunk not in names:
+    for chunk in _env_name_list(os.environ.get(FORWARD_ENV_ENVVAR, '')):
+        if chunk not in names:
             names.append(chunk)
     return names
 
 
-def containerization_is_enabled() -> bool:
+def node_image(node: Any = None) -> str:
+    """The image for this node: its own declaration, else the process-wide one."""
+    declared = getattr(node, 'container_image', None)
+    if declared:
+        return str(declared).strip()
+    return os.environ.get(IMAGE_ENVVAR, '').strip()
+
+
+def node_mounts(node: Any = None) -> list[str]:
+    """Host paths to bind-mount at their own absolute paths."""
+    declared = getattr(node, 'container_mounts', None)
+    if declared:
+        raw = declared if isinstance(declared, (list, tuple)) else [declared]
+    else:
+        raw = os.environ.get(MOUNTS_ENVVAR, '').split(':')
+    return [str(m).strip() for m in raw if str(m).strip()]
+
+
+def declared_env(node: Any = None) -> dict:
+    """
+    Render-time variables and their values, in a stable order.
+
+    Values are captured here rather than forwarded by name because the
+    environment that will run the command is not this one; see the note in
+    :func:`container_prefix`.
+
+    A declared name with no value keeps a bare ``-e NAME`` (value None in the
+    result): a name that is not set yet can only be a job-time value.
+    """
+    names: list[str] = list(DEFAULT_CAPTURED_ENV)
+    for source in (getattr(node, 'container_forward_env', None) or (),
+                   _env_name_list(os.environ.get(FORWARD_ENV_ENVVAR, ''))):
+        for name in source:
+            name = str(name).strip()
+            if name and name not in names and name not in LEASE_ENV:
+                names.append(name)
+
+    resolved: dict = {name: os.environ.get(name) or None for name in names}
+    # An explicit mapping on the node wins over anything read from the
+    # environment.
+    for name, value in (getattr(node, 'container_env', None) or {}).items():
+        resolved[str(name)] = str(value)
+    return resolved
+
+
+def _env_name_list(raw: str) -> list[str]:
+    return [c.strip() for c in str(raw).replace(',', ':').split(':') if c.strip()]
+
+
+def containerization_is_enabled(node: Any = None) -> bool:
     """
     Whether node commands should be wrapped in ``docker run``.
 
     Returns:
         bool: true when :data:`IMAGE_ENVVAR` names an image.
     """
-    return bool(os.environ.get(IMAGE_ENVVAR, '').strip())
+    return bool(node_image(node))
 
 
-def container_prefix() -> str:
+def container_prefix(node: Any = None) -> str:
     """
     The ``docker run`` invocation that node commands are appended to.
+
+    Args:
+        node: the node being rendered, when it declares its own image, mounts
+            or environment. Falls back to the process-wide MAGNET_NODE_*
+            variables.
 
     Returns:
         str: everything up to and including the image name.
     """
-    image = os.environ.get(IMAGE_ENVVAR, '').strip()
+    image = node_image(node)
     parts = [
         'docker', 'run', '--rm',
         # The leased endpoint is reachable at 127.0.0.1:<gateway port> on the
@@ -137,10 +203,8 @@ def container_prefix() -> str:
         # user) cannot delete it.
         '--user', f'{os.getuid()}:{os.getgid()}',
     ]
-    for mount in os.environ.get(MOUNTS_ENVVAR, '').split(':'):
-        mount = mount.strip()
-        if mount:
-            parts += ['-v', f'{mount}:{mount}']
+    for mount in node_mounts(node):
+        parts += ['-v', f'{mount}:{mount}']
     parts += [
         # Same cwd as the host job, resolved at job time. Node configs carry
         # paths relative to it (e.g. ./data/...), so it has to match.
@@ -149,8 +213,31 @@ def container_prefix() -> str:
         # cache directory (matplotlib, huggingface) fails without this.
         '-e', 'HOME=/tmp',
     ]
-    for name in forwarded_env():
+    # Two kinds of variable, distinguished by when the value exists.
+    #
+    # Job-time (LEASE_ENV): supplied by whatever wraps the command at
+    # execution; `infer-stack run` writes OPENAI_BASE_URL / OPENAI_API_KEY into
+    # the environment of the command it wraps. These stay a bare `-e NAME` so
+    # docker reads them then. Baking a value here would freeze whatever the
+    # orchestrator happened to have, including nothing, over the endpoint
+    # actually leased.
+    #
+    # Render-time (DEFAULT_CAPTURED_ENV and caller-declared): the pipeline's
+    # own configuration, which exists now and is not recreated later. A bare
+    # `-e NAME` reads the value when `docker run` executes, in a cmd_queue tmux
+    # worker; a session created against an already-running tmux server inherits
+    # that server's environment, not the orchestrator's. The variable is absent
+    # by job time and `-e NAME` forwards nothing, silently: the container
+    # starts, the setting is missing, the node falls back to a default. That
+    # cost a full run when OC_BACKEND_FACTORY vanished this way and every shard
+    # routed to a provider it had no key for.
+    for name in LEASE_ENV:
         parts += ['-e', name]
+    for name, value in declared_env(node).items():
+        if value is None:
+            parts += ['-e', name]
+        else:
+            parts += ['-e', shlex.quote(f'{name}={value}')]
     parts += shlex.split(os.environ.get(DOCKER_ARGS_ENVVAR, ''))
     parts.append(image)
     return ' '.join(parts)
@@ -160,9 +247,23 @@ class ContainerProcessNode(kwdagger.ProcessNode):
     """
     A :class:`kwdagger.ProcessNode` whose command runs in a container.
 
-    Inert unless :data:`IMAGE_ENVVAR` is set, so the same pipeline runs on
-    the host during development and in a pinned image for a real run.
+    Inert unless an image is named, by the node or by :data:`IMAGE_ENVVAR`, so
+    the same pipeline runs on the host during development and in a pinned image
+    for a real run.
+
+    A node may declare its own container settings instead of inheriting the
+    process-wide MAGNET_NODE_* variables, which are a property of one
+    invocation rather than of the step.
     """
+
+    #: Image for this node's command. None => the process-wide setting.
+    container_image: Any = None
+    #: Host paths bind-mounted at their own absolute paths.
+    container_mounts: Any = None
+    #: Render-time variables, name -> value, captured into the command.
+    container_env: Any = None
+    #: Names whose values are captured from the environment at render time.
+    container_forward_env: Any = ()
 
     def _wrap_command(self, command: str) -> str:
         """Hook for subclasses that add another layer (see
@@ -172,6 +273,6 @@ class ContainerProcessNode(kwdagger.ProcessNode):
     @property
     def command(self) -> str:
         base = kwdagger.ProcessNode.command.fget(self)  # type: ignore[attr-defined]
-        if containerization_is_enabled():
-            base = container_prefix() + ' \\\n    ' + base
+        if containerization_is_enabled(self):
+            base = container_prefix(self) + ' \\\n    ' + base
         return self._wrap_command(base)
