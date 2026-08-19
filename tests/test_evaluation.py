@@ -104,6 +104,9 @@ def test_parallel_evaluation_preserves_metrics(tmp_path):
 
 @pytest.mark.parametrize('dependency_key', ['depends_on', 'depends'])
 def test_symbol_dependency_alias_orders_resolution(dependency_key):
+    """
+    Check that symbol are ordered topologically by the dependency graph.
+    """
     symbols = Symbols({
         'y': {
             'type': 'int',

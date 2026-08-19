@@ -48,6 +48,9 @@ class SymbolSchema(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def dependency_aliases_agree(cls, data: Any) -> Any:
+        """
+        Error both depends_on and depends are given and they disagree.
+        """
         if isinstance(data, dict):
             depends_on = data.get('depends_on')
             depends = data.get('depends')
@@ -63,7 +66,7 @@ class SymbolSchema(BaseModel):
     def has_resolution(self) -> 'SymbolSchema':
         if self.value is None and self.sweep is None and self.python is None:
             if self.metadata is not None and self.metadata.define_metric is not None:
-                # Handle metric definitions in kwdagger/pipeline cards 
+                # Handle metric definitions in kwdagger/pipeline cards
                 # (i.e. ignore test for symbols defined/calculated in user script)
                 return self
             else:
