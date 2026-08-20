@@ -70,6 +70,11 @@ class ClaimAggregationStrategySchema(BaseModel):
             )
         return self
 
+class TheorySchema(BaseModel):
+    """Where a card's theory links and the entries they name live."""
+    sources: list[str] = Field(default_factory=list)
+    indexes: list[str] = Field(default_factory=list)
+
 class EvaluationCardSchema(BaseModel):
     """
     Schema for an Evaluation Card YAML.
@@ -125,6 +130,9 @@ class EvaluationCardSchema(BaseModel):
     # --- Evaluation configuration ---
     claim_aggregation_strategy: ClaimAggregationStrategySchema | None = None
     symbols: dict[str, SymbolSchema] | None = None
+
+    # --- how the code relates to a theoretical object (optional) ---
+    theory: TheorySchema | None = None
 
     # --- Backend (at most one) ---
     kwdagger: dict[str, Any] | None = None
