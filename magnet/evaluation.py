@@ -287,6 +287,9 @@ class EvaluationCard:
 
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
+        # Paths written inside a card resolve against the card, not the
+        # shell's cwd.
+        self.card_dpath = ub.Path(path).parent
 
         self.title = cfg.get('title', '')
         self.description = cfg.get('description', '')
