@@ -397,7 +397,6 @@ class EvaluationCard:
 
         self.claim.status = card_result
         return card_result
-
     def dispatch(
         self, flattened_sweep: List['Symbols']
     ) -> List['EvaluationTask']:
@@ -843,14 +842,61 @@ class Symbol:
         [10]
     """
 
+    KNOWN_SPEC_KEYS = frozenset({
+        'type', 'value', 'sweep', 'python', 'depends_on', 'depends',
+        'metadata',
+    })
+
     def __init__(self, name: str, spec: Dict[str, Any]) -> None:
         self.name = name
         self.value = spec.get('value')
         self.sweep = spec.get('sweep')
         self.type = spec.get('type', 'List[int]')
         self.definition = spec.get('python', '')
-        self.dependencies = spec.get('depends_on', [])
+        self.dependencies = self._resolve_dependencies(name, spec)
         self.metadata = spec.get('metadata')
+
+        unknown = set(spec) - self.KNOWN_SPEC_KEYS
+        if unknown:
+            logger.warning(
+                f'symbol {name!r}: unrecognized key(s): {sorted(unknown)}'
+            )
+
+    @staticmethod
+    def _resolve_dependencies(
+        name: str, spec: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Read dependencies from `depends_on` or its `depends` alias.
+
+        Args:
+            name: Symbol name used in error messages.
+            spec: Symbol specification.
+
+        Returns:
+            Declared dependency names.
+
+        Raises:
+            ValueError: If both spellings are present and disagree.
+
+        Example:
+            >>> Symbol._resolve_dependencies('y', {'depends': ['x']})
+            ['x']
+        """
+        canonical = spec.get('depends_on')
+        alias = spec.get('depends')
+
+        if (
+            canonical is not None
+            and alias is not None
+            and list(canonical) != list(alias)
+        ):
+            raise ValueError(
+                f'symbol {name!r}: `depends_on` and `depends` disagree'
+            )
+
+        dependencies = canonical if canonical is not None else alias
+        return [] if dependencies is None else list(dependencies)
 
     def eval(self, context: Dict[str, Any] = {}) -> Any:
         """
