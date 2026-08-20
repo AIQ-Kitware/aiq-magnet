@@ -31,6 +31,22 @@ links:
     url: "https://github.com/AIQ-Kitware/aiq-magnet"
     type: "software"
 
+# Under the kwdagger work, when it lands: one job per probe point, so the card
+# reports where the two orders disagree rather than only that they do.
+#
+#   kwdagger:
+#     pipeline: pipeline.yaml          # a node running compare.py
+#     result_node: compare
+#     matrix:
+#       compare.probe: ['-0.8,0.8', '0.6,0.55', '0.0,0.0']
+#
+#   evidence:
+#     - measures: metrics.compare.disagrees
+#       relation: {eq: true}
+#       scope: "one pass of the perceptron rule, four observations"
+#
+# The theory block below does not change.
+
 theory:
   sources:
     - experiment.py

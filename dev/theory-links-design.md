@@ -70,7 +70,15 @@ copied out in one piece. It also means the card names its siblings
 
 None of the three uses kwdagger. A card whose symbol imports a helper is
 enough to exercise the mechanism, and it keeps DAG execution, leasing,
-scheduling and result-cell machinery out of the review.
+scheduling and result-cell machinery out of the review. Each card carries a
+commented block showing the pipeline it would become once that work lands --
+the shape is known, and writing it down is cheaper than rediscovering it.
+
+Verified rather than assumed: the cards carry neither a `kwdagger:` nor a
+`pipeline:` key, so `evaluate` takes its serial branch. A run leaves
+`card.yaml`, `log`, `results`, `verdict.json` and `theory.json`, with no
+`kwdagger/` tree and no cmd_queue entry. The theory link is read from source in
+either case, so the block does not change when a card is ported.
 
 ## Where the claim lives today, and where it is going
 

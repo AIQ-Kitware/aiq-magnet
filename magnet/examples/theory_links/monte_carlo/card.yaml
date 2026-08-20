@@ -29,6 +29,24 @@ links:
     url: "https://github.com/AIQ-Kitware/aiq-magnet"
     type: "software"
 
+# Under the kwdagger work, when it lands: one job per seed, which is what turns
+# a single estimate into a statement about the estimator.
+#
+#   kwdagger:
+#     pipeline: pipeline.yaml          # a node running estimate.py
+#     result_node: estimate
+#     matrix:
+#       estimate.samples: 20000
+#       estimate.seed: [1, 2, 3, 4, 5]
+#
+#   evidence:
+#     - measures: metrics.estimate.error
+#       relation: {lt: 0.01}
+#       scope: "5 seeds at 20000 samples"
+#       relaxes: "finitely many samples; the theorem is a limit"
+#
+# The theory block below does not change.
+
 theory:
   sources:
     - experiment.py
