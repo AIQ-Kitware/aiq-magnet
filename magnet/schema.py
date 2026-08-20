@@ -70,9 +70,18 @@ class ClaimAggregationStrategySchema(BaseModel):
             )
         return self
 
+class TheoryEntrySchema(BaseModel):
+    """A theoretical object a card's code points at."""
+    id: str
+    kind: Literal["theorem", "conjecture", "question"] = "theorem"
+    statement: str | None = None
+    declaration: str | None = None
+
 class TheorySchema(BaseModel):
-    """Where a card's theory links and the entries they name live."""
+    """Where a card's theory links and the objects they name live."""
     sources: list[str] = Field(default_factory=list)
+    # Written out here, or read from index files, or both.
+    entries: list[TheoryEntrySchema] = Field(default_factory=list)
     indexes: list[str] = Field(default_factory=list)
 
 class EvaluationCardSchema(BaseModel):

@@ -1,25 +1,37 @@
 """
 The card side: read a card's theory block and produce ``theory.json``.
 
-A card names the annotated source and the indexes its references live in::
+A card names the annotated source, and either writes its theoretical objects
+out or names files holding them::
 
     theory:
       sources:
-        - ../examples/theory_links/coin_flip.py
-      indexes:
-        - ../examples/theory_links/theory.yaml
+        - experiment.py
+      entries:
+        - id: Examples.CoinFlip.Binomial
+          kind: theorem
+          statement: ...
 
-Both are relative to the card. Evaluating it reads the source, reads the
-indexes, checks that every reference resolves, and writes the links beside the
-verdict. The annotation in the code is the whole relationship; the card only
-says where to look.
+    theory:
+      sources:
+        - experiment.py
+      indexes:
+        - ../../theory/indexes/dkps-144de76c.yaml
+
+Inline suits a card with one or two objects of its own. A file suits an index
+generated from a formalization, where a card points at two entries out of
+fifty. Both may appear together, and paths are relative to the card.
+
+Evaluating the card reads the source, collects the entries, checks that every
+reference resolves, and writes the links beside the verdict. The annotation in
+the code is the whole relationship; the card only says where to look.
 """
 import json
 from dataclasses import dataclass, field
 
 import ubelt as ub
 
-from magnet.theory.index import TheoryIndex, load_indexes
+from magnet.theory.index import TheoryIndex, load_indexes, parse_entries
 from magnet.theory.static import Link, extract
 
 __all__ = ['TheoryReport', 'report_from_card']
@@ -87,14 +99,8 @@ def report_from_card(card: dict, root) -> TheoryReport | None:
         ...     def experiment():
         ...         pass
         ...     '''))
-        >>> (dpath / 'theory.yaml').write_text(ub.codeblock(
-        ...     '''
-        ...     entries:
-        ...       - id: A.b
-        ...         kind: theorem
-        ...         statement: the statement
-        ...     '''))
-        >>> card = {'theory': {'sources': ['demo.py'], 'indexes': ['theory.yaml']}}
+        >>> card = {'theory': {'sources': ['demo.py'], 'entries': [
+        ...     {'id': 'A.b', 'kind': 'theorem', 'statement': 'the statement'}]}}
         >>> report = report_from_card(card, dpath)
         >>> report.to_dict()['links'][0]['relation']
         'tests'
@@ -115,8 +121,9 @@ def report_from_card(card: dict, root) -> TheoryReport | None:
                 for entry in entries or []]
 
     links: list[Link] = extract(resolve(spec.get('sources')))
-    index = load_indexes(resolve(spec.get('indexes')))
-    report = TheoryReport(links=links, index=index)
+    entries = list(load_indexes(resolve(spec.get('indexes'))))
+    entries.extend(parse_entries(spec.get('entries'), 'theory.entries'))
+    report = TheoryReport(links=links, index=TheoryIndex(entries))
 
     if report.unresolved:
         raise ValueError(

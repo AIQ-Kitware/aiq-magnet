@@ -30,10 +30,18 @@ links:
     type: "software"
 
 # Under the kwdagger work, when it lands: one job per flip count, one verdict
-# each, and the enumeration cached so a re-run does not redo it.
+# each, and the enumeration cached so a re-run does not redo it. The pipeline
+# can be inline, so the whole port is this block.
 #
 #   kwdagger:
-#     pipeline: pipeline.yaml          # a node running enumerate.py
+#     pipeline:
+#       nodes:
+#         enumerate:
+#           executable: 'python -m magnet.examples.theory_links.coin_flip.experiment'
+#           out_paths: {out_fpath: 'coin_flip.json'}
+#           primary_out_key: out_fpath
+#           algo_params:
+#             n_flips: 10
 #     result_node: enumerate
 #     matrix:
 #       enumerate.n_flips: [8, 10, 12, 14]
@@ -46,11 +54,17 @@ links:
 # The theory block below does not change: the annotation stays in the code the
 # node runs, and the link is read from source either way.
 
+# The statement is proved in CoinFlip.lean beside this file.
 theory:
   sources:
     - experiment.py
-  indexes:
-    - theory.yaml
+  entries:
+    - id: Examples.CoinFlip.Binomial
+      kind: theorem
+      declaration: MagnetExamples.CoinFlip.card_heads_eq_choose
+      statement: >
+        Exactly choose(n, k) of the 2^n sequences of n flips show k heads,
+        so each head count has probability choose(n, k) / 2^n.
 
 claim:
   python: |

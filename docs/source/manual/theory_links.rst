@@ -50,22 +50,40 @@ annotations.
 Naming the theory
 -----------------
 
-References point at entries in an index:
+References point at entries, which a card can write out directly:
 
 .. code:: yaml
 
-    entries:
-      - id: Examples.CoinFlip.Binomial
-        kind: theorem
-        statement: >
-          For n independent fair flips, the probability of exactly k heads is
-          C(n, k) / 2^n.
+    theory:
+      sources:
+        - experiment.py
+      entries:
+        - id: Examples.CoinFlip.Binomial
+          kind: theorem
+          statement: >
+            For n independent fair flips, the probability of exactly k heads
+            is C(n, k) / 2^n.
 
-      - id: Examples.TrainingOrder.Why
-        kind: question
-        statement: >
-          Why can changing only the order of otherwise identical training
-          observations change the learned solution?
+        - id: Examples.TrainingOrder.Why
+          kind: question
+          statement: >
+            Why can changing only the order of otherwise identical training
+            observations change the learned solution?
+
+or read from index files, which is what an index generated from a
+formalization looks like:
+
+.. code:: yaml
+
+    theory:
+      sources:
+        - experiment.py
+      indexes:
+        - ../../theory/indexes/dkps-144de76c.yaml
+
+Inline suits a card with one or two objects of its own. A file suits pointing
+at two entries out of fifty. Both may appear together, and the entries are
+validated the same way either way.
 
 Three kinds are available: ``theorem``, ``conjecture`` and ``question``. An id
 can keep its name as the object behind it develops, so code that points at a
@@ -93,10 +111,9 @@ points at it:
 .. code:: text
 
     magnet/examples/theory_links/coin_flip/
-        card.yaml           the evaluation card
-        experiment.py       the annotated code
+        card.yaml           the evaluation card, with its entries inline
+        experiment.py       the annotated code, runnable as a node
         CoinFlip.lean       the statement it points at
-        theory.yaml         the index binding the two
 
 The statements import Mathlib, so checking them needs a Lean project that has
 one built. Rather than carry a lake project and a Mathlib pin here, borrow one:
@@ -125,17 +142,8 @@ is here yet.
 Connecting it to a card
 -----------------------
 
-A card names the annotated source and the indexes its references live in. Both
-are relative to the card, so an example that keeps them together names its
-siblings:
-
-.. code:: yaml
-
-    theory:
-      sources:
-        - experiment.py
-      indexes:
-        - theory.yaml
+Paths in ``sources`` and ``indexes`` are relative to the card, so an example
+that keeps its parts together names its siblings.
 
 Evaluating the card reads the source, reads the indexes, checks that every
 reference resolves, and writes ``theory.json`` beside ``verdict.json``:

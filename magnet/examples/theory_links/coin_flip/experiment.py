@@ -5,9 +5,12 @@ The binomial law gives the probability of every outcome count for a fixed
 number of fair flips. Enumerating all 2**n sequences and counting them has to
 agree, exactly, with no sampling and no tolerance.
 """
+import json
 from fractions import Fraction
 from itertools import product
 from math import comb
+
+import kwconf
 
 import magnet.theory as theory
 
@@ -65,3 +68,35 @@ def max_absolute_deviation(n_flips: int) -> Fraction:
         abs(probability - binomial_probability(n_flips, heads))
         for heads, probability in observed.items()
     )
+
+
+class CoinFlipConfig(kwconf.Config):
+    """
+    Run the enumeration and write what it found.
+
+    Present so this module is already a kwdagger node executable: porting the
+    card means adding the pipeline block, not restructuring the code.
+    """
+
+    n_flips: int = kwconf.Value(10, help='number of fair flips to enumerate')
+    out_fpath: str = kwconf.Value(
+        'coin_flip.json', help='where to write the result',
+        tags=['out_path', 'primary'])
+
+
+def main(argv=None, **kwargs):
+    config = CoinFlipConfig.cli(argv=argv, data=kwargs, strict=True)
+    n_flips = int(config['n_flips'])
+    payload = {
+        'n_flips': n_flips,
+        'outcomes': 2 ** n_flips,
+        'deviation': float(max_absolute_deviation(n_flips)),
+    }
+    with open(config['out_fpath'], 'w') as file:
+        json.dump(payload, file, indent=2)
+
+
+__cli__ = CoinFlipConfig
+
+if __name__ == '__main__':
+    main()

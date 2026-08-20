@@ -54,15 +54,21 @@ theorem.
 Each example directory is a small stand-in for what a team brings to the
 program: a method, an idea it is evidence for, and a card that runs it.
 
-    coin_flip/       card.yaml  experiment.py  CoinFlip.lean       theory.yaml
-    monte_carlo/     card.yaml  experiment.py  Circle.lean         theory.yaml
-    training_order/  card.yaml  experiment.py  TrainingOrder.lean  theory.yaml
+    coin_flip/       card.yaml  experiment.py  CoinFlip.lean
+    monte_carlo/     card.yaml  experiment.py  Circle.lean
+    training_order/  card.yaml  experiment.py  TrainingOrder.lean
 
 `experiment.py` is the method. It carries the annotation, because the
 relationship belongs next to the code that does the work rather than in a
-separate registry that drifts from it. `card.yaml` is what MAGNET runs.
-`theory.yaml` names what the method is evidence for. The `.lean` file is that
-statement, formally.
+separate registry that drifts from it. It also has a `kwconf` CLI and writes a
+JSON artifact, so it is already a node executable. `card.yaml` is what MAGNET
+runs, and names what the method is evidence for in its own `theory.entries`.
+The `.lean` file is that statement, formally.
+
+Entries are inline rather than in a sibling index file. Three files per example
+where two will do is a file to keep in sync for no reader. A card pointing at
+an index generated from a formalization still names it with `theory.indexes`;
+both paths share one validator.
 
 Keeping them in one directory means an example can be read in one place and
 copied out in one piece. It also means the card names its siblings

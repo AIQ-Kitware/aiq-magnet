@@ -76,11 +76,10 @@ def test_a_reference_with_no_entry_is_an_error(tmp_path):
         def experiment():
             pass
         '''))
-    (tmp_path / 'theory.yaml').write_text('entries: []\n')
     (tmp_path / 'card.yaml').write_text(ub.codeblock(
         '''
         title: unresolved
-        description: names something no index defines
+        description: names something the card does not define
         claim:
           python: |
             assert True
@@ -90,9 +89,52 @@ def test_a_reference_with_no_entry_is_an_error(tmp_path):
             value: 1
         theory:
           sources: [demo.py]
-          indexes: [theory.yaml]
+          entries: []
         '''))
     card = EvaluationCard(tmp_path / 'card.yaml', tmp_path / 'runs',
                           validate='off')
     with pytest.raises(ValueError, match='Nope.Missing'):
         card.evaluate()
+
+
+def test_an_index_file_still_works_beside_inline_entries(tmp_path):
+    # Inline suits a card with its own objects; a file suits an index generated
+    # from a formalization. Both, together, resolve.
+    (tmp_path / 'demo.py').write_text(ub.codeblock(
+        '''
+        import magnet.theory as theory
+
+        @theory.tests('From.File')
+        def one():
+            pass
+
+        @theory.motivates('From.Card')
+        def two():
+            pass
+        '''))
+    (tmp_path / 'shared.yaml').write_text(
+        'entries:\n  - id: From.File\n    kind: theorem\n')
+    (tmp_path / 'card.yaml').write_text(ub.codeblock(
+        '''
+        title: both
+        description: one entry from a file, one written out here
+        claim:
+          python: |
+            assert True
+        symbols:
+          x:
+            type: int
+            value: 1
+        theory:
+          sources: [demo.py]
+          indexes: [shared.yaml]
+          entries:
+            - id: From.Card
+              kind: question
+        '''))
+    card = EvaluationCard(tmp_path / 'card.yaml', tmp_path / 'runs',
+                          validate='off')
+    assert card.evaluate() == 'VERIFIED'
+    run_dpath = ub.Path(next(iter((tmp_path / 'runs').iterdir())))
+    theory = json.loads((run_dpath / 'theory.json').read_text())
+    assert sorted(e['id'] for e in theory['entries']) == ['From.Card', 'From.File']

@@ -40,7 +40,8 @@ from typing import Sequence
 import ubelt as ub
 import yaml
 
-__all__ = ['Entry', 'KINDS', 'TheoryIndex', 'load_index', 'load_indexes']
+__all__ = ['Entry', 'KINDS', 'TheoryIndex', 'load_index', 'load_indexes',
+           'parse_entries']
 
 #: What an entry can be. A question becomes a conjecture becomes a theorem, and
 #: the id does not have to change as it moves.
@@ -111,6 +112,52 @@ class TheoryIndex:
         return [entry.to_dict() for entry in self._entries.values()]
 
 
+def parse_entries(raw_entries, where: str = 'entries') -> list:
+    """
+    Validate a list of entry mappings.
+
+    Shared by the file and inline paths, so a card that writes its entries out
+    is checked exactly as a card that names an index file.
+
+    Args:
+        raw_entries: mappings with ``id``, and optionally ``kind``,
+            ``statement`` and ``declaration``.
+        where (str): named in error messages.
+
+    Returns:
+        list: :class:`Entry`
+
+    Raises:
+        ValueError: on a missing id, or a kind outside :data:`KINDS`.
+
+    Example:
+        >>> from magnet.theory.index import parse_entries
+        >>> parse_entries([{'id': 'A.b', 'kind': 'question'}])[0].kind
+        'question'
+        >>> parse_entries([{'kind': 'theorem'}])
+        Traceback (most recent call last):
+            ...
+        ValueError: entries: an entry has no id
+    """
+    entries = []
+    for raw in raw_entries or []:
+        ref = raw.get('id')
+        if not ref:
+            raise ValueError(f'{where}: an entry has no id')
+        kind = raw.get('kind', 'theorem')
+        if kind not in KINDS:
+            raise ValueError(
+                f'{where}: entry {ref!r} has kind {kind!r}; '
+                f'known kinds are {list(KINDS)}')
+        entries.append(Entry(
+            id=ref,
+            kind=kind,
+            statement=(raw.get('statement') or '').strip(),
+            declaration=raw.get('declaration', ''),
+        ))
+    return entries
+
+
 def load_index(fpath) -> TheoryIndex:
     """
     Read one index file.
@@ -126,23 +173,7 @@ def load_index(fpath) -> TheoryIndex:
     """
     path = ub.Path(fpath)
     data = yaml.safe_load(path.read_text()) or {}
-    entries = []
-    for raw in data.get('entries', []):
-        ref = raw.get('id')
-        if not ref:
-            raise ValueError(f'{path}: an entry has no id')
-        kind = raw.get('kind', 'theorem')
-        if kind not in KINDS:
-            raise ValueError(
-                f'{path}: entry {ref!r} has kind {kind!r}; '
-                f'known kinds are {list(KINDS)}')
-        entries.append(Entry(
-            id=ref,
-            kind=kind,
-            statement=(raw.get('statement') or '').strip(),
-            declaration=raw.get('declaration', ''),
-        ))
-    return TheoryIndex(entries)
+    return TheoryIndex(parse_entries(data.get('entries'), str(path)))
 
 
 def load_indexes(fpaths: Sequence[str]) -> TheoryIndex:

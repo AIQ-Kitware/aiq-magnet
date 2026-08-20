@@ -32,13 +32,27 @@ links:
     type: "software"
 
 # Under the kwdagger work, when it lands: one job per probe point, so the card
-# reports where the two orders disagree rather than only that they do.
+# reports where the two orders disagree rather than only that they do. The
+# pipeline can be inline, so the whole port is this block.
 #
 #   kwdagger:
-#     pipeline: pipeline.yaml          # a node running compare.py
+#     pipeline:
+#       nodes:
+#         compare:
+#           executable: 'python -m magnet.examples.theory_links.training_order.experiment'
+#           out_paths: {out_fpath: 'training_order.json'}
+#           primary_out_key: out_fpath
+#           algo_params:
+#             probe: '-0.8,0.8'
 #     result_node: compare
 #     matrix:
 #       compare.probe: ['-0.8,0.8', '0.6,0.55', '0.0,0.0']
+#
+#   # `any`, because the finding is that the orders disagree SOMEWHERE. Two of
+#   # the probes above sit where both orders agree, and a sweep that hid that
+#   # would be picking its evidence.
+#   claim_aggregation_strategy:
+#     type: any
 #
 #   evidence:
 #     - measures: metrics.compare.disagrees
@@ -47,11 +61,19 @@ links:
 #
 # The theory block below does not change.
 
+# The property is defined in TrainingOrder.lean beside this file, which
+# proves order invariance is a real restriction. The question is open.
 theory:
   sources:
     - experiment.py
-  indexes:
-    - theory.yaml
+  entries:
+    - id: Examples.TrainingOrder.Why
+      kind: question
+      declaration: MagnetExamples.TrainingOrder.OrderInvariant
+      statement: >
+        Why can changing only the order of otherwise identical training
+        observations change the learned solution, and under what
+        conditions should a learning rule be order-invariant?
 
 claim:
   python: |

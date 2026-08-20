@@ -30,10 +30,19 @@ links:
     type: "software"
 
 # Under the kwdagger work, when it lands: one job per seed, which is what turns
-# a single estimate into a statement about the estimator.
+# a single estimate into a statement about the estimator. The pipeline can be
+# inline, so the whole port is this block.
 #
 #   kwdagger:
-#     pipeline: pipeline.yaml          # a node running estimate.py
+#     pipeline:
+#       nodes:
+#         estimate:
+#           executable: 'python -m magnet.examples.theory_links.monte_carlo.experiment'
+#           out_paths: {out_fpath: 'monte_carlo.json'}
+#           primary_out_key: out_fpath
+#           algo_params:
+#             seed: 1
+#             samples: 20000
 #     result_node: estimate
 #     matrix:
 #       estimate.samples: 20000
@@ -47,11 +56,20 @@ links:
 #
 # The theory block below does not change.
 
+# The statement is in Circle.lean beside this file. The unit-disc area is
+# proved from Mathlib's `Complex.volume_closedBall`; the quarter disc this
+# card samples is stated and unproved.
 theory:
   sources:
     - experiment.py
-  indexes:
-    - theory.yaml
+  entries:
+    - id: Examples.Circle.AreaRatio
+      kind: theorem
+      declaration: MagnetExamples.Circle.volume_quarterDisc
+      statement: >
+        The quarter disc of radius 1 occupies pi/4 of the unit square, so
+        the fraction of uniformly drawn points landing inside it converges
+        to pi/4.
 
 claim:
   python: |

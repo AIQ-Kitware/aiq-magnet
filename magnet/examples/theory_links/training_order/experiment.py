@@ -9,6 +9,10 @@ once over the data in each order.
 The experiment claims only that this happens. Why it happens, and when a
 learning rule should be order-invariant, is the question it points at.
 """
+import json
+
+import kwconf
+
 import magnet.theory as theory
 
 #: Four points in the plane with labels, hand-picked so one pass in either
@@ -98,3 +102,33 @@ def training_order_sensitivity(observations=OBSERVATIONS, probe=PROBE) -> dict:
         'reverse_prediction': reverse_prediction,
         'disagrees': forward_prediction != reverse_prediction,
     }
+
+
+class TrainingOrderConfig(kwconf.Config):
+    """
+    Train in both orders at one probe point and write what happened.
+
+    Present so this module is already a kwdagger node executable: porting the
+    card means adding the pipeline block, not restructuring the code.
+    """
+
+    probe: str = kwconf.Value(
+        '-0.8,0.8', help='probe point as "x,y"; one job per value')
+    out_fpath: str = kwconf.Value(
+        'training_order.json', help='where to write the result',
+        tags=['out_path', 'primary'])
+
+
+def main(argv=None, **kwargs):
+    config = TrainingOrderConfig.cli(argv=argv, data=kwargs, strict=True)
+    x, _, y = config['probe'].partition(',')
+    result = training_order_sensitivity(probe=(float(x), float(y)))
+    result['probe'] = config['probe']
+    with open(config['out_fpath'], 'w') as file:
+        json.dump(result, file, indent=2)
+
+
+__cli__ = TrainingOrderConfig
+
+if __name__ == '__main__':
+    main()
