@@ -15,6 +15,42 @@ import kwconf
 
 import magnet.theory as theory
 
+class MonteCarloCLI(kwconf.Config):
+    """
+    Estimate the quarter-disc area ratio from a seeded sample.
+
+    Already a kwdagger node executable, so porting the card is a block of YAML
+    rather than a restructure.
+
+    CommandLine:
+        python -m magnet.examples.theory_links.monte_carlo.experiment \
+            --seed=1 --samples=20000 --out_fpath=monte_carlo.json
+    """
+
+    __command__ = 'monte_carlo'
+
+    seed: int = kwconf.Value(1, help='LCG seed; one job per value')
+    samples: int = kwconf.Value(20000, help='points to draw')
+    out_fpath: str = kwconf.Value(
+        'monte_carlo.json', help='where to write the result',
+        tags=['out_path', 'primary'])
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
+        seed = int(config['seed'])
+        samples = int(config['samples'])
+        payload = {
+            'seed': seed,
+            'samples': samples,
+            'exact': exact_area_ratio(),
+            'estimate': estimate_area_ratio(seed, samples),
+            'pi': estimate_pi(seed, samples),
+            'error': estimation_error(seed, samples),
+        }
+        with open(config['out_fpath'], 'w') as file:
+            json.dump(payload, file, indent=2)
+
 #: Numerical Recipes constants. Written out so this file depends on nothing.
 _LCG_MODULUS = 2 ** 32
 _LCG_MULTIPLIER = 1664525
@@ -90,38 +126,7 @@ def estimation_error(seed: int = 1, samples: int = 20000) -> float:
     return abs(estimate_area_ratio(seed, samples) - exact_area_ratio())
 
 
-class MonteCarloConfig(kwconf.Config):
-    """
-    Run one estimate and write what it found.
-
-    Present so this module is already a kwdagger node executable: porting the
-    card means adding the pipeline block, not restructuring the code.
-    """
-
-    seed: int = kwconf.Value(1, help='LCG seed; one job per value')
-    samples: int = kwconf.Value(20000, help='points to draw')
-    out_fpath: str = kwconf.Value(
-        'monte_carlo.json', help='where to write the result',
-        tags=['out_path', 'primary'])
-
-
-def main(argv=None, **kwargs):
-    config = MonteCarloConfig.cli(argv=argv, data=kwargs, strict=True)
-    seed = int(config['seed'])
-    samples = int(config['samples'])
-    payload = {
-        'seed': seed,
-        'samples': samples,
-        'exact': exact_area_ratio(),
-        'estimate': estimate_area_ratio(seed, samples),
-        'pi': estimate_pi(seed, samples),
-        'error': estimation_error(seed, samples),
-    }
-    with open(config['out_fpath'], 'w') as file:
-        json.dump(payload, file, indent=2)
-
-
-__cli__ = MonteCarloConfig
+__cli__ = MonteCarloCLI
 
 if __name__ == '__main__':
-    main()
+    __cli__.main()

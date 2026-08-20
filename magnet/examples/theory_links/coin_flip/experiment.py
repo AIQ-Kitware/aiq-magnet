@@ -15,6 +15,37 @@ import kwconf
 import magnet.theory as theory
 
 
+class CoinFlipCLI(kwconf.Config):
+    """
+    Enumerate every sequence of flips and compare against the binomial law.
+
+    Already a kwdagger node executable, so porting the card is a block of YAML
+    rather than a restructure.
+
+    CommandLine:
+        python -m magnet.examples.theory_links.coin_flip.experiment \
+            --n_flips=10 --out_fpath=coin_flip.json
+    """
+
+    __command__ = 'coin_flip'
+
+    n_flips: int = kwconf.Value(10, help='number of fair flips to enumerate')
+    out_fpath: str = kwconf.Value(
+        'coin_flip.json', help='where to write the result',
+        tags=['out_path', 'primary'])
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
+        n_flips = int(config['n_flips'])
+        payload = {
+            'n_flips': n_flips,
+            'outcomes': 2 ** n_flips,
+            'deviation': float(max_absolute_deviation(n_flips)),
+        }
+        with open(config['out_fpath'], 'w') as file:
+            json.dump(payload, file, indent=2)
+
 @theory.tests('Examples.CoinFlip.Binomial')
 def enumerated_head_counts(n_flips: int) -> dict:
     """
@@ -70,33 +101,7 @@ def max_absolute_deviation(n_flips: int) -> Fraction:
     )
 
 
-class CoinFlipConfig(kwconf.Config):
-    """
-    Run the enumeration and write what it found.
-
-    Present so this module is already a kwdagger node executable: porting the
-    card means adding the pipeline block, not restructuring the code.
-    """
-
-    n_flips: int = kwconf.Value(10, help='number of fair flips to enumerate')
-    out_fpath: str = kwconf.Value(
-        'coin_flip.json', help='where to write the result',
-        tags=['out_path', 'primary'])
-
-
-def main(argv=None, **kwargs):
-    config = CoinFlipConfig.cli(argv=argv, data=kwargs, strict=True)
-    n_flips = int(config['n_flips'])
-    payload = {
-        'n_flips': n_flips,
-        'outcomes': 2 ** n_flips,
-        'deviation': float(max_absolute_deviation(n_flips)),
-    }
-    with open(config['out_fpath'], 'w') as file:
-        json.dump(payload, file, indent=2)
-
-
-__cli__ = CoinFlipConfig
+__cli__ = CoinFlipCLI
 
 if __name__ == '__main__':
-    main()
+    __cli__.main()

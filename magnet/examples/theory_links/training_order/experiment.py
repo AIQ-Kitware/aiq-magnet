@@ -15,6 +15,35 @@ import kwconf
 
 import magnet.theory as theory
 
+class TrainingOrderCLI(kwconf.Config):
+    """
+    Train in both orders at one probe point and report whether they disagree.
+
+    Already a kwdagger node executable, so porting the card is a block of YAML
+    rather than a restructure.
+
+    CommandLine:
+        python -m magnet.examples.theory_links.training_order.experiment \
+            --probe=-0.8,0.8 --out_fpath=training_order.json
+    """
+
+    __command__ = 'training_order'
+
+    probe: str = kwconf.Value(
+        '-0.8,0.8', help='probe point as "x,y"; one job per value')
+    out_fpath: str = kwconf.Value(
+        'training_order.json', help='where to write the result',
+        tags=['out_path', 'primary'])
+
+    @classmethod
+    def main(cls, argv=True, **kwargs):
+        config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
+        x, _, y = config['probe'].partition(',')
+        result = training_order_sensitivity(probe=(float(x), float(y)))
+        result['probe'] = config['probe']
+        with open(config['out_fpath'], 'w') as file:
+            json.dump(result, file, indent=2)
+
 #: Four points in the plane with labels, hand-picked so one pass in either
 #: direction leaves the boundary in a different place. Two of them are on the
 #: same side of any separating line, which is what leaves the last update in
@@ -104,31 +133,7 @@ def training_order_sensitivity(observations=OBSERVATIONS, probe=PROBE) -> dict:
     }
 
 
-class TrainingOrderConfig(kwconf.Config):
-    """
-    Train in both orders at one probe point and write what happened.
-
-    Present so this module is already a kwdagger node executable: porting the
-    card means adding the pipeline block, not restructuring the code.
-    """
-
-    probe: str = kwconf.Value(
-        '-0.8,0.8', help='probe point as "x,y"; one job per value')
-    out_fpath: str = kwconf.Value(
-        'training_order.json', help='where to write the result',
-        tags=['out_path', 'primary'])
-
-
-def main(argv=None, **kwargs):
-    config = TrainingOrderConfig.cli(argv=argv, data=kwargs, strict=True)
-    x, _, y = config['probe'].partition(',')
-    result = training_order_sensitivity(probe=(float(x), float(y)))
-    result['probe'] = config['probe']
-    with open(config['out_fpath'], 'w') as file:
-        json.dump(result, file, indent=2)
-
-
-__cli__ = TrainingOrderConfig
+__cli__ = TrainingOrderCLI
 
 if __name__ == '__main__':
-    main()
+    __cli__.main()
