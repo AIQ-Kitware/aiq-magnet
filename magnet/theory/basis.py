@@ -8,10 +8,9 @@ then one of:
     a gap        an edge says how the experiment departs from it
     unaccounted  no edge at all; nobody has looked
 
-Unaccounted is not an error. How far an experiment sits from the theorem it
-cites is a fact about the experiment, and without this accounting nothing can
-distinguish a result that departed in four places from one that departed in
-none.
+Unaccounted hypotheses are reported rather than rejected. The count is what
+separates a result that departed from its theorem in four places from one that
+departed in none.
 """
 from dataclasses import dataclass
 from typing import Iterable, Sequence
@@ -191,9 +190,9 @@ class TheoreticalBasis:
         :class:`~magnet.theory.predicates.Grounding` objects, and report on
         them. Nothing is imported or executed.
 
-        Unresolvable annotations are skipped here and surfaced by
-        :func:`magnet.theory.static.lint` instead; a reference nobody can read
-        is a lint error, not a silent hole in the ledger.
+        Unresolvable annotations are skipped here and reported by
+        :func:`magnet.theory.static.lint`, so an unreadable reference surfaces
+        as a lint error instead of a silent hole in the ledger.
         """
         from magnet.theory.predicates import Edge, Grounding
 

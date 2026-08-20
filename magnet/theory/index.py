@@ -121,9 +121,8 @@ def _axioms_from_notes(ancestors: Sequence[dict]) -> tuple[str, ...] | None:
     Manifests record axiom audits as free text ("All capstones verified
     ``#print axioms`` = {propext, Classical.choice, Quot.sound}"), attached to
     whichever node groups the declarations it covers. Reading prose is a stopgap
-    for a real exporter, so it is deliberately narrow: only the exact kernel
-    axiom set is recognized, and anything else reads as unknown rather than
-    being guessed at.
+    for a real exporter, so the parse is narrow: it recognizes only the exact
+    kernel axiom set and reports anything else as unknown.
 
     Example:
         >>> note = {'note': 'verified #print axioms = {propext, Classical.choice, Quot.sound}'}

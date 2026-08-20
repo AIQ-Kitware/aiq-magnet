@@ -10,12 +10,10 @@ Six verbs, one object. Each reads as a true sentence at the site it annotates::
     ignores       a side condition delimiting the regime, dropped
     violates      known to fail -- ideally with proof, via ``evidence=``
 
-Plus :func:`grounds`, which is a different axis: claim to theorem rather than
-code to hypothesis.
+:func:`grounds` covers the other axis, claim to theorem.
 
-Annotations are read from source by :mod:`magnet.theory.static`, not from
-imports, so calling one has no runtime effect beyond building the object. Both
-forms in use are parsed:
+:mod:`magnet.theory.static` reads annotations out of source, so calling one has
+no runtime effect beyond building the object. Both forms are parsed:
 
 .. code:: python
 

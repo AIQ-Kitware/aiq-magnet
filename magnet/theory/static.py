@@ -382,7 +382,7 @@ def check_sites(ledger: StaticLedger, roots: dict, repo_root='.') -> list[Issue]
             continue
 
         if not line.isdigit():
-            continue  # a symbol reference, not a line; nothing to drift
+            continue  # a symbol reference; there is no line to drift
 
         number = int(line)
         text = path.read_text().splitlines()
@@ -615,8 +615,8 @@ def _resolve_ref(node: ast.expr, bindings: dict) -> str | None:
             declaration = bindings.get(base)
             if declaration is not None:
                 return f'{declaration}::{binder}'
-            # A direct `FORMALIZATION['Some.Decl']` names a statement, not a
-            # binder -- valid for `grounds`.
+            # A direct `FORMALIZATION['Some.Decl']` names a whole
+            # statement, which `grounds` accepts.
             if '.' in binder:
                 return binder
     if isinstance(node, ast.Call) and node.args:

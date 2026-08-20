@@ -6,9 +6,8 @@ literally. An **edge** records one correspondence::
 
     (a named hypothesis of a theorem) -> (the code that stands in for it)
 
-annotated with the relation between the two. The relation is the verb, and it
-is the field that matters: ``satisfies`` and ``violates`` are opposite claims
-about the same pair.
+along with the relation between the two. ``satisfies`` and ``violates`` are
+opposite claims about the same pair, so the relation carries the meaning.
 
 Three status axes are tracked separately because they fail independently:
 
@@ -16,7 +15,7 @@ Three status axes are tracked separately because they fail independently:
     review     a human's judgement: draft ... accepted, rejected
     freshness  whether the reference still resolves at the pinned commit
 
-Proved, draft and stale at once is a common state, not a contradiction.
+Proved, draft and stale at once is a common state.
 """
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -53,8 +52,8 @@ class Relation(StrEnum):
     """
     How a piece of code stands with respect to an idealized hypothesis.
 
-    These are the predicates. Each reads as a true sentence at the code site,
-    which is the test a candidate relation has to pass to belong here.
+    These are the predicates. Each one reads as a true sentence at the code
+    site it annotates, which is the bar for adding another.
     """
 
     #: The experiment establishes it.
@@ -92,8 +91,8 @@ class Severity(StrEnum):
     """
     How load-bearing the gap is.
 
-    ``HIGH`` has a specific meaning worth holding to: *the proved theorem does
-    not cover the artifact*. Reserve it for that.
+    Reserve ``HIGH`` for its specific meaning: *the proved theorem does not
+    cover the artifact*.
     """
 
     NONE = 'none'
@@ -102,9 +101,8 @@ class Severity(StrEnum):
     HIGH = 'high'
 
 
-#: Per-relation default severity. An author can always override; these encode
-#: that substituting a different object is presumptively worse than
-#: approximating the right one.
+#: Per-relation default severity, which an author may override. Substituting a
+#: different object is presumed worse than approximating the right one.
 RELATION_DEFAULT_SEVERITY = {
     Relation.SATISFIES: Severity.NONE,
     Relation.APPROXIMATES: Severity.MEDIUM,
@@ -116,7 +114,7 @@ RELATION_DEFAULT_SEVERITY = {
 
 
 class ProofStatus(StrEnum):
-    """The kernel's verdict. Not a human judgment."""
+    """The kernel's verdict, separate from any human judgment."""
 
     #: ``#print axioms`` is within :data:`KERNEL_AXIOMS`.
     PROVED = 'proved'
@@ -124,7 +122,7 @@ class ProofStatus(StrEnum):
     #: Something is still assumed -- ``sorryAx`` or another extra axiom.
     SORRY = 'sorry'
 
-    #: Never reported. A statement authored for a card that has no
+    #: No axiom report available. A statement authored for a card with no
     #: formalization behind it yet lands here or in ``SORRY``.
     UNKNOWN = 'unknown'
 
@@ -217,13 +215,13 @@ class Hypothesis:
     One named assumption of a theorem.
 
     ``name`` is the binder as it appears in the statement (``hgap``,
-    ``hcompetitive``, ``fit``). Binders are what make an edge stable: they
-    survive refactors that invalidate file and line.
+    ``hcompetitive``, ``fit``). Binders survive refactors that invalidate file
+    and line, which is what keeps an edge stable.
 
-    ``structural`` marks a binder supplying an *object* rather than a
-    proposition -- the estimator, the embedding, the baseline. They still get
-    edges, since the theorem is about that object and the code may use another,
-    but they read differently in a report.
+    ``structural`` marks a binder supplying an *object* -- the estimator, the
+    embedding, the baseline -- where the rest supply propositions. Structural
+    binders still get edges, since the code may use a different object than the
+    theorem, and reports present them separately.
     """
 
     name: str
@@ -251,11 +249,10 @@ class Theorem:
     """
     A statement, referenced by fully-qualified declaration name.
 
-    Note "statement", not "proved theorem". A card whose team has no
-    formalization still gets one -- conclusion plus named hypotheses, with
-    ``proof=SORRY``. The statement is the schema for the assumption ledger, and
-    writing it is the forcing function: you cannot state it without naming the
-    hypotheses, and naming them is most of the value.
+    A statement may be unproved. A card whose team has no formalization still
+    gets one -- conclusion plus named hypotheses, with ``proof=SORRY``. The
+    statement is the schema for the assumption ledger, and writing it forces
+    the hypotheses to be named.
     """
 
     declaration: str

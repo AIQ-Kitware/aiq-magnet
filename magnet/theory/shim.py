@@ -7,8 +7,8 @@ and imports nothing beyond the standard library. Your code runs identically
 whether or not anyone is auditing it, and you take on no dependency to describe
 your own assumptions.
 
-Annotations are read from your **source**, not from your imports, so none of
-this has to execute for them to be collected.
+Annotations are collected from your **source**, so none of this has to
+execute.
 
 To install a copy::
 
@@ -43,8 +43,8 @@ The predicates, and what each asserts about the code it annotates:
 ===============  =========================================================
 
 Reference strings are ``Declaration::binder`` -- the fully-qualified statement
-name and the hypothesis binder within it. Use binder names, not file and line:
-line numbers go stale within weeks, binders survive.
+name and the hypothesis binder within it. Binders survive refactors that
+invalidate a file and line within weeks.
 """
 
 __all__ = [
@@ -125,8 +125,8 @@ def _install(destination):
 def _main(argv=None):
     import argparse
 
-    # argparse, not kwconf: this file is vendored into repositories that do not
-    # install MAGNET, so it must import nothing outside the standard library.
+    # This file is vendored into repositories that do not install MAGNET, so
+    # it imports nothing outside the standard library. Hence argparse.
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     parser.add_argument('--install', metavar='PATH', help='write a copy here')
     args = parser.parse_args(argv)

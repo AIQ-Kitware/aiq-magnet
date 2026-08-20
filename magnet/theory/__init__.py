@@ -31,7 +31,7 @@ The verb carries the relation -- ``satisfies``, ``approximates``,
 ``substitutes``, ``assumes``, ``ignores``, ``violates`` -- so each annotation
 reads as a sentence at its site.
 
-Annotations are read from source, not imports: :mod:`magnet.theory.static`
+Annotations are collected from source by :mod:`magnet.theory.static`
 parses them, so a repository is auditable without installing its dependencies
 or running it. Nothing executes an annotation. Teams can therefore vendor
 :mod:`magnet.theory.shim`, in which every predicate is a no-op, rather than
