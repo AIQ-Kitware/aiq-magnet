@@ -66,6 +66,7 @@ theory:
     - id: Examples.Circle.AreaRatio
       kind: theorem
       declaration: MagnetExamples.Circle.volume_quarterDisc
+      source: Circle.lean
       statement: >
         The quarter disc of radius 1 occupies pi/4 of the unit square, so
         the fraction of uniformly drawn points landing inside it converges

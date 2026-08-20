@@ -93,7 +93,9 @@ def estimate_area_ratio(seed: int = 1, samples: int = 20000) -> float:
         >>> round(estimate_area_ratio(seed=1, samples=1000), 4)
         0.791
     """
-    with theory.approximates('Examples.Circle.AreaRatio'):
+    with theory.approximates(
+            'Examples.Circle.AreaRatio',
+            note='finite uniform samples estimate the exact area ratio'):
         stream = _unit_interval(seed, samples * 2)
         inside = sum(1 for x, y in zip(stream, stream) if x * x + y * y <= 1.0)
         return inside / samples

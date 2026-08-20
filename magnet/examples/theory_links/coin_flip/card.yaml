@@ -62,6 +62,7 @@ theory:
     - id: Examples.CoinFlip.Binomial
       kind: theorem
       declaration: MagnetExamples.CoinFlip.card_heads_eq_choose
+      source: CoinFlip.lean
       statement: >
         Exactly choose(n, k) of the 2^n sequences of n flips show k heads,
         so each head count has probability choose(n, k) / 2^n.

@@ -20,9 +20,10 @@ __all__ = ['tests', 'approximates', 'motivates']
 
 
 class _Link:
-    def __init__(self, relation, ref):
+    def __init__(self, relation, ref, note=''):
         self.relation = relation
         self.ref = ref
+        self.note = note
 
     def __call__(self, obj):
         return obj
@@ -34,16 +35,16 @@ class _Link:
         return False
 
 
-def tests(ref):
-    """Theory says exactly what should happen, and this checks it."""
-    return _Link('tests', ref)
+def tests(ref, *, note=''):
+    """Practice directly evaluates the named claim or consequence."""
+    return _Link('tests', ref, note)
 
 
-def approximates(ref):
-    """Theory defines something exact, and this estimates it."""
-    return _Link('approximates', ref)
+def approximates(ref, *, note=''):
+    """Practice measures a finite or proxy version of theory."""
+    return _Link('approximates', ref, note)
 
 
-def motivates(ref):
-    """This establishes a phenomenon, and theory is asked to explain it."""
-    return _Link('motivates', ref)
+def motivates(ref, *, note=''):
+    """Practice establishes a phenomenon theory is asked to explain."""
+    return _Link('motivates', ref, note)

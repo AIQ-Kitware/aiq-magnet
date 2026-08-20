@@ -1,10 +1,14 @@
 """
 The card side: read a card's theory block and produce ``theory.json``.
 
-A card names the annotated source, and either writes its theoretical objects
-out or names files holding them::
+A card may link its evaluation claim directly to theory, collect finer-grained
+links from annotated source, or do both. It may also write its theoretical
+objects out or name files holding them::
 
     theory:
+      links:
+        - relation: tests
+          ref: Examples.CoinFlip.Binomial
       sources:
         - experiment.py
       entries:
@@ -22,9 +26,10 @@ Inline suits a card with one or two objects of its own. A file suits an index
 generated from a formalization, where a card points at two entries out of
 fifty. Both may appear together, and paths are relative to the card.
 
-Evaluating the card reads the source, collects the entries, checks that every
-reference resolves, and writes the links beside the verdict. The annotation in
-the code is the whole relationship; the card only says where to look.
+Evaluating the card merges card-level and source-level links, collects the
+entries, checks that every reference resolves, and writes the links beside the
+verdict. Card links describe the evaluation claim; source annotations can name
+the implementation step where a relationship is realized.
 """
 import json
 from dataclasses import dataclass, field
@@ -32,9 +37,36 @@ from dataclasses import dataclass, field
 import ubelt as ub
 
 from magnet.theory.index import TheoryIndex, load_indexes, parse_entries
-from magnet.theory.static import Link, extract
+from magnet.theory.links import Link, RELATIONS
+from magnet.theory.static import extract
 
 __all__ = ['TheoryReport', 'report_from_card']
+
+
+def _links_from_card(raw_links) -> list[Link]:
+    """Parse the deliberately small card-level link shape."""
+    links = []
+    allowed = {'relation', 'ref', 'note'}
+    for index, raw in enumerate(raw_links or []):
+        if not isinstance(raw, dict):
+            raise ValueError(f'theory.links[{index}] must be a mapping')
+        extra = set(raw) - allowed
+        if extra:
+            raise ValueError(
+                f'theory.links[{index}] has unknown fields: {sorted(extra)}')
+        relation = raw.get('relation')
+        if relation not in RELATIONS:
+            raise ValueError(
+                f'theory.links[{index}] has relation {relation!r}; '
+                f'known relations are {list(RELATIONS)}')
+        ref = raw.get('ref')
+        if not isinstance(ref, str) or not ref:
+            raise ValueError(f'theory.links[{index}] has no ref')
+        note = raw.get('note') or ''
+        if not isinstance(note, str):
+            raise ValueError(f'theory.links[{index}].note must be a string')
+        links.append(Link(relation=relation, ref=ref, note=note.strip()))
+    return links
 
 
 @dataclass
@@ -46,7 +78,7 @@ class TheoryReport:
 
     @property
     def unresolved(self) -> list:
-        """References with no entry in any of the card's indexes."""
+        """References with no entry in the card's entries or indexes."""
         return self.index.unresolved([link.ref for link in self.links])
 
     def to_dict(self) -> dict:
@@ -120,14 +152,15 @@ def report_from_card(card: dict, root) -> TheoryReport | None:
                      else root / path).resolve())
                 for entry in entries or []]
 
-    links: list[Link] = extract(resolve(spec.get('sources')))
+    links: list[Link] = _links_from_card(spec.get('links'))
+    links.extend(extract(resolve(spec.get('sources'))))
     entries = list(load_indexes(resolve(spec.get('indexes'))))
     entries.extend(parse_entries(spec.get('entries'), 'theory.entries'))
     report = TheoryReport(links=links, index=TheoryIndex(entries))
 
     if report.unresolved:
         raise ValueError(
-            'theory references with no entry in the card\'s indexes: '
+            "theory references with no entry in the card's entries or indexes: "
             + ', '.join(report.unresolved))
 
     return report

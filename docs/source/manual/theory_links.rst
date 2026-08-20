@@ -1,23 +1,29 @@
 Linking Practice to Theory
 ==========================
 
-An evaluation produces a number. What that number has to do with a theorem, a
-conjecture, or an open question usually lives in someone's head, or in a paper
-nobody reads next to the code. A theory link writes it down next to the code
-that does the work, and carries it into the run's output.
+An evaluation produces a number. What that number has to do with a formal
+claim, theorem, conjecture, or open question usually lives in someone's head,
+or in a paper nobody reads next to the code. A theory link writes the
+connection down and carries it into the run's output.
 
 There are three relations, each read as ``practice <relation> theory``:
 
-===============  ==========================================================
-``tests``        theory says exactly what should happen; this checks it
-``approximates`` theory defines something exact; this estimates it
-``motivates``    this establishes a phenomenon; theory is asked to explain it
-===============  ==========================================================
+===============  ============================================================
+``tests``        practice directly evaluates the named claim or consequence
+``approximates`` practice measures a finite, sampled, or proxy version of it
+``motivates``    practice establishes a phenomenon theory is asked to explain
+===============  ============================================================
 
 ``motivates`` is the one people miss. An experiment does not have to confirm or
 estimate anything to be worth connecting: showing that a phenomenon exists
 gives theory something to explain, and naming the question is what lets the
 explanation arrive later.
+
+``tests`` is deliberately narrower than "the theorem applies." It says the
+empirical procedure directly evaluates the claim or consequence named by the
+entry. Whether a theorem's hypotheses actually hold is separate information;
+assumption accounting can refine a link later without changing this first
+layer.
 
 
 Annotating code
@@ -39,7 +45,9 @@ than a function:
 .. code:: python
 
     def estimate_area_ratio(seed, samples):
-        with theory.approximates('Examples.Circle.AreaRatio'):
+        with theory.approximates(
+                'Examples.Circle.AreaRatio',
+                note='finite samples estimate the exact area ratio'):
             ...
 
 Both forms do nothing at runtime. A relation returns what it wraps, so
@@ -85,10 +93,11 @@ Inline suits a card with one or two objects of its own. A file suits pointing
 at two entries out of fifty. Both may appear together, and the entries are
 validated the same way either way.
 
-Three kinds are available: ``theorem``, ``conjecture`` and ``question``. An id
-can keep its name as the object behind it develops, so code that points at a
-question keeps working when someone turns that question into a conjecture and
-then proves it.
+Four kinds are available: ``theorem``, ``conjecture``, ``question`` and
+``definition``. ``definition`` matters for real formalizations: an empirical
+claim shape, estimator, loss, or other ``Prop`` may be the exact object a card
+tests even when that object is not itself a proved theorem. An id can keep its
+name as a question develops into a conjecture and then a theorem.
 
 
 Pointing at Lean
@@ -101,12 +110,15 @@ An entry may name where its statement is formalized:
       - id: Examples.CoinFlip.Binomial
         kind: theorem
         declaration: MagnetExamples.CoinFlip.count_headCount_eq
+        source: CoinFlip.lean
         statement: >
           Exactly choose(n, k) of the 2^n sequences of n flips show k heads.
 
 ``declaration`` is the fully-qualified name in whatever proof assistant states
-it. All three shipped examples carry one, with the Lean beside the Python that
-points at it:
+it. ``source`` is optional provenance for the formalization: a local source
+path, repository URL, pinned revision identifier, or whatever an index
+generator can preserve. All three shipped examples carry a declaration and a
+local source path, with the Lean beside the Python that points at it:
 
 .. code:: text
 
@@ -142,11 +154,32 @@ is here yet.
 Connecting it to a card
 -----------------------
 
-Paths in ``sources`` and ``indexes`` are relative to the card, so an example
-that keeps its parts together names its siblings.
+A card can link its overall evaluation claim directly. This is important for
+real MAGNET cards whose claim lives in YAML rather than in one Python function:
 
-Evaluating the card reads the source, reads the indexes, checks that every
-reference resolves, and writes ``theory.json`` beside ``verdict.json``:
+.. code:: yaml
+
+    theory:
+      links:
+        - relation: tests
+          ref: Dkps.EmpiricalCrossBudgetMAEClaim
+          note: the card directly evaluates the finite cross-budget MAE claim
+        - relation: approximates
+          ref: Dkps.PopulationMAEQueryEfficiency
+          note: finite replicates stand in for a population high-probability claim
+      sources:
+        - predictor.py
+      indexes:
+        - ../../theory/indexes/dkps.yaml
+
+Card-level links and source annotations are complementary. A card link says how
+the *evaluation claim* relates to theory; a source annotation can point at the
+specific implementation step where a relationship is realized. Both become
+ordinary entries in the same ``links`` list.
+
+Paths in ``sources`` and ``indexes`` are relative to the card. Evaluating the
+card merges both kinds of links, checks that every reference resolves, and
+writes ``theory.json`` beside ``verdict.json``:
 
 .. code:: json
 
@@ -170,8 +203,14 @@ reference resolves, and writes ``theory.json`` beside ``verdict.json``:
     }
 
 The entries a run points at travel with the links, so the artifact reads on its
-own without the index beside it. A reference with no entry in any declared
-index raises rather than passing silently.
+own without the index beside it. A reference with no entry in the card's
+inline entries or declared indexes raises rather than passing silently.
+
+A short ``note`` is optional on both card links and source annotations. It is
+for the scientifically important gap -- for example, "32 finite MAE replicates
+stand in for a population eventual-high-probability statement" -- not for a
+second ontology. Hypothesis satisfaction, proof status, severity, and review
+workflow remain later refinement layers.
 
 
 Annotating without depending on MAGNET
@@ -204,7 +243,8 @@ when all of the following hold:
    ``magnet.theory.tests(...)`` is also accepted)
 2. the call is ``<alias>.tests``, ``.approximates`` or ``.motivates``
 3. the first argument is a literal string
-4. the call is a decorator or a ``with`` item
+4. an optional ``note=`` is recorded when it is also a literal string
+5. the call is a decorator or a ``with`` item
 
 A variable holding the reference, a concatenated string, an unrecognized
 relation, or a bare call in a function body is ignored. Keeping the accepted
@@ -216,8 +256,8 @@ Worked examples
 ---------------
 
 Three examples ship with MAGNET, one per relation. Each is a directory holding
-its card, its code, its index and its Lean statement, so an example can be read
-in one place and copied out in one piece:
+its card, its code, and its Lean statement, so an example can be read in one
+place and copied out in one piece:
 
 =====================  =================  ==============================
 directory              relation           what it shows

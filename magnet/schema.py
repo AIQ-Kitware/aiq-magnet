@@ -71,18 +71,33 @@ class ClaimAggregationStrategySchema(BaseModel):
         return self
 
 class TheoryEntrySchema(BaseModel):
-    """A theoretical object a card's code points at."""
+    """A theoretical object a card's practice can point at."""
     id: str
-    kind: Literal["theorem", "conjecture", "question"] = "theorem"
+    kind: Literal[
+        "theorem", "conjecture", "question", "definition"
+    ] = "theorem"
     statement: str | None = None
     declaration: str | None = None
+    source: str | None = None
+    model_config = {'extra': 'forbid'}
+
+class TheoryLinkSchema(BaseModel):
+    """A card-level ``practice <relation> theory`` connection."""
+    relation: Literal["tests", "approximates", "motivates"]
+    ref: str
+    note: str | None = None
+    model_config = {'extra': 'forbid'}
 
 class TheorySchema(BaseModel):
     """Where a card's theory links and the objects they name live."""
+    # The evaluation claim may link directly, while source annotations identify
+    # finer-grained implementation sites. Both feed the same theory.json list.
+    links: list[TheoryLinkSchema] = Field(default_factory=list)
     sources: list[str] = Field(default_factory=list)
     # Written out here, or read from index files, or both.
     entries: list[TheoryEntrySchema] = Field(default_factory=list)
     indexes: list[str] = Field(default_factory=list)
+    model_config = {'extra': 'forbid'}
 
 class EvaluationCardSchema(BaseModel):
     """

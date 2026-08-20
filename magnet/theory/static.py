@@ -8,12 +8,14 @@ One canonical spelling is accepted::
     @theory.tests('Literal.Reference')
     def experiment(): ...
 
-    with theory.approximates('Literal.Reference'):
+    with theory.approximates(
+            'Literal.Reference', note='finite sample stands in for population'):
         ...
 
 The reference has to be a literal string, and the call has to be a decorator or
-a ``with`` item. Anything else is ignored, which keeps the walk short and keeps
-a reader's model of what counts accurate.
+a ``with`` item. An optional literal ``note=`` travels with the link. Anything
+else is ignored, which keeps the walk short and keeps a reader's model of what
+counts accurate.
 """
 import ast
 from dataclasses import dataclass, field
@@ -21,32 +23,12 @@ from typing import Iterator, Sequence
 
 import ubelt as ub
 
-from magnet.theory.links import RELATIONS
+from magnet.theory.links import Link, RELATIONS
 
 __all__ = ['Link', 'extract', 'extract_tree']
 
 #: Module names that may be aliased to the relation namespace.
 THEORY_MODULES = ('magnet.theory', 'magnet_theory')
-
-
-@dataclass(frozen=True)
-class Link:
-    """One ``practice <relation> theory`` annotation, as found in source."""
-
-    relation: str
-    ref: str
-    file: str
-    line: int
-    qualname: str
-
-    def to_dict(self) -> dict:
-        return {
-            'relation': self.relation,
-            'ref': self.ref,
-            'file': self.file,
-            'line': self.line,
-            'qualname': self.qualname,
-        }
 
 
 @dataclass
@@ -93,6 +75,16 @@ def _literal_ref(call: ast.Call) -> str | None:
     return None
 
 
+def _literal_note(call: ast.Call) -> str:
+    """Return a literal ``note=`` value; dynamic notes stay out of output."""
+    for keyword in call.keywords:
+        if keyword.arg == 'note':
+            value = keyword.value
+            if isinstance(value, ast.Constant) and isinstance(value.value, str):
+                return value.value
+    return ''
+
+
 def extract_tree(tree: ast.AST, fpath: str) -> list[Link]:
     """
     Collect the links in one parsed module.
@@ -136,7 +128,8 @@ def extract_tree(tree: ast.AST, fpath: str) -> list[Link]:
         if ref is None:
             return
         links.append(Link(relation=relation, ref=ref, file=fpath,
-                          line=call.lineno, qualname=qualname))
+                          line=call.lineno, qualname=qualname,
+                          note=_literal_note(call)))
 
     def walk(node: ast.AST, prefix: str) -> None:
         for child in ast.iter_child_nodes(node):

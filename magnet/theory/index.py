@@ -29,9 +29,10 @@ An entry may also name where the statement is formalized::
           The cross-budget query-efficiency conclusion in mean absolute error.
 
 ``declaration`` is the fully-qualified name in whatever proof assistant states
-it, and it is what an index generated from a Lean repository fills in. Reading
-proof status out of the kernel, resolving the declaration against a pinned
-commit, and accounting for a theorem's individual hypotheses are all built on
+it. ``source`` may identify the repository or pinned formalization that owns
+that declaration. Reading proof status out of the kernel, resolving the
+declaration against a pinned commit, and accounting for a theorem's individual
+hypotheses are all built on
 top of this field rather than replacing it.
 """
 from dataclasses import dataclass
@@ -43,9 +44,10 @@ import yaml
 __all__ = ['Entry', 'KINDS', 'TheoryIndex', 'load_index', 'load_indexes',
            'parse_entries']
 
-#: What an entry can be. A question becomes a conjecture becomes a theorem, and
-#: the id does not have to change as it moves.
-KINDS = ('theorem', 'conjecture', 'question')
+#: Theory-facing objects that practice can point at. ``definition`` covers
+#: formal claim shapes, estimators, and quantities that are useful anchors even
+#: when they are not themselves proved theorems.
+KINDS = ('theorem', 'conjecture', 'question', 'definition')
 
 
 @dataclass(frozen=True)
@@ -60,10 +62,16 @@ class Entry:
     #: Lean declaration. Empty when the entry is prose only.
     declaration: str = ''
 
+    #: Optional provenance for the formalization, such as a repository URL,
+    #: pinned source path, or generated-index source identifier.
+    source: str = ''
+
     def to_dict(self) -> dict:
         data = {'id': self.id, 'kind': self.kind, 'statement': self.statement}
         if self.declaration:
             data['declaration'] = self.declaration
+        if self.source:
+            data['source'] = self.source
         return data
 
 
@@ -121,7 +129,7 @@ def parse_entries(raw_entries, where: str = 'entries') -> list:
 
     Args:
         raw_entries: mappings with ``id``, and optionally ``kind``,
-            ``statement`` and ``declaration``.
+            ``statement``, ``declaration`` and ``source``.
         where (str): named in error messages.
 
     Returns:
@@ -154,6 +162,7 @@ def parse_entries(raw_entries, where: str = 'entries') -> list:
             kind=kind,
             statement=(raw.get('statement') or '').strip(),
             declaration=raw.get('declaration', ''),
+            source=raw.get('source', ''),
         ))
     return entries
 

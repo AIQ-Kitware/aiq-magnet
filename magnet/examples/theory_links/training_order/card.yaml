@@ -70,6 +70,7 @@ theory:
     - id: Examples.TrainingOrder.Why
       kind: question
       declaration: MagnetExamples.TrainingOrder.OrderInvariant
+      source: TrainingOrder.lean
       statement: >
         Why can changing only the order of otherwise identical training
         observations change the learned solution, and under what

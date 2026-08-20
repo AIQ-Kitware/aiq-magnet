@@ -20,10 +20,11 @@ def test_a_relation_is_inert_as_a_decorator():
 
 
 def test_a_relation_is_inert_as_a_context_manager():
-    with theory.approximates('A.b') as link:
+    with theory.approximates('A.b', note='finite sample') as link:
         result = 1 + 1
     assert result == 2
     assert (link.relation, link.ref) == ('approximates', 'A.b')
+    assert link.note == 'finite sample'
 
 
 def test_the_shim_matches_the_real_relations():
@@ -47,7 +48,8 @@ SOURCE = ub.codeblock(
         return n
 
     class Estimator:
-        @theory.approximates('Examples.Dice.SumSevenProbability')
+        @theory.approximates(
+            'Examples.Dice.SumSevenProbability', note='finite sample')
         def estimate(self):
             with theory.motivates('Examples.TrainingOrder.Why'):
                 return 0
@@ -64,6 +66,7 @@ def test_extraction_records_relation_ref_and_site():
         ('motivates', 'Examples.TrainingOrder.Why', 'Estimator.estimate'),
     ]
     assert all(link.file == 'demo.py' for link in links)
+    assert links[1].note == 'finite sample'
     assert links[0].line == 3
 
 
@@ -145,6 +148,22 @@ def test_an_index_resolves_references(tmp_path):
     assert index['Examples.TrainingOrder.Why'].kind == 'question'
     assert index.unresolved(
         ['Examples.CoinFlip.Binomial', 'Nope.Missing']) == ['Nope.Missing']
+
+
+def test_a_definition_and_source_are_valid_theory_entries(tmp_path):
+    fpath = tmp_path / 'theory.yaml'
+    fpath.write_text(ub.codeblock(
+        '''
+        entries:
+          - id: Dkps.EmpiricalCrossBudgetMAEClaim
+            kind: definition
+            declaration: DkpsQuench2026.Paper.TheoryPractice.EmpiricalCrossBudgetMAEClaim
+            source: https://example.invalid/dkps@deadbeef
+        '''))
+    entry = load_index(fpath)['Dkps.EmpiricalCrossBudgetMAEClaim']
+    assert entry.kind == 'definition'
+    assert entry.declaration.endswith('EmpiricalCrossBudgetMAEClaim')
+    assert entry.source.endswith('@deadbeef')
 
 
 def test_an_unknown_kind_is_rejected(tmp_path):

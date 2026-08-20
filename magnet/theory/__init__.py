@@ -25,12 +25,17 @@ Name the theoretical objects in an index::
         kind: question
         statement: Why can training order change the learned solution?
 
-Then point a card at both, and evaluating it writes ``theory.json`` beside the
-verdict::
+Then point a card at them. The card can also link its overall evaluation claim
+directly, while source annotations describe implementation sites::
 
     theory:
+      links:
+        - relation: tests
+          ref: Examples.CoinFlip.Binomial
       sources: [../examples/theory_links/coin_flip.py]
       indexes: [../examples/theory_links/theory.yaml]
+
+Evaluating it writes ``theory.json`` beside the verdict.
 
 Annotations are collected from source, so nothing here executes to be read, and
 a team can annotate with :mod:`magnet.theory.shim` instead of depending on
@@ -45,12 +50,13 @@ from magnet.theory.index import (
 )
 from magnet.theory.links import (
     RELATIONS,
+    Link,
     TheoryLink,
     approximates,
     motivates,
     tests,
 )
-from magnet.theory.static import Link, extract, extract_tree
+from magnet.theory.static import extract, extract_tree
 
 __all__ = [
     # relations
