@@ -73,6 +73,33 @@ def resolve_queue_backend(requested: str | None = None) -> str:
     return 'serial'
 
 
+def _queue_name_for(root_dpath) -> str:
+    """A tmux queue name that says which run these sessions belong to.
+
+    cmd_queue's tmux backend matches sessions on the queue name to decide which
+    ones are "this queue". kwdagger's default cannot help: MAGNET passes the
+    pipeline as a DAG object inside ``params``, not as the ``pipeline`` spec
+    string kwdagger names itself from, and a Pipeline has no name of its own.
+    Every card fell back to the literal 'schedule-eval' and shared one
+    namespace, so starting an Incubilate run reported a Princeton run's
+    sessions as conflicts.
+
+    ``root_dpath`` is ``<run>/evaluation_runs/<hash>/kwdagger``, so the run
+    directory names the queue. Two runs of the same card still share a name,
+    which is a real conflict; different cards do not.
+    """
+    import re
+
+    try:
+        parts = ub.Path(root_dpath).absolute().parts
+        idx = len(parts) - 1 - parts[::-1].index('evaluation_runs')
+        name = parts[idx - 1]
+    except (ValueError, IndexError, TypeError):
+        return 'schedule-eval'
+    name = re.sub(r'[^A-Za-z0-9_.-]', '_', str(name))
+    return f'schedule-{name}' if name else 'schedule-eval'
+
+
 class EvaluationConfig(kwconf.Config):
     """
     Resolve an Evaluation Card
@@ -652,6 +679,7 @@ class GenericPipelineProcessor:
         kwd_config = ScheduleEvaluationConfig(
             params=kwdagger_params,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
+            queue_name=_queue_name_for(self.root_dpath),
             backend=backend,
             skip_existing=skip_existing,
             run=True,
@@ -775,6 +803,7 @@ class KWDaggerProcessor:
         kwd_config = ScheduleEvaluationConfig(
             params=self.spec,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
+            queue_name=_queue_name_for(self.root_dpath),
             backend=backend,
             skip_existing=skip_existing,
             run=True,

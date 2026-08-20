@@ -208,3 +208,26 @@ def test_pythonpath_is_captured_not_left_bare(monkeypatch):
     monkeypatch.setenv('PYTHONPATH', '/repo:/repo/ta1/thing')
     command = _node(Work, {'task': 't'}).command
     assert '-e PYTHONPATH=/repo:/repo/ta1/thing' in command
+
+
+def test_the_queue_name_identifies_the_run():
+    """A queue name identifies its run, so unrelated runs are not conflicts.
+
+    cmd_queue matches tmux sessions on the queue name to decide what counts as
+    a conflict, and every card used to fall back to 'schedule-eval'.
+    """
+    from magnet.evaluation import _queue_name_for
+
+    assert _queue_name_for(
+        '/r/runs/aiq-gpu/incubilate_lift_scaled-up/evaluation_runs/h_ts/kwdagger'
+    ) == 'schedule-incubilate_lift_scaled-up'
+    # Different cards must not collide...
+    assert _queue_name_for('/r/runs/h/a/evaluation_runs/x/kwdagger') != \
+        _queue_name_for('/r/runs/h/b/evaluation_runs/x/kwdagger')
+    # ...but two runs of the SAME card still share a name; that is a real
+    # conflict.
+    assert _queue_name_for('/r/runs/h/a/evaluation_runs/x1/kwdagger') == \
+        _queue_name_for('/r/runs/h/a/evaluation_runs/x2/kwdagger')
+    # An unparseable path falls back rather than raising.
+    assert _queue_name_for('/tmp/nowhere') == 'schedule-eval'
+    assert _queue_name_for(None) == 'schedule-eval'

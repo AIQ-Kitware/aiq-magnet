@@ -7,6 +7,15 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+* The tmux queue is named after the run directory (e.g.
+  `schedule-incubilate_lift_scaled-up`) instead of the literal
+  `schedule-eval`. cmd_queue's tmux backend matches sessions on that name to
+  decide what is a conflict, so every card on the machine shared one namespace
+  and unrelated runs were reported as conflicts and offered up to be killed.
+  kwdagger cannot supply the name: MAGNET passes the pipeline as a DAG object
+  inside `params` rather than as the `pipeline` spec string kwdagger derives a
+  name from. Two runs of the same card still share a name, which is a real
+  conflict.
 * Re-running an unchanged card reuses its run directory instead of creating a
   new one stamped with the current second. The DAG's root lives inside that
   directory, so a fresh name every run meant `skip_existing` always arrived at
