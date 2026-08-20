@@ -7,6 +7,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+* A card change no longer recomputes the cells it did not change. The DAG's
+  node artifacts move from `<output>/<card hash>_<timestamp>/kwdagger` to
+  `<output>/_kwdagger`, shared across card versions. kwdagger identifies a node
+  by hashing its own configuration, so an unchanged node keeps its id when a
+  different part of the card changes; rooting the DAG under a hash of the whole
+  card discarded that. Adding one model to a 13-model cohort moved all 48
+  unchanged shards to a new path, so the `test -e <artifact>` guard missed on
+  every one and two hours of unchanged work was recomputed. Sharing the root is
+  safe: two cards that configure a node identically produce the same id, and
+  the same id means the same computation.
+
+  It does widen what the result collectors see. They glob the root
+  (`GenericPipelineProcessor.collect_symbols`,
+  `KWDaggerProcessor.collect_results` and `collect_terminal_result`), so they
+  now reach every card version's nodes rather than only the ones the running
+  card configured. A card that declares `terminal_node` and then changes that
+  node's parameters will find two artifacts and raise. Making collection
+  instance-driven is a follow-up, not on this branch. Per-run provenance
+  (`card.yaml`, `results/`, `symbol_metadata.json`) stays under the card-hash
+  directory; artifacts from before this change are orphaned and recomputed
+  once.
 * The tmux queue is named after the run directory (e.g.
   `schedule-incubilate_lift_scaled-up`) instead of the literal
   `schedule-eval`. cmd_queue's tmux backend matches sessions on that name to

@@ -351,6 +351,31 @@ class EvaluationCard:
                 else:
                     self.symbols[key]['sweep'] = [value]
 
+    @property
+    def dag_root_dpath(self) -> Any:
+        """Where the DAG's node artifacts live: ``<output>/_kwdagger``.
+
+        Not under ``<output>/<card hash>/``. kwdagger identifies a node by
+        hashing its own configuration, so an unchanged node keeps its id when a
+        different part of the card changes. Rooting the DAG under a hash of the
+        whole card threw that away: adding one model to a 13-model cohort moved
+        all 48 unchanged shards to a new path, so ``test -e rows.json`` missed
+        and every one of them recomputed, redoing two hours of unchanged work.
+
+        Sharing a root across card versions is safe: two cards that configure a
+        node identically produce the same id, and the same id means the same
+        computation. It does widen what the result collectors see, since they
+        locate artifacts by globbing this root and so now reach every card
+        version's nodes rather than only the ones the running card configured;
+        the follow-up is to ask each configured instance where its own artifact
+        is. Per-run provenance (``card.yaml``, ``results/``,
+        ``symbol_metadata``) stays under the card-hash directory.
+        """
+        # Underscore-prefixed so it is not mistaken for a run directory
+        # (those are ``<card hash>_<timestamp>``); the collectors already skip
+        # ``_``-prefixed names.
+        return self.output_path / '_kwdagger'
+
     def evaluate(
         self,
         jobs: int = 1,
@@ -401,7 +426,7 @@ class EvaluationCard:
 
         if self.has_kwdagger:
             processor = KWDaggerProcessor(
-                self.kwdagger, root_dpath=card_output_path / 'kwdagger'
+                self.kwdagger, root_dpath=self.dag_root_dpath
             )
 
             if processor.terminal_node:
@@ -448,7 +473,7 @@ class EvaluationCard:
         elif self.has_pipeline:
             # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
-                self.pipeline, root_dpath=card_output_path / 'kwdagger'
+                self.pipeline, root_dpath=self.dag_root_dpath
             ).collect_symbols()
 
             for run in pipeline_runs:
