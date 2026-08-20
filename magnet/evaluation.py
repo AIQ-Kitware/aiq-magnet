@@ -871,10 +871,15 @@ class KWDaggerProcessor:
         Load the declared terminal node's primary output.
 
         A pipeline that declares ``terminal_node`` is stating that one node
-        produces the card's whole result.  Reading that artifact directly
-        keeps the DAG authoritative -- MAGNET does not have to rediscover
-        outputs by globbing the run tree, and the claim is evaluated once,
-        against what the pipeline actually computed.
+        produces the card's whole result. The DAG decides which node that is,
+        but the artifact itself is found by globbing that node's directory.
+
+        Because the DAG root is now shared across card versions, an earlier
+        card version's terminal artifact can sit in the same directory under
+        its own node id. This raises rather than picking one, since the
+        alternative is reporting a previous card's result as this card's
+        finding. The fix is an instance-driven collector that asks the node
+        for its own artifact path.
 
         Returns:
             Dict[str, Any]: the parsed terminal artifact.
