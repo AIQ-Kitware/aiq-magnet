@@ -73,6 +73,46 @@ question keeps working when someone turns that question into a conjecture and
 then proves it.
 
 
+Pointing at Lean
+----------------
+
+An entry may name where its statement is formalized:
+
+.. code:: yaml
+
+      - id: Examples.CoinFlip.Binomial
+        kind: theorem
+        declaration: MagnetExamples.CoinFlip.count_headCount_eq
+        statement: >
+          Exactly choose(n, k) of the 2^n sequences of n flips show k heads.
+
+``declaration`` is the fully-qualified name in whatever proof assistant states
+it. Two of the shipped examples carry one, and the Lean sits beside the Python
+that points at it:
+
+.. code:: text
+
+    magnet/examples/theory_links/coin_flip/
+        experiment.py       the annotated code
+        CoinFlip.lean       the statement it points at
+        theory.yaml         the index binding the two
+
+Typecheck them with ``magnet/examples/theory_links/check_lean.sh``. These files
+use plain Lean 4 with no Mathlib and no lake project, so any toolchain runs
+them, and a ``sorry`` is reported rather than hidden: the coin-flip counting
+theorem is stated and unproved, while the training-order file proves what it
+claims.
+
+The third example has no ``declaration``. Stating the area of a quarter disc
+needs measure theory over the reals, and nobody has written it down, so that
+entry carries prose alone. An entry without a declaration is valid and says
+exactly that.
+
+Reading proof status out of the kernel, resolving a declaration against a
+pinned commit, and accounting for a theorem's individual hypotheses are built
+on top of this field. None of that is here yet.
+
+
 Connecting it to a card
 -----------------------
 
@@ -83,9 +123,9 @@ are relative to the card:
 
     theory:
       sources:
-        - ../examples/theory_links/coin_flip.py
+        - ../examples/theory_links/coin_flip/experiment.py
       indexes:
-        - ../examples/theory_links/theory.yaml
+        - ../examples/theory_links/coin_flip/theory.yaml
 
 Evaluating the card reads the source, reads the indexes, checks that every
 reference resolves, and writes ``theory.json`` beside ``verdict.json``:
@@ -97,7 +137,7 @@ reference resolves, and writes ``theory.json`` beside ``verdict.json``:
         {
           "relation": "motivates",
           "ref": "Examples.TrainingOrder.Why",
-          "file": ".../training_order.py",
+          "file": ".../training_order/experiment.py",
           "line": 72,
           "qualname": "training_order_sensitivity"
         }
@@ -158,7 +198,8 @@ Worked examples
 ---------------
 
 Three cards ship with MAGNET, one per relation. Each runs offline in a fraction
-of a second:
+of a second, and each lives in its own directory with its own index, so nothing
+is shared between them.
 
 ===================================  =================  ======================
 card                                 relation           what it shows

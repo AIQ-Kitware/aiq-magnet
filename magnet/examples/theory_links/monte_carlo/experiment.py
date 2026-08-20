@@ -31,7 +31,7 @@ def exact_area_ratio() -> float:
     What the theorem states: the quarter disc is pi/4 of the unit square.
 
     Example:
-        >>> from magnet.examples.theory_links.monte_carlo import exact_area_ratio
+        >>> from magnet.examples.theory_links.monte_carlo.experiment import exact_area_ratio
         >>> round(exact_area_ratio(), 6)
         0.785398
     """
@@ -50,7 +50,7 @@ def estimate_area_ratio(seed: int = 1, samples: int = 20000) -> float:
         float: the fraction landing inside the quarter disc.
 
     Example:
-        >>> from magnet.examples.theory_links.monte_carlo import estimate_area_ratio
+        >>> from magnet.examples.theory_links.monte_carlo.experiment import estimate_area_ratio
         >>> round(estimate_area_ratio(seed=1, samples=1000), 4)
         0.791
     """
@@ -65,7 +65,7 @@ def estimate_pi(seed: int = 1, samples: int = 20000) -> float:
     The same estimate, read as pi.
 
     Example:
-        >>> from magnet.examples.theory_links.monte_carlo import estimate_pi
+        >>> from magnet.examples.theory_links.monte_carlo.experiment import estimate_pi
         >>> round(estimate_pi(seed=1, samples=20000), 3)
         3.157
     """
@@ -80,7 +80,7 @@ def estimation_error(seed: int = 1, samples: int = 20000) -> float:
     coin-flip example.
 
     Example:
-        >>> from magnet.examples.theory_links.monte_carlo import estimation_error
+        >>> from magnet.examples.theory_links.monte_carlo.experiment import estimation_error
         >>> estimation_error(seed=1, samples=20000) > 0
         True
     """

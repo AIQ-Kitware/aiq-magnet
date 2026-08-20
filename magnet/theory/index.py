@@ -19,6 +19,20 @@ kind of thing each entry is::
 ``question`` is a first-class kind. An experiment that establishes a phenomenon
 points at the question it raises, and a later conjecture or theorem can take
 the same id when someone answers it.
+
+An entry may also name where the statement is formalized::
+
+      - id: Dkps.CrossBudgetMAE
+        kind: theorem
+        declaration: DkpsQuench2026.Paper.TheoryPractice.highProbMAE_queryEfficient
+        statement: >
+          The cross-budget query-efficiency conclusion in mean absolute error.
+
+``declaration`` is the fully-qualified name in whatever proof assistant states
+it, and it is what an index generated from a Lean repository fills in. Reading
+proof status out of the kernel, resolving the declaration against a pinned
+commit, and accounting for a theorem's individual hypotheses are all built on
+top of this field rather than replacing it.
 """
 from dataclasses import dataclass
 from typing import Sequence
@@ -40,12 +54,15 @@ class Entry:
     id: str
     kind: str
     statement: str = ''
-    source: str = ''
+
+    #: Fully-qualified name of the statement where it is formalized, e.g. a
+    #: Lean declaration. Empty when the entry is prose only.
+    declaration: str = ''
 
     def to_dict(self) -> dict:
         data = {'id': self.id, 'kind': self.kind, 'statement': self.statement}
-        if self.source:
-            data['source'] = self.source
+        if self.declaration:
+            data['declaration'] = self.declaration
         return data
 
 
@@ -123,7 +140,7 @@ def load_index(fpath) -> TheoryIndex:
             id=ref,
             kind=kind,
             statement=(raw.get('statement') or '').strip(),
-            source=raw.get('source', ''),
+            declaration=raw.get('declaration', ''),
         ))
     return TheoryIndex(entries)
 

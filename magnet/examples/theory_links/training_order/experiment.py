@@ -38,7 +38,7 @@ def train_online(observations, learning_rate: float = 1.0) -> tuple:
         tuple: the weights ``(w_x, w_y, bias)``.
 
     Example:
-        >>> from magnet.examples.theory_links.training_order import (
+        >>> from magnet.examples.theory_links.training_order.experiment import (
         ...     OBSERVATIONS, train_online)
         >>> train_online(OBSERVATIONS)
         (1.5, 2.0, 0.0)
@@ -60,7 +60,7 @@ def predict(weights, point) -> int:
     Which side of the learned boundary a point falls on.
 
     Example:
-        >>> from magnet.examples.theory_links.training_order import predict
+        >>> from magnet.examples.theory_links.training_order.experiment import predict
         >>> predict((1.0, 1.0, 0.0), (1.0, 1.0))
         1
     """
@@ -79,7 +79,7 @@ def training_order_sensitivity(observations=OBSERVATIONS, probe=PROBE) -> dict:
             they disagree.
 
     Example:
-        >>> from magnet.examples.theory_links.training_order import (
+        >>> from magnet.examples.theory_links.training_order.experiment import (
         ...     training_order_sensitivity)
         >>> result = training_order_sensitivity()
         >>> result['disagrees']

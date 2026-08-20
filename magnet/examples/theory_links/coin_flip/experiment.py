@@ -24,7 +24,7 @@ def enumerated_head_counts(n_flips: int) -> dict:
         dict: head count -> probability, as a Fraction.
 
     Example:
-        >>> from magnet.examples.theory_links.coin_flip import enumerated_head_counts
+        >>> from magnet.examples.theory_links.coin_flip.experiment import enumerated_head_counts
         >>> enumerated_head_counts(2)[1]
         Fraction(1, 2)
     """
@@ -41,7 +41,7 @@ def binomial_probability(n_flips: int, heads: int) -> Fraction:
     What the theorem states: C(n, k) / 2**n for a fair coin.
 
     Example:
-        >>> from magnet.examples.theory_links.coin_flip import binomial_probability
+        >>> from magnet.examples.theory_links.coin_flip.experiment import binomial_probability
         >>> binomial_probability(2, 1)
         Fraction(1, 2)
     """
@@ -56,7 +56,7 @@ def max_absolute_deviation(n_flips: int) -> Fraction:
     nearly zero.
 
     Example:
-        >>> from magnet.examples.theory_links.coin_flip import max_absolute_deviation
+        >>> from magnet.examples.theory_links.coin_flip.experiment import max_absolute_deviation
         >>> max_absolute_deviation(8)
         Fraction(0, 1)
     """

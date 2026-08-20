@@ -31,9 +31,9 @@ links:
 
 theory:
   sources:
-    - ../examples/theory_links/monte_carlo.py
+    - ../examples/theory_links/monte_carlo/experiment.py
   indexes:
-    - ../examples/theory_links/theory.yaml
+    - ../examples/theory_links/monte_carlo/theory.yaml
 
 claim:
   python: |
@@ -64,5 +64,5 @@ symbols:
       - seed
       - samples
     python: |
-      from magnet.examples.theory_links.monte_carlo import estimation_error
+      from magnet.examples.theory_links.monte_carlo.experiment import estimation_error
       error = estimation_error(seed, samples)

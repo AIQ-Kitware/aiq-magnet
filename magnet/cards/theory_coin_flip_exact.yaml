@@ -31,9 +31,9 @@ links:
 
 theory:
   sources:
-    - ../examples/theory_links/coin_flip.py
+    - ../examples/theory_links/coin_flip/experiment.py
   indexes:
-    - ../examples/theory_links/theory.yaml
+    - ../examples/theory_links/coin_flip/theory.yaml
 
 claim:
   python: |
@@ -52,5 +52,5 @@ symbols:
       - n_flips
     python: |
       from fractions import Fraction
-      from magnet.examples.theory_links.coin_flip import max_absolute_deviation
+      from magnet.examples.theory_links.coin_flip.experiment import max_absolute_deviation
       deviation = float(max_absolute_deviation(n_flips))

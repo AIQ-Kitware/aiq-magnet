@@ -1,0 +1,14 @@
+# What the coin-flip experiment points at.
+#
+# Stated in CoinFlip.lean beside this file, which typechecks against plain
+# Lean 4 with no Mathlib dependency:
+#
+#   lean coin_flip/CoinFlip.lean
+
+entries:
+  - id: Examples.CoinFlip.Binomial
+    kind: theorem
+    declaration: MagnetExamples.CoinFlip.count_headCount_eq
+    statement: >
+      Exactly choose(n, k) of the 2^n sequences of n flips show k heads, so
+      each head count has probability choose(n, k) / 2^n.

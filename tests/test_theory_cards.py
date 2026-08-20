@@ -48,7 +48,7 @@ def test_the_link_names_the_code_that_declares_it(tmp_path):
     _, run_dpath = _run('theory_training_order.yaml', tmp_path / 'runs')
     link = json.loads((run_dpath / 'theory.json').read_text())['links'][0]
     assert link['qualname'] == 'training_order_sensitivity'
-    assert link['file'].endswith('training_order.py')
+    assert link['file'].endswith('training_order/experiment.py')
     assert '..' not in link['file']
     assert link['line'] > 0
 

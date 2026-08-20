@@ -33,9 +33,9 @@ links:
 
 theory:
   sources:
-    - ../examples/theory_links/training_order.py
+    - ../examples/theory_links/training_order/experiment.py
   indexes:
-    - ../examples/theory_links/theory.yaml
+    - ../examples/theory_links/training_order/theory.yaml
 
 claim:
   python: |
@@ -48,6 +48,6 @@ symbols:
   disagrees:
     type: bool
     python: |
-      from magnet.examples.theory_links.training_order import (
+      from magnet.examples.theory_links.training_order.experiment import (
           training_order_sensitivity)
       disagrees = training_order_sensitivity()['disagrees']
