@@ -13,24 +13,27 @@ from importlib.resources import files
 from magnet.evaluation import EvaluationCard
 
 CARDS = [
-    ('theory_coin_flip_exact.yaml', 'tests', 'Examples.CoinFlip.Binomial'),
-    ('theory_monte_carlo.yaml', 'approximates', 'Examples.Circle.AreaRatio'),
-    ('theory_training_order.yaml', 'motivates', 'Examples.TrainingOrder.Why'),
+    ('coin_flip', 'tests', 'Examples.CoinFlip.Binomial'),
+    ('monte_carlo', 'approximates', 'Examples.Circle.AreaRatio'),
+    ('training_order', 'motivates', 'Examples.TrainingOrder.Why'),
 ]
 
+EXAMPLES = files('magnet') / 'examples' / 'theory_links'
 
-def _run(card_name, output_path):
-    card_fpath = files('magnet') / 'cards' / card_name
+
+def _run(example, output_path):
+    card_fpath = (files('magnet') / 'cards' / example if example.endswith('.yaml')
+                  else EXAMPLES / example / 'card.yaml')
     card = EvaluationCard(card_fpath, output_path)
     status = card.evaluate()
     run_dpath = ub.Path(next(iter(ub.Path(output_path).iterdir())))
     return status, run_dpath
 
 
-@pytest.mark.parametrize('card_name,relation,ref', CARDS)
+@pytest.mark.parametrize('example,relation,ref', CARDS)
 def test_a_demo_card_verifies_and_records_its_relation(
-        card_name, relation, ref, tmp_path):
-    status, run_dpath = _run(card_name, tmp_path / 'runs')
+        example, relation, ref, tmp_path):
+    status, run_dpath = _run(example, tmp_path / 'runs')
     assert status == 'VERIFIED'
 
     theory = json.loads((run_dpath / 'theory.json').read_text())
@@ -45,7 +48,7 @@ def test_a_demo_card_verifies_and_records_its_relation(
 
 
 def test_the_link_names_the_code_that_declares_it(tmp_path):
-    _, run_dpath = _run('theory_training_order.yaml', tmp_path / 'runs')
+    _, run_dpath = _run('training_order', tmp_path / 'runs')
     link = json.loads((run_dpath / 'theory.json').read_text())['links'][0]
     assert link['qualname'] == 'training_order_sensitivity'
     assert link['file'].endswith('training_order/experiment.py')
@@ -54,7 +57,7 @@ def test_the_link_names_the_code_that_declares_it(tmp_path):
 
 
 def test_the_question_is_carried_as_a_question(tmp_path):
-    _, run_dpath = _run('theory_training_order.yaml', tmp_path / 'runs')
+    _, run_dpath = _run('training_order', tmp_path / 'runs')
     entry = json.loads((run_dpath / 'theory.json').read_text())['entries'][0]
     assert entry['kind'] == 'question'
 

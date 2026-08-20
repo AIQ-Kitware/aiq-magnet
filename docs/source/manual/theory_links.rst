@@ -93,6 +93,7 @@ points at it:
 .. code:: text
 
     magnet/examples/theory_links/coin_flip/
+        card.yaml           the evaluation card
         experiment.py       the annotated code
         CoinFlip.lean       the statement it points at
         theory.yaml         the index binding the two
@@ -125,15 +126,16 @@ Connecting it to a card
 -----------------------
 
 A card names the annotated source and the indexes its references live in. Both
-are relative to the card:
+are relative to the card, so an example that keeps them together names its
+siblings:
 
 .. code:: yaml
 
     theory:
       sources:
-        - ../examples/theory_links/coin_flip/experiment.py
+        - experiment.py
       indexes:
-        - ../examples/theory_links/coin_flip/theory.yaml
+        - theory.yaml
 
 Evaluating the card reads the source, reads the indexes, checks that every
 reference resolves, and writes ``theory.json`` beside ``verdict.json``:
@@ -205,26 +207,26 @@ appears in ``theory.json`` or does not exist.
 Worked examples
 ---------------
 
-Three cards ship with MAGNET, one per relation. Each runs offline in a fraction
-of a second, and each lives in its own directory with its own index, so nothing
-is shared between them.
+Three examples ship with MAGNET, one per relation. Each is a directory holding
+its card, its code, its index and its Lean statement, so an example can be read
+in one place and copied out in one piece:
 
-===================================  =================  ======================
-card                                 relation           what it shows
-===================================  =================  ======================
-``theory_coin_flip_exact.yaml``      ``tests``          enumeration matches the
-                                                        binomial law exactly
-``theory_monte_carlo.yaml``          ``approximates``   sampling estimates
-                                                        pi/4 with error
-``theory_training_order.yaml``       ``motivates``      reordering the same
-                                                        data changes the
-                                                        learned solution
-===================================  =================  ======================
+=====================  =================  ==============================
+directory              relation           what it shows
+=====================  =================  ==============================
+``coin_flip``          ``tests``          enumeration matches the
+                                          binomial law exactly
+``monte_carlo``        ``approximates``   sampling estimates pi/4, with
+                                          error the closed form lacks
+``training_order``     ``motivates``      reordering the same data
+                                          changes the learned solution
+=====================  =================  ==============================
 
-Run one with:
+Each runs offline in a fraction of a second:
 
 .. code:: bash
 
-    python -m magnet.evaluation magnet/cards/theory_training_order.yaml
+    python -m magnet.evaluation \
+        magnet/examples/theory_links/training_order/card.yaml
 
-and read ``theory.json`` in the run directory.
+and leaves ``theory.json`` in the run directory beside the verdict.

@@ -31,9 +31,9 @@ links:
 
 theory:
   sources:
-    - ../examples/theory_links/monte_carlo/experiment.py
+    - experiment.py
   indexes:
-    - ../examples/theory_links/monte_carlo/theory.yaml
+    - theory.yaml
 
 claim:
   python: |

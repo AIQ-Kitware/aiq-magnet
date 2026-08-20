@@ -31,9 +31,9 @@ links:
 
 theory:
   sources:
-    - ../examples/theory_links/coin_flip/experiment.py
+    - experiment.py
   indexes:
-    - ../examples/theory_links/coin_flip/theory.yaml
+    - theory.yaml
 
 claim:
   python: |

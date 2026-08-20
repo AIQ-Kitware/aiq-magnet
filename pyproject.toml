@@ -72,7 +72,14 @@ dynamic.readme.file = [
 ]
 dynamic.readme.content-type = "text/markdown"
 dynamic.version.attr = "magnet.__version__"
-package-data.magnet = [ "cards/*.yaml" ]
+# The theory examples are a card, its code, its index and its Lean
+# statement in one directory. The card reads the other three at
+# evaluation time, so all of them have to ship.
+package-data.magnet = [
+  "cards/*.yaml",
+  "examples/theory_links/*/*.yaml",
+  "examples/theory_links/*/*.lean",
+]
 packages.find.namespaces = true
 packages.find.include = [ "magnet*" ]
 

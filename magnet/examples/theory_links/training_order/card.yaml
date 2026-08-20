@@ -33,9 +33,9 @@ links:
 
 theory:
   sources:
-    - ../examples/theory_links/training_order/experiment.py
+    - experiment.py
   indexes:
-    - ../examples/theory_links/training_order/theory.yaml
+    - theory.yaml
 
 claim:
   python: |
