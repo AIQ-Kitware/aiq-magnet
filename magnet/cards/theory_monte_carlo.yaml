@@ -1,0 +1,68 @@
+title: "Monte Carlo estimate of a known area ratio"
+
+description: |
+  Theory defines something exact, and the experiment estimates it.
+
+  A quarter disc occupies pi/4 of the unit square. Sampling points and counting
+  how many land inside estimates that ratio. The estimate is deterministic here
+  because the sampler is seeded, and it is wrong by a small amount that the
+  closed form is not.
+
+  This is what `theory.approximates` means: the theoretical object is exact,
+  and the code produces a finite-sample version of it.
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - theory
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+
+theory:
+  sources:
+    - ../examples/theory_links/monte_carlo.py
+  indexes:
+    - ../examples/theory_links/theory.yaml
+
+claim:
+  python: |
+    assert error < tolerance, (
+        f"estimate is off by {error:.5f}, over the {tolerance} tolerance"
+    )
+    assert error > 0, (
+        "a finite sample landing exactly on pi/4 would mean the estimator "
+        "is not doing what this card says it does"
+    )
+
+symbols:
+  seed:
+    type: int
+    value: 1
+
+  samples:
+    type: int
+    value: 20000
+
+  tolerance:
+    type: float
+    value: 0.01
+
+  error:
+    type: float
+    depends_on:
+      - seed
+      - samples
+    python: |
+      from magnet.examples.theory_links.monte_carlo import estimation_error
+      error = estimation_error(seed, samples)

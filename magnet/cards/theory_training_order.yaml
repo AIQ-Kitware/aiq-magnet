@@ -1,0 +1,53 @@
+title: "Training order changes the learned solution"
+
+description: |
+  The experiment establishes a phenomenon, and theory is asked to explain it.
+
+  An online perceptron sees the same four observations in opposite orders and
+  classifies a probe point differently. Nothing is random, nothing stops early,
+  and the two runs differ only in the order of otherwise identical evidence.
+
+  The card claims the phenomenon and nothing more. Why it happens, and when a
+  learning rule should be order-invariant, is the open question it points at.
+
+  This is what `theory.motivates` means: practice finds something, and theory
+  is given something to explain.
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - theory
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+
+theory:
+  sources:
+    - ../examples/theory_links/training_order.py
+  indexes:
+    - ../examples/theory_links/theory.yaml
+
+claim:
+  python: |
+    assert disagrees, (
+        "both orders reached the same prediction; this card exists to "
+        "exhibit the disagreement"
+    )
+
+symbols:
+  disagrees:
+    type: bool
+    python: |
+      from magnet.examples.theory_links.training_order import (
+          training_order_sensitivity)
+      disagrees = training_order_sensitivity()['disagrees']

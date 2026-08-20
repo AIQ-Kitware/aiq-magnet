@@ -1,0 +1,56 @@
+title: "Enumerated coin flips match the binomial law"
+
+description: |
+  Theory says exactly what should happen, and the experiment checks it.
+
+  Enumerating all 2^n sequences of n fair flips gives the probability of each
+  head count. The binomial law states the same quantity in closed form. The
+  two agree exactly, with no sampling and no tolerance, so the deviation is
+  zero rather than small.
+
+  This is what `theory.tests` means: the theoretical object predicts the
+  outcome, and the code confirms it.
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - theory
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+
+theory:
+  sources:
+    - ../examples/theory_links/coin_flip.py
+  indexes:
+    - ../examples/theory_links/theory.yaml
+
+claim:
+  python: |
+    assert deviation == 0, (
+        f"enumeration departs from the binomial law by {deviation}"
+    )
+
+symbols:
+  n_flips:
+    type: int
+    value: 10
+
+  deviation:
+    type: float
+    depends_on:
+      - n_flips
+    python: |
+      from fractions import Fraction
+      from magnet.examples.theory_links.coin_flip import max_absolute_deviation
+      deviation = float(max_absolute_deviation(n_flips))
