@@ -15,6 +15,7 @@ from magnet.containers import (
     ContainerProcessNode,
     containerization_is_enabled,
 )
+from magnet.leasing import INSIDE_LEASE_ENVVAR, LEASING_ENVVAR, LeasedProcessNode
 
 IMAGE = 'aiq-eval-node:latest'
 
@@ -25,8 +26,17 @@ class Work(ContainerProcessNode):
     algo_params = {'task': None}
 
 
+class Infer(LeasedProcessNode):
+    name = 'infer'
+    executable = 'python -m pkg.infer'
+    endpoint_params = ('model_id',)
+    algo_params = {'model_id': None}
+
+
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
+    monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
+    monkeypatch.delenv(LEASING_ENVVAR, raising=False)
     monkeypatch.delenv(IMAGE_ENVVAR, raising=False)
     monkeypatch.delenv(MOUNTS_ENVVAR, raising=False)
     monkeypatch.delenv(FORWARD_ENV_ENVVAR, raising=False)
@@ -106,6 +116,31 @@ def test_the_defaults_are_generic(monkeypatch):
     allowed = ('OPENAI_', 'HF_', 'PYTHON', 'TRANSFORMERS_')
     for name in DEFAULT_FORWARDED_ENV:
         assert name.startswith(allowed), name
+
+
+def test_the_lease_wraps_the_container_not_the_other_way_round(monkeypatch):
+    """Acquiring needs the Docker daemon and the ledger, both on the host.
+
+    Inside-out would mean a container reaching for the host's daemon; and
+    being inside is what lets the container inherit the endpoint env.
+    """
+    _on(monkeypatch)
+    monkeypatch.setenv(LEASING_ENVVAR, '1')
+    command = _node(Infer, {'model_id': 'qwen'}).command
+    assert command.index('infer-stack run') < command.index('docker run')
+
+
+def test_either_layer_works_alone(monkeypatch):
+    monkeypatch.setenv(LEASING_ENVVAR, '1')
+    leased_only = _node(Infer, {'model_id': 'qwen'}).command
+    assert leased_only.startswith('infer-stack run')
+    assert 'docker run' not in leased_only
+
+    monkeypatch.delenv(LEASING_ENVVAR)
+    _on(monkeypatch)
+    boxed_only = _node(Infer, {'model_id': 'qwen'}).command
+    assert boxed_only.startswith('docker run')
+    assert 'infer-stack run' not in boxed_only
 
 
 def test_it_is_still_an_ordinary_kwdagger_node(monkeypatch):
