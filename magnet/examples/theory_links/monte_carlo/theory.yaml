@@ -1,13 +1,15 @@
 # What the Monte Carlo experiment points at.
 #
-# No Lean here. Stating the area of a quarter disc needs measure theory over
-# the reals, so this entry carries prose and no `declaration` until the
-# statement is formalized. An entry without a declaration is valid; it just
-# says nobody has written it down formally yet.
+# Stated in Circle.lean beside this file. The unit-disc area is proved from
+# Mathlib's `Complex.volume_closedBall`; the quarter-disc area the card
+# actually samples is stated and unproved.
+#
+#   MAGNET_LEAN_PROJECT=<a lean project with mathlib built> ../check_lean.sh
 
 entries:
   - id: Examples.Circle.AreaRatio
     kind: theorem
+    declaration: MagnetExamples.Circle.volume_quarterDisc
     statement: >
       The quarter disc of radius 1 occupies pi/4 of the unit square, so the
       fraction of uniformly drawn points landing inside it converges to pi/4.

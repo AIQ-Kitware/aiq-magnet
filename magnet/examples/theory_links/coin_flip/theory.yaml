@@ -1,14 +1,13 @@
-# What the coin-flip experiment points at.
+# What the coin flip experiment points at.
 #
-# Stated in CoinFlip.lean beside this file, which typechecks against plain
-# Lean 4 with no Mathlib dependency:
+# Stated and proved in CoinFlip.lean beside this file.
 #
-#   lean coin_flip/CoinFlip.lean
+#   MAGNET_LEAN_PROJECT=<a lean project with mathlib built> ../check_lean.sh
 
 entries:
   - id: Examples.CoinFlip.Binomial
     kind: theorem
-    declaration: MagnetExamples.CoinFlip.count_headCount_eq
+    declaration: MagnetExamples.CoinFlip.card_heads_eq_choose
     statement: >
       Exactly choose(n, k) of the 2^n sequences of n flips show k heads, so
       each head count has probability choose(n, k) / 2^n.

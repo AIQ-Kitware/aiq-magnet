@@ -1,12 +1,9 @@
-# What the training-order experiment points at.
+# What the training order experiment points at.
 #
-# `OrderInvariant` and a rule that fails it are stated in TrainingOrder.lean
-# beside this file:
+# Stated in TrainingOrder.lean beside this file. The Lean side proves that
+# order invariance is a real restriction; the question itself is open.
 #
-#   lean training_order/TrainingOrder.lean
-#
-# The Lean side exhibits one order-sensitive rule. The question is the general
-# one, and no formal statement answers it yet.
+#   MAGNET_LEAN_PROJECT=<a lean project with mathlib built> ../check_lean.sh
 
 entries:
   - id: Examples.TrainingOrder.Why

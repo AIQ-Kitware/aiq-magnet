@@ -87,8 +87,8 @@ An entry may name where its statement is formalized:
           Exactly choose(n, k) of the 2^n sequences of n flips show k heads.
 
 ``declaration`` is the fully-qualified name in whatever proof assistant states
-it. Two of the shipped examples carry one, and the Lean sits beside the Python
-that points at it:
+it. All three shipped examples carry one, with the Lean beside the Python that
+points at it:
 
 .. code:: text
 
@@ -97,20 +97,28 @@ that points at it:
         CoinFlip.lean       the statement it points at
         theory.yaml         the index binding the two
 
-Typecheck them with ``magnet/examples/theory_links/check_lean.sh``. These files
-use plain Lean 4 with no Mathlib and no lake project, so any toolchain runs
-them, and a ``sorry`` is reported rather than hidden: the coin-flip counting
-theorem is stated and unproved, while the training-order file proves what it
-claims.
+The statements import Mathlib, so checking them needs a Lean project that has
+one built. Rather than carry a lake project and a Mathlib pin here, borrow one:
 
-The third example has no ``declaration``. Stating the area of a quarter disc
-needs measure theory over the reals, and nobody has written it down, so that
-entry carries prose alone. An entry without a declaration is valid and says
-exactly that.
+.. code:: bash
 
-Reading proof status out of the kernel, resolving a declaration against a
-pinned commit, and accounting for a theorem's individual hypotheses are built
-on top of this field. None of that is here yet.
+    MAGNET_LEAN_PROJECT=~/code/aiq-dkps-formalization \
+        magnet/examples/theory_links/check_lean.sh
+
+    coin_flip/CoinFlip.lean                  ok (0 sorry)
+    monte_carlo/Circle.lean                  ok (1 sorry)
+    training_order/TrainingOrder.lean        ok (0 sorry)
+
+A ``sorry`` is reported rather than treated as a failure. A statement can be
+well-formed and unproved, and which of the two it is belongs in the output:
+the quarter-disc area the Monte Carlo card samples is stated and unproved,
+while the unit-disc area beside it follows from Mathlib's
+``Complex.volume_closedBall``.
+
+Reading proof status out of the kernel rather than from a script's output,
+resolving a declaration against a pinned commit, and accounting for a
+theorem's individual hypotheses are built on top of this field. None of that
+is here yet.
 
 
 Connecting it to a card
