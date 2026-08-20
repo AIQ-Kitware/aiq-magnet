@@ -73,6 +73,28 @@ def resolve_queue_backend(requested: str | None = None) -> str:
     return 'serial'
 
 
+def _tmux_workers() -> int | None:
+    """How many queue workers may run at once, or None for the default.
+
+    This bounds GPU contention. A LeasedProcessNode holds its answerer while it
+    waits for the extractor it also needs, so if enough shards start at once to
+    claim every GPU, none can ever get the extractor and none will release.
+    Observed on a 4-GPU host: four answerers on GPUs 0-3, the shared extractor
+    unplaceable, eight leases queued behind it, zero rows produced in an hour.
+
+    Concurrency must stay at or below (GPUs - 1) for a cohort with a shared
+    single-GPU extractor. MAGNET cannot know the GPU count, so the runner sets
+    this.
+    """
+    raw = os.environ.get('MAGNET_TMUX_WORKERS', '').strip()
+    if not raw:
+        return None
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return None
+
+
 def _queue_name_for(root_dpath) -> str:
     """A tmux queue name that says which run these sessions belong to.
 
@@ -680,6 +702,8 @@ class GenericPipelineProcessor:
             params=kwdagger_params,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
             queue_name=_queue_name_for(self.root_dpath),
+            **({'tmux_workers': _tmux_workers()}
+               if _tmux_workers() is not None else {}),
             backend=backend,
             skip_existing=skip_existing,
             run=True,
@@ -804,6 +828,8 @@ class KWDaggerProcessor:
             params=self.spec,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
             queue_name=_queue_name_for(self.root_dpath),
+            **({'tmux_workers': _tmux_workers()}
+               if _tmux_workers() is not None else {}),
             backend=backend,
             skip_existing=skip_existing,
             run=True,
