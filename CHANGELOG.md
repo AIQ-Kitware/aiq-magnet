@@ -14,6 +14,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   declares a symbol of the same name still gets it unqualified, which is how a
   `define_metric` symbol is supplied.
 * A verdict records the `cell` it belongs to and the results it `consumed`.
+* A card reports the cells its run computed. A result node instance that
+  produced nothing is skipped with a warning rather than failing the card.
 * The queue backend is selectable via `--queue_backend` and defaults to tmux.
 
 ### Deprecated

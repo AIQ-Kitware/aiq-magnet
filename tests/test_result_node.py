@@ -177,11 +177,28 @@ def test_unknown_result_node_names_the_available_ones():
         processor.collect_result_cells()
 
 
-def test_missing_artifact_points_at_the_run_directory():
+def test_a_partial_run_reports_the_cells_it_has():
+    # One node failing does not discard the cells that succeeded.
+    dpath = _fresh('result_partial')
+    _write(dpath / 'summary' / 'ran', {'mae': 0.01})
+
+    processor = _processor_with_dag(
+        {
+            'summary_id_ran': _FakeNode('summary', dpath / 'summary' / 'ran'),
+            'summary_id_failed': _FakeNode(
+                'summary', dpath / 'summary' / 'failed'),
+        },
+        root_dpath=dpath,
+    )
+    cells = processor.collect_result_cells()
+
+    assert [cell['key'] for cell in cells] == ['summary_id_ran']
+
+
+def test_a_run_that_produced_nothing_is_empty_not_an_error():
     dpath = _fresh('result_missing')
     processor = _processor_with_dag(
         {'summary_id_abc': _FakeNode('summary', dpath / 'summary' / 'abc')},
         root_dpath=dpath,
     )
-    with pytest.raises(RuntimeError, match='produced no'):
-        processor.collect_result_cells()
+    assert processor.collect_result_cells() == []

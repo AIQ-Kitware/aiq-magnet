@@ -402,7 +402,7 @@ class EvaluationCard:
 
         calculated_metrics = {}
 
-        if raw_symbol_metadata:
+        if raw_symbol_metadata and resolved_symbols:
             metric_definitions = Metric.build_metrics_from_symbol_metadata(
                 raw_symbol_metadata
             )

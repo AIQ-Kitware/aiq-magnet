@@ -365,10 +365,12 @@ class KWDaggerProcessor:
                 resolved ``params``, its ``results``, and the ``artifact``
                 they were read from.
 
+        An instance that produced nothing is skipped, not fatal: a card
+        reports what its run managed to compute.
+
         Raises:
             ValueError: if no ``result_node`` was declared, or it does not name
                 a node in the pipeline.
-            RuntimeError: if an instance produced no artifact.
         """
         if not self.result_node:
             raise ValueError('card must declare kwdagger.result_node')
@@ -391,15 +393,14 @@ class KWDaggerProcessor:
             )
 
         cells = []
+        missing = []
         for node in instances:
             fpath = (
                 node.final_node_dpath / node.out_paths[node.primary_out_key]
             )
             if not fpath.exists():
-                raise RuntimeError(
-                    f'result node {self.result_node!r} produced no {fpath}; '
-                    f'the pipeline likely failed upstream'
-                )
+                missing.append(fpath)
+                continue
             payload = json.loads(fpath.read_text())
             # A node writes its values at the top level; `result` is the older
             # nesting, still read so existing nodes keep working.
@@ -414,6 +415,13 @@ class KWDaggerProcessor:
                 },
                 'artifact': str(fpath),
             })
+
+        if missing:
+            logger.warning(
+                f'{len(missing)} of {len(instances)} {self.result_node!r} '
+                f'instances produced nothing; reporting the {len(cells)} that '
+                f'did. First: {missing[0]}'
+            )
         return cells
 
 
