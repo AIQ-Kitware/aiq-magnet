@@ -721,9 +721,11 @@ def _link_dag_root(card_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
     """
     Point ``<run>/kwdagger`` at the shared DAG root.
 
-    Consumers glob that path for a run's node artifacts and figures. The root
-    moved out of the run directory so nodes survive a card edit; the link keeps
-    those consumers working.
+    The root moved out of the run directory so nodes survive a card edit, but
+    downstream tools glob ``<run>/kwdagger`` for a run's artifacts and figures
+    and would silently find none. This is a compatibility shim, not the fix:
+    those tools should read the shared root and select the run's own cells,
+    which ``result_cells.json`` records. Remove it once they do.
     """
     link = card_output_path / 'kwdagger'
     try:

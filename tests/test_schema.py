@@ -118,3 +118,32 @@ def test_symbol_dependency_aliases_must_not_disagree(simple_card):
         match='`depends_on` and `depends` must agree',
     ):
         EvaluationCardSchema.model_validate(card)
+
+
+@pytest.fixture(scope='module')
+def kwdagger_card():
+    card_path = files('magnet') / 'cards' / 'llama_kwdagger.yaml'
+    with card_path.open('r') as f:
+        return yaml.safe_load(f)
+
+
+def test_a_kwdagger_card_validates(kwdagger_card):
+    card = EvaluationCardSchema.model_validate(kwdagger_card)
+    assert card.kwdagger.result_node == 'compare'
+
+
+def test_a_kwdagger_card_must_declare_its_result_node(kwdagger_card):
+    kwdagger = {
+        k: v for k, v in kwdagger_card['kwdagger'].items()
+        if k != 'result_node'
+    }
+    card = {**kwdagger_card, 'kwdagger': kwdagger}
+    with pytest.raises(ValidationError, match='result_node'):
+        EvaluationCardSchema.model_validate(card)
+
+
+def test_kwdagger_keys_magnet_does_not_read_are_passed_through(kwdagger_card):
+    kwdagger = {**kwdagger_card['kwdagger'], 'skip_existing': False}
+    card = EvaluationCardSchema.model_validate(
+        {**kwdagger_card, 'kwdagger': kwdagger})
+    assert card.kwdagger.skip_existing is False

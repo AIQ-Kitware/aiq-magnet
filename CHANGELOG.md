@@ -23,7 +23,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Removed
 
-* A `kwdagger` card must declare `result_node`, and is rejected without one.
+* A `kwdagger` card must declare `result_node`; the schema requires it and
+  a card without one is rejected as it loads.
   The path that rediscovered verdicts by globbing the run tree is gone, along
   with the node a pipeline had to carry to write them.
 

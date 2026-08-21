@@ -1,6 +1,7 @@
 from enum import StrEnum
 from typing import Any, Literal, Optional
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import (
+    AliasChoices, BaseModel, ConfigDict, Field, model_validator)
 
 class LinkSchema(BaseModel):
     title: str
@@ -14,6 +15,25 @@ class SubmitterSchema(BaseModel):
 # TODO: this can be validated with a syntax check
 class ClaimSchema(BaseModel):
     python: str
+
+class KWDaggerSchema(BaseModel):
+    """
+    A card's kwdagger backend.
+
+    Everything but ``result_node`` is passed to kwdagger's schedule config, so
+    unknown keys are allowed: this validates what MAGNET itself reads.
+    """
+    model_config = ConfigDict(extra='allow')
+
+    #: The node whose output is the card's result. Each configured instance of
+    #: it is one cell.
+    result_node: str
+
+    #: A Pipeline callable, a path to a declarative pipeline, or the pipeline
+    #: inline as a mapping.
+    pipeline: str | dict[str, Any]
+
+    matrix: dict[str, Any] | None = None
 
 class MetricObjective(StrEnum):
     MINIMIZE = 'minimize'
@@ -149,7 +169,7 @@ class EvaluationCardSchema(BaseModel):
     symbols: dict[str, SymbolSchema] | None = None
 
     # --- Backend (at most one) ---
-    kwdagger: dict[str, Any] | None = None
+    kwdagger: KWDaggerSchema | None = None
     pipeline: dict[str, Any] | None = None
 
     @model_validator(mode='after')
