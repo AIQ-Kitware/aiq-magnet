@@ -107,8 +107,8 @@ class GenericPipelineProcessor:
     Handler for yaml-based pipeline specification
 
     Soft-deprecated: prefer a ``kwdagger:`` block with a ``result_node``.
-    Behaviour here is frozen -- own per-run root, results globbed and bound as
-    bare names -- because most cards still use it.
+    Its semantics are kept -- one symbol set per instance, bound as bare names
+    -- since most cards still use it.
 
     Example:
         >>> from magnet._kwdagger import GenericPipelineProcessor
@@ -160,14 +160,14 @@ class GenericPipelineProcessor:
     ) -> None:
         warnings.warn(
             "a card's `pipeline:` block is soft-deprecated; declare a "
-            '`kwdagger:` block with a `result_node` instead. The old route '
-            'keeps working unchanged.',
+            '`kwdagger:` block with a `result_node` instead.',
             DeprecationWarning,
             stacklevel=2,
         )
         self.pipeline = pipeline_def
         self.root_dpath = root_dpath
         self.dag = None
+        self.compiled_dag = None
         self.matrix = None
         self.symbols = {}
 
@@ -214,30 +214,36 @@ class GenericPipelineProcessor:
             run=True,
         )
 
-        dag, queue = build_schedule(kwd_config)
+        self.compiled_dag, queue = build_schedule(kwd_config)
 
     def collect_symbols(self) -> Dict[str, Any]:
         """
         Collect results (Evaluation Card 'symbols') in place of 'load_result' in the ProcessNode definition
+
+        Each configured instance is asked for its own artifact. Globbing the
+        root instead would also return the instances of whatever other card
+        versions share it.
         """
         if not self.symbols:
             self.dispatch()
 
-        # Glob all results json (only one node in pipeline)
-        paths = self.root_dpath.glob(
-            f'**/{self.dag.node_dict[next(iter(self.dag.node_dict))].out_paths["results_fpath"]}'
-        )
+        node_name = next(iter(self.dag.node_dict))
+        out_path = self.dag.node_dict[node_name].out_paths['results_fpath']
 
-        for symbol_resolution in paths:
-            payload = json.load(open(symbol_resolution, 'r'))
-            parent_dir = symbol_resolution.parent.stem
+        for node in self.compiled_dag.nodes.values():
+            if node.name != node_name:
+                continue
+            fpath = node.final_node_dpath / out_path
+            if not fpath.exists():
+                continue
+            payload = json.loads(fpath.read_text())
             # A node writes its values at the top level; `result` is the older
             # nesting, still read so existing nodes keep working.
             values = payload.get('result', payload)
             for symbol, value in values.items():
                 if symbol.startswith('_'):
                     continue
-                self.symbols.setdefault(parent_dir, {})[symbol] = {
+                self.symbols.setdefault(node.process_id, {})[symbol] = {
                     'value': value
                 }
 

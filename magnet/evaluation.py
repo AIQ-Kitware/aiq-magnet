@@ -214,6 +214,12 @@ class EvaluationCard:
         self.has_kwdagger = 'kwdagger' in cfg
         self.kwdagger = cfg.get('kwdagger')
         if self.has_kwdagger:
+            if not self.kwdagger.get('result_node'):
+                raise ValueError(
+                    f'{path}: a kwdagger card must declare '
+                    f'`kwdagger.result_node`, naming the node whose output is '
+                    f'the card result'
+                )
             self.kwdagger = _resolve_pipeline_path(
                 self.kwdagger, self.card_dpath)
 
@@ -331,37 +337,36 @@ class EvaluationCard:
                 self.kwdagger, root_dpath=self.kwdagger_dpath
             )
 
-            if processor.result_node:
-                # The DAG is authoritative: each instance of the result node is
-                # one cell of the card, evaluated against what it computed.
-                cells = processor.collect_result_cells()
+            # The DAG is authoritative: each instance of the result node is
+            # one cell of the card, evaluated against what it computed.
+            cells = processor.collect_result_cells()
 
-                for cell in cells:
-                    cell_symbols, measured = _fill_declared_symbols(
-                        self.symbols, cell['results'])
-                    self.evaluations.extend(self.dispatch(
-                        Symbols.decompose_symbol_defs(cell_symbols),
-                        results=cell['results'],
-                        cell_key=cell['key'],
-                        measured=measured,
-                    ))
+            for cell in cells:
+                cell_symbols, measured = _fill_declared_symbols(
+                    self.symbols, cell['results'])
+                self.evaluations.extend(self.dispatch(
+                    Symbols.decompose_symbol_defs(cell_symbols),
+                    results=cell['results'],
+                    cell_key=cell['key'],
+                    measured=measured,
+                ))
 
-                with safer.open(
-                    card_output_path / 'result_cells.json',
-                    'w',
-                    temp_file=SAFER_USE_TEMPFILE,
-                ) as f:
-                    json.dump(cells, f, indent=2, ensure_ascii=False)
-                    f.write('\n')
+            with safer.open(
+                card_output_path / 'result_cells.json',
+                'w',
+                temp_file=SAFER_USE_TEMPFILE,
+            ) as f:
+                json.dump(cells, f, indent=2, ensure_ascii=False)
+                f.write('\n')
 
             _link_dag_root(card_output_path, self.kwdagger_dpath)
 
         elif self.has_pipeline:
-            # The old route keeps a per-run root: it finds its results by
-            # globbing, so a shared root would show it other card versions'.
             pipeline_runs = GenericPipelineProcessor(
-                self.pipeline, root_dpath=card_output_path / 'kwdagger'
+                self.pipeline, root_dpath=self.kwdagger_dpath
             ).collect_symbols()
+
+            _link_dag_root(card_output_path, self.kwdagger_dpath)
 
             for run in pipeline_runs:
                 run_symbols = pipeline_runs[run]

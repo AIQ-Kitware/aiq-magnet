@@ -18,23 +18,24 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Deprecated
 
-* A card's `pipeline:` block. Prefer `kwdagger:` with a `result_node`. The old
-  route is unchanged and still supported; it now warns.
+* A card's `pipeline:` block. Prefer `kwdagger:` with a `result_node`. Its
+  semantics are unchanged and still supported; it now warns.
 
 ### Removed
 
-* A `kwdagger` card must declare `result_node`. The path that rediscovered
-  verdicts by globbing the run tree is gone, along with the node a pipeline had
-  to carry to write them.
+* A `kwdagger` card must declare `result_node`, and is rejected without one.
+  The path that rediscovered verdicts by globbing the run tree is gone, along
+  with the node a pipeline had to carry to write them.
 
 ### Changed
 
 * Requires `kwdagger>=0.4.0`.
 * A cell's identity no longer depends on the values it measured, so a metric
   that moves replaces its verdict instead of writing a second one beside it.
-* `kwdagger:` node artifacts live in `<output>/_kwdagger`, shared across card
-  versions, so editing a card no longer recomputes the nodes it did not change.
-  `<run>/kwdagger` links there for consumers that read a run's artifacts.
+* Node artifacts live in `<output>/_kwdagger`, shared across card versions, so
+  editing a card no longer recomputes the nodes it did not change. Both routes
+  ask each configured instance for its own artifact rather than globbing that
+  root. `<run>/kwdagger` links there for consumers that read a run.
 * An unchanged card reuses its run directory instead of stamping a new one.
 * A relative pipeline path in a card resolves against the card.
 * The tmux queue is named after the run directory rather than `schedule-eval`.

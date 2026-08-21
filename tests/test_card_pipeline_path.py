@@ -26,7 +26,11 @@ def _write_card(dpath, pipeline):
             'type': 'software',
         }],
         'claim': {'python': 'assert doubled == seed * 2'},
-        'kwdagger': {'pipeline': pipeline, 'matrix': {'demo_node.seed': [1]}},
+        'kwdagger': {
+            'pipeline': pipeline,
+            'result_node': 'demo_node',
+            'matrix': {'demo_node.seed': [1]},
+        },
     }
     fpath = ub.Path(dpath) / 'card.yaml'
     fpath.write_text(yaml.safe_dump(card, sort_keys=False))
