@@ -8,9 +8,18 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 * Cards declare `kwdagger.result_node`: the node whose output is the card's
-  result. Every configured instance of it is one cell, evaluated separately,
-  with the parameters that vary across instances bound as symbols.
+  result. Every configured instance of it is one cell, identified by that
+  instance's kwdagger `process_id` and evaluated separately.
+* A result node's values reach a claim as `metrics.<node>.<name>`. A card that
+  declares a symbol of the same name still gets it unqualified, which is how a
+  `define_metric` symbol is supplied.
+* A verdict records the `cell` it belongs to and the results it `consumed`.
 * The queue backend is selectable via `--queue_backend` and defaults to tmux.
+
+### Deprecated
+
+* A card's `pipeline:` block. Prefer `kwdagger:` with a `result_node`. The old
+  route is unchanged and still supported; it now warns.
 
 ### Removed
 
@@ -21,8 +30,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Changed
 
 * Requires `kwdagger>=0.4.0`.
-* Node artifacts live in `<output>/_kwdagger`, shared across card versions, so
-  editing a card no longer recomputes the nodes it did not change.
+* A cell's identity no longer depends on the values it measured, so a metric
+  that moves replaces its verdict instead of writing a second one beside it.
+* `kwdagger:` node artifacts live in `<output>/_kwdagger`, shared across card
+  versions, so editing a card no longer recomputes the nodes it did not change.
+  `<run>/kwdagger` links there for consumers that read a run's artifacts.
 * An unchanged card reuses its run directory instead of stamping a new one.
 * A relative pipeline path in a card resolves against the card.
 * The tmux queue is named after the run directory rather than `schedule-eval`.

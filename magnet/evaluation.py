@@ -114,7 +114,7 @@ def _run_one(
     evaluation: 'EvaluationTask', claim_results_path: ub.Path
 ) -> Tuple[str, ub.Path, str, Dict[str, Any]]:
     status, _ = evaluation.execute()
-    execution_hash = evaluation._execution_hash
+    execution_hash = evaluation.cell_id
     resolved_symbols = evaluation.log['symbols']
     results_fpath = claim_results_path / execution_hash / 'verdict.json'
     results_fpath.parent.ensuredir()
@@ -333,27 +333,18 @@ class EvaluationCard:
 
             if processor.result_node:
                 # The DAG is authoritative: each instance of the result node is
-                # one cell of the card, evaluated against what that instance
-                # computed.
+                # one cell of the card, evaluated against what it computed.
                 cells = processor.collect_result_cells()
 
                 for cell in cells:
-                    # Coordinates bind as ordinary symbols so each cell hashes
-                    # -- and so writes its verdict -- separately.
-                    cell_symbols = dict(self.symbols)
-                    for name, value in cell['coords'].items():
-                        if name in cell_symbols:
-                            raise ValueError(
-                                f'result node parameter {name!r} collides '
-                                f'with a card symbol of the same name'
-                            )
-                        cell_symbols[name] = {'value': value}
-                    cell_symbols.update({
-                        name: {'value': value}
-                        for name, value in cell['results'].items()
-                    })
+                    cell_symbols, measured = _fill_declared_symbols(
+                        self.symbols, cell['results'])
                     self.evaluations.extend(self.dispatch(
-                        Symbols.decompose_symbol_defs(cell_symbols)))
+                        Symbols.decompose_symbol_defs(cell_symbols),
+                        results=cell['results'],
+                        cell_key=cell['key'],
+                        measured=measured,
+                    ))
 
                 with safer.open(
                     card_output_path / 'result_cells.json',
@@ -363,10 +354,13 @@ class EvaluationCard:
                     json.dump(cells, f, indent=2, ensure_ascii=False)
                     f.write('\n')
 
+            _link_dag_root(card_output_path, self.kwdagger_dpath)
+
         elif self.has_pipeline:
-            # Implicit pipeline definition needs parsing
+            # The old route keeps a per-run root: it finds its results by
+            # globbing, so a shared root would show it other card versions'.
             pipeline_runs = GenericPipelineProcessor(
-                self.pipeline, root_dpath=self.kwdagger_dpath
+                self.pipeline, root_dpath=card_output_path / 'kwdagger'
             ).collect_symbols()
 
             for run in pipeline_runs:
@@ -457,10 +451,17 @@ class EvaluationCard:
         self.claim.status = card_result
         return card_result
     def dispatch(
-        self, flattened_sweep: List['Symbols']
+        self,
+        flattened_sweep: List['Symbols'],
+        results: Dict[str, Any] | None = None,
+        cell_key: str | None = None,
+        measured: set | None = None,
     ) -> List['EvaluationTask']:
         return [
-            EvaluationTask(Claim({'python': self.claim.claim}), symbols)
+            EvaluationTask(
+                Claim({'python': self.claim.claim}), symbols,
+                results=results, cell_key=cell_key, measured=measured,
+            )
             for symbols in flattened_sweep
         ]
 
@@ -526,9 +527,19 @@ class EvaluationTask:
     Singular submission from an Evaluation Card
     """
 
-    def __init__(self, claim: 'Claim', symbols: 'Symbols') -> None:
+    def __init__(
+        self,
+        claim: 'Claim',
+        symbols: 'Symbols',
+        results: Dict[str, Any] | None = None,
+        cell_key: str | None = None,
+        measured: set | None = None,
+    ) -> None:
         self.claim = claim
         self.symbols = symbols
+        self.results = Results(results or {})
+        self.cell_key = cell_key
+        self.measured = measured or set()
         self.output_msg = ''
         self.log: Dict[str, Any] = {}
 
@@ -538,7 +549,16 @@ class EvaluationTask:
         #           ...
         #           zn -> an -> resn
         # make sure x,y are done once / before sweep
-        self.result, self.output_msg = self.claim.evaluate(self.symbols())
+        context = self.symbols()
+        for name, value in self.results.bind().items():
+            if name in context:
+                raise ValueError(
+                    f'symbol {name!r} collides with a pipeline result of the '
+                    f'same name; rename the symbol'
+                )
+            context[name] = value
+
+        self.result, self.output_msg = self.claim.evaluate(context)
         self.record_run()
         return self.result, self.output_msg
 
@@ -550,10 +570,161 @@ class EvaluationTask:
             'symbols': self.symbols.simple_view(),
             'timestamp': completion_time,
         }
+        if self.cell_key:
+            self.log['cell'] = self.cell_key
+        if self.results.accessed:
+            self.log['consumed'] = sorted(self.results.accessed)
+
+    @property
+    def cell_id(self) -> str:
+        """
+        Directory name for this cell's verdict.
+
+        Only has to be unique and stable; nothing reads it back by name.
+        """
+        if self.cell_key is None:
+            return self._execution_hash
+        return f'{self.cell_key}_{self._execution_hash}'
 
     @property
     def _execution_hash(self) -> str:
-        return ub.hash_data(self.symbols.simple_view())[:12]
+        view = self.symbols.simple_view()
+        # What the card fixed, not what the run measured: a cell that reports a
+        # different number is the same cell, and replaces its own verdict.
+        view = {k: v for k, v in view.items() if k not in self.measured}
+        return ub.hash_data(view)[:12]
+
+
+class Results:
+    """
+    Pipeline results addressed by their qualified names.
+
+    kwdagger's convention is a flat dict of ``metrics.<node>.<name>`` keys.
+    Those are not Python identifiers, so a claim cannot name them directly;
+    this exposes each dotted level as an attribute instead. Reads are
+    recorded, so a verdict can say which values its claim consumed.
+
+    Example:
+        >>> from magnet.evaluation import Results
+        >>> results = Results({'metrics.compare.gap': 0.04,
+        ...                    'metrics.compare.threshold': 0.1})
+        >>> bound = results.bind()
+        >>> bound['metrics'].compare.gap
+        0.04
+        >>> sorted(results.accessed)
+        ['metrics.compare.gap']
+        >>> bound['metrics'].compare.missing
+        Traceback (most recent call last):
+            ...
+        AttributeError: no 'missing' under 'metrics.compare'; available: ...
+    """
+
+    def __init__(
+        self,
+        flat: Dict[str, Any],
+        prefix: str = '',
+        accessed: set | None = None,
+    ) -> None:
+        self._flat = dict(flat)
+        self._prefix = prefix
+        self._accessed = set() if accessed is None else accessed
+
+    @property
+    def accessed(self) -> set:
+        return self._accessed
+
+    def bind(self) -> Dict[str, Any]:
+        """Top-level names to inject into a claim's namespace."""
+        bound = {}
+        for key in self._flat:
+            root = key.split('.', 1)[0]
+            if root in self._flat:
+                bound[root] = self._flat[root]
+            else:
+                bound[root] = Results(self._flat, f'{root}.', self._accessed)
+        return bound
+
+    def as_dict(self) -> Dict[str, Any]:
+        """
+        The leaf values at this level, unqualified.
+
+        For a claim that would rather work in bare names::
+
+            globals().update(metrics.compare.as_dict())
+        """
+        depth = self._prefix.count('.') + 1
+        return {
+            key.split('.')[depth]: value
+            for key, value in self._flat.items()
+            if key.startswith(self._prefix) and key.count('.') == depth
+        }
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith('_'):
+            # Pickle probes __getstate__ and friends before __init__ has run,
+            # so answering them from self._flat would recurse.
+            raise AttributeError(name)
+        key = f'{self._prefix}{name}'
+        if key in self._flat:
+            self._accessed.add(key)
+            return self._flat[key]
+        deeper = f'{key}.'
+        if any(k.startswith(deeper) for k in self._flat):
+            return Results(self._flat, deeper, self._accessed)
+        available = sorted(
+            k[len(self._prefix):].split('.')[0]
+            for k in self._flat
+            if k.startswith(self._prefix)
+        )
+        raise AttributeError(
+            f'no {name!r} under {self._prefix.rstrip(".")!r}; '
+            f'available: {available}'
+        )
+
+    def __repr__(self) -> str:
+        return f'<Results {self._prefix or "/"}>'
+
+
+def _fill_declared_symbols(
+    symbols: Dict[str, Any], results: Dict[str, Any]
+) -> Tuple[Dict[str, Any], set]:
+    """
+    Give a declared-but-unresolved symbol the result of the same name.
+
+    A card that defines a metric declares the symbol and leaves it to the
+    pipeline to supply. Naming it is how the card opts in; everything else the
+    node produced stays behind ``metrics.``.
+
+    Returns:
+        Tuple[Dict[str, Any], set]: the symbols, and the names filled in.
+    """
+    filled = set()
+    out = {}
+    for name, spec in symbols.items():
+        spec = dict(spec)
+        if not {'value', 'sweep', 'python'} & set(spec):
+            for key, value in results.items():
+                if key.rsplit('.', 1)[-1] == name:
+                    spec['value'] = value
+                    filled.add(name)
+                    break
+        out[name] = spec
+    return out, filled
+
+
+def _link_dag_root(card_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
+    """
+    Point ``<run>/kwdagger`` at the shared DAG root.
+
+    Consumers glob that path for a run's node artifacts and figures. The root
+    moved out of the run directory so nodes survive a card edit; the link keeps
+    those consumers working.
+    """
+    link = card_output_path / 'kwdagger'
+    try:
+        ub.symlink(kwdagger_dpath, link, overwrite=True)
+    except OSError as ex:
+        logger.warning(f'could not link {link} to the DAG root: {ex}')
 
 
 def _plain_data(data: Any) -> Any:

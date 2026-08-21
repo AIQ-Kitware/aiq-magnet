@@ -48,12 +48,13 @@ def test_collect_result_cells_requires_a_declaration():
 
 
 class _FakeNode:
-    def __init__(self, name, dpath, config=None):
+    def __init__(self, name, dpath, config=None, process_id=None):
         self.name = name
         self.final_node_dpath = ub.Path(dpath)
         self.out_paths = {'o': 'out.json'}
         self.primary_out_key = 'o'
         self.config = config or {}
+        self.process_id = process_id or f'{name}_id_{ub.Path(dpath).name}'
 
 
 class _FakeDag:
@@ -97,9 +98,27 @@ def test_a_cell_carries_its_results_and_its_artifact():
     cells = processor.collect_result_cells()
 
     assert len(cells) == 1
-    assert cells[0]['results'] == {'mae': 0.03}
-    assert cells[0]['coords'] == {}
+    assert cells[0]['results'] == {'metrics.summary.mae': 0.03}
+    assert cells[0]['key'] == 'summary_id_abc'
     assert cells[0]['artifact'] == str(artifact)
+
+
+def test_a_cell_is_identified_by_the_node_that_produced_it():
+    # The key is the instance's own identity, not something derived from what
+    # else happened to be scheduled. A card run one cell at a time gets the
+    # same key it would as part of a sweep.
+    dpath = _fresh('result_single')
+    _write(dpath / 'summary' / 'only', {'mae': 0.05})
+
+    processor = _processor_with_dag(
+        {'summary_id_only': _FakeNode(
+            'summary', dpath / 'summary' / 'only', {'dataset': 'one'})},
+        root_dpath=dpath,
+    )
+    cells = processor.collect_result_cells()
+
+    assert [cell['key'] for cell in cells] == ['summary_id_only']
+    assert cells[0]['params'] == {'dataset': 'one'}
 
 
 def test_a_fanned_out_result_node_yields_one_cell_each():
@@ -123,10 +142,10 @@ def test_a_fanned_out_result_node_yields_one_cell_each():
     cells = processor.collect_result_cells()
 
     assert len(cells) == 2
-    # Only the parameter that varies is a coordinate. `workers` is shared, so
-    # it describes the run rather than distinguishing a cell.
-    assert sorted(cell['coords']['dataset'] for cell in cells) == ['one', 'two']
-    assert all(set(cell['coords']) == {'dataset'} for cell in cells)
+    assert sorted(cell['key'] for cell in cells) == [
+        'summary_id_a', 'summary_id_b']
+    assert sorted(cell['results']['metrics.summary.mae'] for cell in cells) == [
+        0.01, 0.02]
 
 
 def test_each_instance_is_asked_for_its_own_artifact():
@@ -144,7 +163,7 @@ def test_each_instance_is_asked_for_its_own_artifact():
     cells = processor.collect_result_cells()
 
     assert len(cells) == 1
-    assert cells[0]['results'] == {'mae': 0.01}
+    assert cells[0]['results'] == {'metrics.summary.mae': 0.01}
 
 
 def test_unknown_result_node_names_the_available_ones():

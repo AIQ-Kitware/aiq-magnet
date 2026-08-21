@@ -32,7 +32,8 @@ links:
 
 claim:
   python: |
-    assert abs(comp_score - base_score) < threshold, f"{comp_model} score ({comp_score:.2f}) exceeds consistency bound on {base_model} ({base_score:.2f})"
+    c = metrics.compare
+    assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
 kwdagger:
   pipeline: 'magnet.examples.llama_consistency.pipelines.llama_pipeline()'

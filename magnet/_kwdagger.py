@@ -6,6 +6,7 @@ Everything that knows about DAGs, schedules and queues lives here, so
 """
 import json
 import os
+import warnings
 from typing import Any, Dict, List, Tuple
 
 import ubelt as ub
@@ -105,8 +106,9 @@ class GenericPipelineProcessor:
     """
     Handler for yaml-based pipeline specification
 
-    NOTE:
-        *possibly merge with KWDaggerProcessor*
+    Soft-deprecated: prefer a ``kwdagger:`` block with a ``result_node``.
+    Behaviour here is frozen -- own per-run root, results globbed and bound as
+    bare names -- because most cards still use it.
 
     Example:
         >>> from magnet._kwdagger import GenericPipelineProcessor
@@ -156,6 +158,13 @@ class GenericPipelineProcessor:
     def __init__(
         self, pipeline_def: Dict[str, Any], root_dpath: ub.Path
     ) -> None:
+        warnings.warn(
+            "a card's `pipeline:` block is soft-deprecated; declare a "
+            '`kwdagger:` block with a `result_node` instead. The old route '
+            'keeps working unchanged.',
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.pipeline = pipeline_def
         self.root_dpath = root_dpath
         self.dag = None
@@ -336,14 +345,19 @@ class KWDaggerProcessor:
         """
         Read the result node's output for each of its configured instances.
 
-        One instance is one cell of the card. Each is asked where its own
-        artifact is; globbing the node directory can return an earlier card
-        version's artifact, since the DAG root is shared.
+        One instance is one cell, identified by its kwdagger ``process_id``:
+        a property of the computation, so it is stable across runs and does
+        not depend on what else was scheduled alongside it. Each instance is
+        asked where its own artifact is, since the shared DAG root means
+        globbing the node directory can return an older card version's.
+
+        Results are qualified as ``metrics.<node>.<name>`` -- kwdagger's
+        convention -- so a pipeline value cannot collide with a card symbol.
 
         Returns:
-            List[Dict[str, Any]]: per instance, the parameters that
-                distinguish it (``coords``), its ``results``, and the
-                ``artifact`` they were read from.
+            List[Dict[str, Any]]: per instance, its ``key``, the node's own
+                resolved ``params``, its ``results``, and the ``artifact``
+                they were read from.
 
         Raises:
             ValueError: if no ``result_node`` was declared, or it does not name
@@ -370,11 +384,6 @@ class KWDaggerProcessor:
                 f'pipeline; available: {available}'
             )
 
-        varied = ub.varied_values(
-            [dict(node.config) for node in instances],
-            min_variations=1, default=None)
-        coord_keys = sorted(varied)
-
         cells = []
         for node in instances:
             fpath = (
@@ -386,11 +395,15 @@ class KWDaggerProcessor:
                     f'the pipeline likely failed upstream'
                 )
             payload = json.loads(fpath.read_text())
+            # A node writes its values at the top level; `result` is the older
+            # nesting, still read so existing nodes keep working.
+            values = payload.get('result', payload)
             cells.append({
-                'coords': {key: node.config[key] for key in coord_keys},
+                'key': node.process_id,
+                'params': dict(node.config),
                 'results': {
-                    name: value
-                    for name, value in payload.items()
+                    f'metrics.{self.result_node}.{name}': value
+                    for name, value in values.items()
                     if not name.startswith('_')
                 },
                 'artifact': str(fpath),

@@ -63,13 +63,22 @@ def card_factory(tmp_path, monkeypatch):
                 'url': 'https://github.com/AIQ-Kitware/aiq-magnet',
                 'type': 'software',
             }],
-            'claim': {'python': 'assert doubled == seed * 2'},
-            'pipeline': {
-                'demo_node': {
-                    'executable': f'{sys.executable} {node_fpath}',
-                    'algo_params': {'seed': list(seeds)},
-                    'out_paths': {'results_fpath': 'results.json'},
+            'claim': {
+                'python': 'assert metrics.demo_node.doubled '
+                          '== metrics.demo_node.seed * 2',
+            },
+            'kwdagger': {
+                'result_node': 'demo_node',
+                'pipeline': {
+                    'nodes': {
+                        'demo_node': {
+                            'executable': f'{sys.executable} {node_fpath}',
+                            'algo_params': {'seed': 1},
+                            'out_paths': {'results_fpath': 'results.json'},
+                        },
+                    },
                 },
+                'matrix': {'demo_node.seed': list(seeds)},
             },
         }
         stem = '_'.join(str(seed) for seed in seeds)
@@ -91,7 +100,8 @@ def _artifacts(output_dpath):
         Dict[str, Dict[ub.Path, float]]: node id -> artifact path -> mtime
     """
     found = {}
-    for fpath in sorted(ub.Path(output_dpath).glob('**/results.json')):
+    root = ub.Path(output_dpath) / '_kwdagger'
+    for fpath in sorted(root.glob('**/results.json')):
         found.setdefault(fpath.parent.name, {})[fpath] = fpath.stat().st_mtime
     return found
 
