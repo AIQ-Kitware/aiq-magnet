@@ -327,6 +327,8 @@ class KWDaggerProcessor:
         self.root_dpath = root_dpath
         self.results = []
         self.symbols = []
+        self.queue = None
+        self.incomplete = []
 
     def dispatch(
         self, backend: str | None = None, skip_existing: bool = True,
@@ -345,7 +347,7 @@ class KWDaggerProcessor:
             **kwargs,
         )
 
-        self.dag, queue = build_schedule(kwd_config)
+        self.dag, self.queue = build_schedule(kwd_config)
 
     def collect_result_cells(self) -> List[Dict[str, Any]]:
         """
@@ -399,7 +401,7 @@ class KWDaggerProcessor:
                 node.final_node_dpath / node.out_paths[node.primary_out_key]
             )
             if not fpath.exists():
-                missing.append(fpath)
+                missing.append(self._instance_status(node, fpath))
                 continue
             payload = json.loads(fpath.read_text())
             # A node writes its values at the top level; `result` is the older
@@ -416,13 +418,43 @@ class KWDaggerProcessor:
                 'artifact': str(fpath),
             })
 
+        self.incomplete = missing
         if missing:
+            counts = ub.dict_hist(entry['status'] for entry in missing)
             logger.warning(
-                f'{len(missing)} of {len(instances)} {self.result_node!r} '
-                f'instances produced nothing; reporting the {len(cells)} that '
-                f'did. First: {missing[0]}'
+                f'{len(cells)} of {len(instances)} {self.result_node!r} '
+                f'instances have a result; the rest: {counts}. '
+                f'First: {missing[0]["key"]} ({missing[0]["status"]})'
             )
         return cells
+
+    def _instance_status(self, node: Any, expected: Any) -> Dict[str, Any]:
+        """
+        Why an instance has no result: it failed, or it has not run.
+
+        Returns:
+            Dict[str, Any]: its ``key``, a ``status`` of ``failed``,
+                ``pending`` or ``empty``, the exit code if it has one, and the
+                ``expected`` path.
+        """
+        entry = {
+            'key': node.process_id,
+            'status': 'pending',
+            'returncode': None,
+            'expected': str(expected),
+        }
+        for job in getattr(self.queue, 'jobs', None) or []:
+            if getattr(job, 'name', None) != node.process_id:
+                continue
+            stat_fpath = getattr(job, 'stat_fpath', None)
+            if stat_fpath is None or not ub.Path(stat_fpath).exists():
+                break
+            returncode = json.loads(ub.Path(stat_fpath).read_text()).get('ret')
+            entry['returncode'] = returncode
+            # Ran and exited clean, but wrote nothing where the card looks.
+            entry['status'] = 'failed' if returncode else 'empty'
+            break
+        return entry
 
 
 def _resolve_pipeline_path(

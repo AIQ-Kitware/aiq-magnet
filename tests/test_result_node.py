@@ -62,6 +62,17 @@ class _FakeDag:
         self.nodes = nodes
 
 
+class _FakeJob:
+    def __init__(self, name, stat_fpath):
+        self.name = name
+        self.stat_fpath = stat_fpath
+
+
+class _FakeQueue:
+    def __init__(self, jobs):
+        self.jobs = jobs
+
+
 def _processor_with_dag(nodes, root_dpath, result_node='summary'):
     processor = KWDaggerProcessor(
         {
@@ -193,6 +204,7 @@ def test_a_partial_run_reports_the_cells_it_has():
     cells = processor.collect_result_cells()
 
     assert [cell['key'] for cell in cells] == ['summary_id_ran']
+    assert [e['key'] for e in processor.incomplete] == ['summary_id_failed']
 
 
 def test_a_run_that_produced_nothing_is_empty_not_an_error():
@@ -202,3 +214,36 @@ def test_a_run_that_produced_nothing_is_empty_not_an_error():
         root_dpath=dpath,
     )
     assert processor.collect_result_cells() == []
+
+
+def test_an_instance_with_no_job_has_not_run():
+    dpath = _fresh('result_pending')
+    processor = _processor_with_dag(
+        {'summary_id_abc': _FakeNode('summary', dpath / 'summary' / 'abc')},
+        root_dpath=dpath,
+    )
+    processor.collect_result_cells()
+
+    entry, = processor.incomplete
+    assert entry['status'] == 'pending'
+    assert entry['returncode'] is None
+    assert entry['expected'].endswith('out.json')
+
+
+@pytest.mark.parametrize('returncode,status', [(3, 'failed'), (0, 'empty')])
+def test_an_instance_that_ran_reports_its_exit_code(
+        tmp_path, returncode, status):
+    dpath = _fresh('result_exit')
+    stat_fpath = ub.Path(tmp_path) / 'job.stat'
+    stat_fpath.write_text(json.dumps({'ret': returncode, 'name': 'x'}))
+
+    processor = _processor_with_dag(
+        {'summary_id_abc': _FakeNode('summary', dpath / 'summary' / 'abc')},
+        root_dpath=dpath,
+    )
+    processor.queue = _FakeQueue([_FakeJob('summary_id_abc', stat_fpath)])
+    processor.collect_result_cells()
+
+    entry, = processor.incomplete
+    assert entry['status'] == status
+    assert entry['returncode'] == returncode

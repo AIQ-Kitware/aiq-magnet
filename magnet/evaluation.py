@@ -359,6 +359,16 @@ class EvaluationCard:
                 json.dump(cells, f, indent=2, ensure_ascii=False)
                 f.write('\n')
 
+            if processor.incomplete:
+                with safer.open(
+                    card_output_path / 'incomplete_cells.json',
+                    'w',
+                    temp_file=SAFER_USE_TEMPFILE,
+                ) as f:
+                    json.dump(
+                        processor.incomplete, f, indent=2, ensure_ascii=False)
+                    f.write('\n')
+
             _link_dag_root(card_output_path, self.kwdagger_dpath)
 
         elif self.has_pipeline:

@@ -15,7 +15,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `define_metric` symbol is supplied.
 * A verdict records the `cell` it belongs to and the results it `consumed`.
 * A card reports the cells its run computed. A result node instance that
-  produced nothing is skipped with a warning rather than failing the card.
+  produced nothing is skipped rather than failing the card, and recorded in
+  `incomplete_cells.json` as `failed` (with its exit code), `pending`, or
+  `empty`.
 * The queue backend is selectable via `--queue_backend` and defaults to tmux.
 
 ### Deprecated
