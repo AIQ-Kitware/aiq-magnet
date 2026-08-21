@@ -79,6 +79,18 @@ class EvaluationConfig(kwconf.Config):
         help='Joblib backend used when --jobs is not 1.',
     )
 
+    params: str | None = kwconf.Value(
+        None,
+        parser=str,
+        help=(
+            "YAML/JSON merged into the card's backend block, or a path to a "
+            'file of it. Same language as `kwdagger schedule --params`, so a '
+            "card's grid is a default an evaluator overrides rather than "
+            'something to fork the card over. e.g. --params '
+            '"matrix: {predict.model: [a, b]}"'
+        ),
+    )
+
     queue_backend: str | None = kwconf.Value(
         None,
         parser=str,
@@ -269,6 +281,47 @@ class EvaluationCard:
                     self.symbols[key]['sweep'] = value
                 else:
                     self.symbols[key]['sweep'] = [value]
+
+    def apply_params(self, params: Any) -> None:
+        """
+        Merge a params blob into the card's backend block.
+
+        A card's matrix is the default grid, not the card's identity: the same
+        card is what runs against models a team has not seen. This is
+        ``kwdagger schedule --params`` addressed at a card, so the two are
+        specified the same way.
+
+        Merged rather than replaced, key by key, so one axis can be swapped
+        without restating the grid. The merged block goes into
+        ``original_card``, so the run directory records the card that ran and
+        a different grid hashes to a different run.
+
+        Example:
+            >>> from magnet.evaluation import EvaluationCard
+            >>> from importlib.resources import files
+            >>> card_path = files('magnet') / 'cards' / 'llama_kwdagger.yaml'
+            >>> card = EvaluationCard(card_path, './results')
+            >>> card.apply_params('matrix: {llama_predict.base_model: [qwen]}')
+            >>> card.kwdagger['matrix']['llama_predict.base_model']
+            ['qwen']
+            >>> # the axes it did not name are untouched
+            >>> len(card.kwdagger['matrix']['llama_predict.comp_model'])
+            6
+        """
+        params = _plain_data(kwutil.Yaml.coerce(params))
+        if not params:
+            return
+
+        key = 'kwdagger' if self.has_kwdagger else 'pipeline'
+        if not (self.has_kwdagger or self.has_pipeline):
+            raise ValueError('--params needs a card with a pipeline to run')
+
+        merged = _deep_merge(self.original_card[key], params)
+        self.original_card[key] = merged
+        if self.has_kwdagger:
+            self.kwdagger = _resolve_pipeline_path(merged, self.card_dpath)
+        else:
+            self.pipeline = merged
 
     @property
     def kwdagger_dpath(self) -> Any:
@@ -698,6 +751,27 @@ class Results:
 
     def __repr__(self) -> str:
         return f'<Results {self._prefix or "/"}>'
+
+
+def _deep_merge(base: Any, update: Any) -> Any:
+    """
+    Merge nested mappings, with ``update`` winning at the leaves.
+
+    A list replaces a list: an axis of a grid is stated whole, so appending
+    would make ``--params`` unable to narrow one.
+
+    Example:
+        >>> from magnet.evaluation import _deep_merge
+        >>> base = {'matrix': {'a': [1, 2], 'b': [3]}, 'result_node': 'n'}
+        >>> _deep_merge(base, {'matrix': {'a': [9]}})
+        {'matrix': {'a': [9], 'b': [3]}, 'result_node': 'n'}
+    """
+    if not isinstance(base, dict) or not isinstance(update, dict):
+        return update
+    merged = dict(base)
+    for key, value in update.items():
+        merged[key] = _deep_merge(base[key], value) if key in base else value
+    return merged
 
 
 def _fill_declared_symbols(
@@ -1253,6 +1327,8 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
     card = EvaluationCard(args.path, args.output_path, validate=validate)
     if args.override is not None:
         card.replace(args.override)
+    if args.params is not None:
+        card.apply_params(args.params)
 
     if args.queue_backend:
         # One source of truth: the resolver reads this, and so does any nested

@@ -1,0 +1,119 @@
+"""
+A card's grid is a default an evaluator overrides.
+
+``--params`` speaks the same language as ``kwdagger schedule --params``, so one
+card runs against models it does not name rather than being forked per grid.
+"""
+
+import textwrap
+
+import pytest
+import ubelt as ub
+import yaml
+
+from magnet.evaluation import EvaluationCard, main
+
+SCRIPT = """
+import json, sys, pathlib
+args = dict(a.lstrip('-').split('=', 1) for a in sys.argv[1:])
+out = pathlib.Path(args['results_fpath'])
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text(json.dumps({'score': float(args['seed']) / 10}))
+"""
+
+
+@pytest.fixture
+def card_fpath(tmp_path, monkeypatch):
+    monkeypatch.setenv('MAGNET_QUEUE_BACKEND', 'serial')
+    dpath = ub.Path(tmp_path)
+    script = dpath / 'emit.py'
+    script.write_text(textwrap.dedent(SCRIPT))
+    fpath = dpath / 'card.yaml'
+    fpath.write_text(yaml.safe_dump({
+        'title': 'probe',
+        'description': 'probe',
+        'version': '1.0',
+        'organizations': ['Kitware'],
+        'submitter': {'name': 't', 'email': 't@example.com'},
+        'links': [],
+        'tags': ['test'],
+        'claim': {'python': 'assert metrics.emit.score < 100'},
+        'kwdagger': {
+            'result_node': 'emit',
+            'pipeline': {'nodes': {'emit': {
+                'executable': f'python {script}',
+                'algo_params': {'seed': 1},
+                'out_paths': {'results_fpath': 'results.json'},
+            }}},
+            'matrix': {'emit.seed': [1, 2]},
+        },
+    }, sort_keys=False))
+    return fpath
+
+
+def _scores(card):
+    return sorted(
+        e.results.bind()['metrics'].emit.score for e in card.evaluations)
+
+
+def test_params_replaces_an_axis_of_the_grid(card_fpath, tmp_path):
+    card = EvaluationCard(card_fpath, ub.Path(tmp_path) / 'out')
+    card.apply_params('matrix: {emit.seed: [7, 8, 9]}')
+    card.evaluate()
+
+    assert _scores(card) == [0.7, 0.8, 0.9]
+
+
+def test_params_leaves_the_rest_of_the_block_alone(card_fpath, tmp_path):
+    card = EvaluationCard(card_fpath, ub.Path(tmp_path) / 'out')
+    card.apply_params('matrix: {emit.seed: [7]}')
+
+    assert card.kwdagger['result_node'] == 'emit'
+    assert 'nodes' in card.kwdagger['pipeline']
+
+
+def test_params_may_be_a_file(card_fpath, tmp_path):
+    params_fpath = ub.Path(tmp_path) / 'grid.yaml'
+    params_fpath.write_text('matrix: {emit.seed: [7]}')
+
+    card = EvaluationCard(card_fpath, ub.Path(tmp_path) / 'out')
+    card.apply_params(str(params_fpath))
+    card.evaluate()
+
+    assert _scores(card) == [0.7]
+
+
+def test_the_run_records_the_grid_that_ran(card_fpath, tmp_path):
+    # The provenance the derive-a-card scripts were written to get: the exact
+    # document that produced these results, beside them.
+    output_path = ub.Path(tmp_path) / 'out'
+    card = EvaluationCard(card_fpath, output_path)
+    card.apply_params('matrix: {emit.seed: [7]}')
+    card.evaluate()
+
+    written = yaml.safe_load(
+        (output_path / card._run_hash / 'card.yaml').read_text())
+    assert written['kwdagger']['matrix']['emit.seed'] == [7]
+
+
+def test_a_different_grid_is_a_different_run(card_fpath, tmp_path):
+    output_path = ub.Path(tmp_path) / 'out'
+
+    first = EvaluationCard(card_fpath, output_path)
+    first.apply_params('matrix: {emit.seed: [7]}')
+    second = EvaluationCard(card_fpath, output_path)
+    second.apply_params('matrix: {emit.seed: [8]}')
+
+    assert first._card_hash != second._card_hash
+
+
+def test_params_reaches_the_cli(card_fpath, tmp_path):
+    output_path = ub.Path(tmp_path) / 'out'
+    main(argv=[
+        str(card_fpath),
+        '--output_path', str(output_path),
+        '--params', 'matrix: {emit.seed: [7]}',
+    ])
+
+    artifacts = sorted((output_path / '_kwdagger' / 'emit').glob('*/results.json'))
+    assert len(artifacts) == 1

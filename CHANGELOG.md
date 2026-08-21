@@ -18,6 +18,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   produced nothing is skipped rather than failing the card, and recorded in
   `incomplete_cells.json` as `failed` (with its exit code), `pending`, or
   `empty`.
+* `--params` merges a YAML/JSON blob (or a file of one) into a card's
+  backend block, in the same language as `kwdagger schedule --params`. A
+  card's matrix is a default grid an evaluator overrides, so running a card
+  against models it does not name no longer means forking the card. The
+  merged card is written to the run directory.
 * The queue backend is selectable via `--queue_backend` and defaults to tmux.
 
 ### Deprecated
