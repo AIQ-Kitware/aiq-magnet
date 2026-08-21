@@ -1,17 +1,105 @@
 """
-Bridge between an evaluation card and a kwdagger pipeline.
+Running a card's pipeline on kwdagger.
 
-A card can specify its pipeline in two ways: a ``pipeline:`` block, which
-:class:`GenericPipelineProcessor` turns into a kwdagger DAG, or a ``kwdagger:``
-block, which :class:`KWDaggerProcessor` passes through as a schedule spec.
+Everything that knows about DAGs, schedules and queues lives here, so
+:mod:`magnet.evaluation` deals in cards, symbols and claims.
 """
 import json
+import os
 from typing import Any, Dict, List, Tuple
 
 import ubelt as ub
 from kwdagger import Pipeline, ProcessNode
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
+from loguru import logger
 
+__all__ = [
+    'GenericPipelineProcessor',
+    'KWDaggerProcessor',
+    'resolve_queue_backend',
+]
+
+
+def resolve_queue_backend(requested: str | None = None) -> str:
+    """
+    Choose the cmd_queue backend a card's DAG is scheduled onto.
+
+    Args:
+        requested (str | None): an explicit choice. ``None`` reads
+            ``MAGNET_QUEUE_BACKEND``, then falls back to ``'tmux'``.
+
+    Returns:
+        str: a backend cmd_queue reports as available.
+
+    Defaults to ``tmux`` even at size 1: the same jobs run in the same order as
+    ``serial``, but with a live monitor and a separate log per job rather than
+    one interleaved stream. ``serial`` is right for CI and pytest, so an
+    unavailable backend degrades to it with a notice rather than raising.
+
+    Example:
+        >>> from magnet._kwdagger import resolve_queue_backend
+        >>> resolve_queue_backend('serial')
+        'serial'
+    """
+    import cmd_queue
+
+    if requested is None:
+        requested = os.environ.get('MAGNET_QUEUE_BACKEND') or 'tmux'
+    requested = requested.strip()
+
+    try:
+        available = set(cmd_queue.Queue.available_backends())
+    except Exception:
+        return requested
+
+    if requested in available:
+        return requested
+    if requested != 'serial':
+        logger.warning(
+            f'queue backend {requested!r} is not available '
+            f'(have: {sorted(available)}); falling back to serial. '
+            'Install tmux for a live monitor and per-job logs.'
+        )
+    return 'serial'
+
+def _tmux_workers() -> int | None:
+    """How many queue workers may run at once, or None for the default.
+
+    This bounds GPU contention. A LeasedProcessNode holds its answerer while it
+    waits for the extractor it also needs, so if enough shards start at once to
+    claim every GPU, none can ever get the extractor and none will release.
+    Observed on a 4-GPU host: four answerers on GPUs 0-3, the shared extractor
+    unplaceable, eight leases queued behind it, zero rows produced in an hour.
+
+    Concurrency must stay at or below (GPUs - 1) for a cohort with a shared
+    single-GPU extractor. MAGNET cannot know the GPU count, so the runner sets
+    this.
+    """
+    raw = os.environ.get('MAGNET_TMUX_WORKERS', '').strip()
+    if not raw:
+        return None
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return None
+
+def _queue_name_for(root_dpath) -> str:
+    """A tmux queue name that says which run these sessions belong to.
+
+    cmd_queue matches sessions on this name to decide what counts as a
+    conflict, and every card otherwise falls back to the same literal. Two
+    runs of the same card still share a name, which is a real conflict.
+    """
+    import re
+
+    try:
+        parts = ub.Path(root_dpath).absolute().parts
+        idx = len(parts) - 1 - parts[::-1].index('evaluation_runs')
+        name = parts[idx - 1]
+    except (ValueError, IndexError, TypeError):
+        return 'schedule-eval'
+    name = re.sub(r'[^A-Za-z0-9_.-]', '_', str(name))
+    return f'schedule-{name}' if name else 'schedule-eval'
 
 class GenericPipelineProcessor:
     """
@@ -98,15 +186,20 @@ class GenericPipelineProcessor:
         self.dag.build_nx_graphs()
 
     def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
+        self, backend: str | None = None, skip_existing: bool = True,
+        **kwargs: Any
     ) -> None:
         self.define_kwdagger()
+        backend = resolve_queue_backend(backend)
 
         kwdagger_params = {'pipeline': self.dag, 'matrix': self.matrix}
 
         kwd_config = ScheduleEvaluationConfig(
             params=kwdagger_params,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
+            queue_name=_queue_name_for(self.root_dpath),
+            **({'tmux_workers': _tmux_workers()}
+               if _tmux_workers() is not None else {}),
             backend=backend,
             skip_existing=skip_existing,
             run=True,
@@ -127,18 +220,17 @@ class GenericPipelineProcessor:
         )
 
         for symbol_resolution in paths:
-            symbols = json.load(open(symbol_resolution, 'r'))
+            payload = json.load(open(symbol_resolution, 'r'))
             parent_dir = symbol_resolution.parent.stem
-            if 'result' in symbols:
-                # assume all fields exist
-                for symbol in symbols['result']:
-                    # record all sweeps
-                    if parent_dir not in self.symbols:
-                        self.symbols[parent_dir] = {}
-
-                    self.symbols[parent_dir][symbol] = {
-                        'value': symbols['result'][symbol]
-                    }
+            # A node writes its values at the top level; `result` is the older
+            # nesting, still read so existing nodes keep working.
+            values = payload.get('result', payload)
+            for symbol, value in values.items():
+                if symbol.startswith('_'):
+                    continue
+                self.symbols.setdefault(parent_dir, {})[symbol] = {
+                    'value': value
+                }
 
         return self.symbols
 
@@ -157,7 +249,6 @@ class GenericPipelineProcessor:
                 # decompose yaml
                 node_cfg[k] = list(node_cfg[k].keys())
         return node_cfg, matrix
-
 
 class KWDaggerProcessor:
     """
@@ -212,17 +303,27 @@ class KWDaggerProcessor:
     def __init__(
         self, pipeline_def: Dict[str, Any], root_dpath: ub.Path
     ) -> None:
-        self.spec = pipeline_def
+        # ``result_node`` is a MAGNET-level declaration, not something
+        # kwdagger understands, so keep it out of the scheduled spec.
+        self.spec = {
+            k: v for k, v in pipeline_def.items() if k != 'result_node'
+        }
+        self.result_node = pipeline_def.get('result_node')
         self.root_dpath = root_dpath
         self.results = []
         self.symbols = []
 
     def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
+        self, backend: str | None = None, skip_existing: bool = True,
+        **kwargs: Any
     ) -> None:
+        backend = resolve_queue_backend(backend)
         kwd_config = ScheduleEvaluationConfig(
             params=self.spec,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
+            queue_name=_queue_name_for(self.root_dpath),
+            **({'tmux_workers': _tmux_workers()}
+               if _tmux_workers() is not None else {}),
             backend=backend,
             skip_existing=skip_existing,
             run=True,
@@ -231,19 +332,118 @@ class KWDaggerProcessor:
 
         self.dag, queue = build_schedule(kwd_config)
 
-    def collect_results(self) -> Tuple[List[str], List[Any]]:
-        if not self.results:
+    def collect_result_cells(self) -> List[Dict[str, Any]]:
+        """
+        Read the result node's output for each of its configured instances.
+
+        One instance is one cell of the card. Each is asked where its own
+        artifact is; globbing the node directory can return an earlier card
+        version's artifact, since the DAG root is shared.
+
+        Returns:
+            List[Dict[str, Any]]: per instance, the parameters that
+                distinguish it (``coords``), its ``results``, and the
+                ``artifact`` they were read from.
+
+        Raises:
+            ValueError: if no ``result_node`` was declared, or it does not name
+                a node in the pipeline.
+            RuntimeError: if an instance produced no artifact.
+        """
+        if not self.result_node:
+            raise ValueError('card must declare kwdagger.result_node')
+
+        if not getattr(self, 'dag', None):
             self.dispatch()
 
-        # Glob all Claim node json files recursively
-        paths = self.root_dpath.glob('**/verdict.json')
+        # build_schedule returns configured instances keyed by process id;
+        # node.name is the template name the card refers to.
+        instances = [
+            node
+            for node in self.dag.nodes.values()
+            if node.name == self.result_node
+        ]
+        if not instances:
+            available = sorted({node.name for node in self.dag.nodes.values()})
+            raise ValueError(
+                f'result_node {self.result_node!r} is not a node in the '
+                f'pipeline; available: {available}'
+            )
 
-        # Assumes {result: {status: value}} output format
-        for claim_json in paths:
-            claim_result = json.load(open(claim_json, 'r'))
-            if 'result' in claim_result and 'status' in claim_result['result']:
-                self.results.append(claim_result['result']['status'])
-            if 'result' in claim_result and 'symbols' in claim_result['result']:
-                self.symbols.append(claim_result['result']['symbols'])
+        varied = ub.varied_values(
+            [dict(node.config) for node in instances],
+            min_variations=1, default=None)
+        coord_keys = sorted(varied)
 
-        return self.results, self.symbols
+        cells = []
+        for node in instances:
+            fpath = (
+                node.final_node_dpath / node.out_paths[node.primary_out_key]
+            )
+            if not fpath.exists():
+                raise RuntimeError(
+                    f'result node {self.result_node!r} produced no {fpath}; '
+                    f'the pipeline likely failed upstream'
+                )
+            payload = json.loads(fpath.read_text())
+            cells.append({
+                'coords': {key: node.config[key] for key in coord_keys},
+                'results': {
+                    name: value
+                    for name, value in payload.items()
+                    if not name.startswith('_')
+                },
+                'artifact': str(fpath),
+            })
+        return cells
+
+
+def _resolve_pipeline_path(
+    kwdagger_spec: Dict[str, Any], card_dpath: ub.Path
+) -> Dict[str, Any]:
+    """
+    Make a relative pipeline file path mean the same thing from any directory.
+
+    A card may name a pipeline file rather than inline the DAG or name a Python
+    callable. Such a path resolves against the card's directory, matching how
+    the theory block's formalization paths already work.
+
+    Args:
+        kwdagger_spec (Dict[str, Any]): the card's ``kwdagger`` block.
+        card_dpath (ub.Path): the directory holding the card.
+
+    Returns:
+        Dict[str, Any]: the spec, with any relative pipeline path made absolute.
+
+    Example:
+        >>> import ubelt as ub
+        >>> from magnet._kwdagger import _resolve_pipeline_path
+        >>> spec = {'pipeline': 'module.func()'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        'module.func()'
+        >>> spec = {'pipeline': {'nodes': {}}}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        {'nodes': {}}
+        >>> spec = {'pipeline': 'dag.yaml'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        '/cards/dag.yaml'
+        >>> spec = {'pipeline': '/abs/dag.yaml'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        '/abs/dag.yaml'
+    """
+    pipeline = kwdagger_spec.get('pipeline')
+    if not isinstance(pipeline, str):
+        return kwdagger_spec
+    if '::' in pipeline:
+        return kwdagger_spec
+    if pipeline.rsplit('.', 1)[-1].lower() not in {'yaml', 'yml', 'json'}:
+        return kwdagger_spec
+
+    path = ub.Path(pipeline)
+    if not path.is_absolute():
+        path = card_dpath / path
+
+    resolved = dict(kwdagger_spec)
+    resolved['pipeline'] = os.fspath(path)
+    return resolved
+

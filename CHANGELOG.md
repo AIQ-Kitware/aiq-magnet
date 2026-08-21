@@ -5,12 +5,33 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## Unreleased
 
-### Fixed
+### Added
 
-* Accept `depends` as an alias for `depends_on` in symbol dependencies.
+* Cards declare `kwdagger.result_node`: the node whose output is the card's
+  result. Every configured instance of it is one cell, evaluated separately,
+  with the parameters that vary across instances bound as symbols.
+* The queue backend is selectable via `--queue_backend` and defaults to tmux.
+
+### Removed
+
+* A `kwdagger` card must declare `result_node`. The path that rediscovered
+  verdicts by globbing the run tree is gone, along with the node a pipeline had
+  to carry to write them.
 
 ### Changed
 
+* Requires `kwdagger>=0.4.0`.
+* Node artifacts live in `<output>/_kwdagger`, shared across card versions, so
+  editing a card no longer recomputes the nodes it did not change.
+* An unchanged card reuses its run directory instead of stamping a new one.
+* A relative pipeline path in a card resolves against the card.
+* The tmux queue is named after the run directory rather than `schedule-eval`.
+
+### Fixed
+
+* `--override` accepts list and quoted values; both raised `RepresenterError`
+  when the card was written back out.
+* Accept `depends` as an alias for `depends_on` in symbol dependencies.
 * Warn on unrecognized symbol-spec keys.
 
 ## Version 0.0.2 -- Released 2026-05-08

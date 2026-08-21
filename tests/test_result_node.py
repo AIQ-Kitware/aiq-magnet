@@ -1,0 +1,168 @@
+"""
+Tests for the ``kwdagger.result_node`` declaration.
+
+A card that declares a result node is stating which node produces its result.
+MAGNET reads each configured instance's own artifact and evaluates the claim
+once per instance -- one cell of the card each.
+"""
+
+import json
+
+import pytest
+import ubelt as ub
+
+from magnet._kwdagger import KWDaggerProcessor
+
+
+def test_result_node_is_kept_out_of_the_scheduled_spec():
+    # kwdagger does not know about result_node; passing it through would be
+    # rejected by the schedule config.
+    processor = KWDaggerProcessor(
+        {
+            'pipeline': 'some.module.some_pipeline()',
+            'matrix': {'a.b': [1, 2]},
+            'result_node': 'summary',
+        },
+        root_dpath=ub.Path('.'),
+    )
+    assert processor.result_node == 'summary'
+    assert 'result_node' not in processor.spec
+    assert set(processor.spec) == {'pipeline', 'matrix'}
+
+
+def test_absent_result_node_keeps_the_rediscovery_path():
+    processor = KWDaggerProcessor(
+        {'pipeline': 'some.module.some_pipeline()', 'matrix': {}},
+        root_dpath=ub.Path('.'),
+    )
+    assert processor.result_node is None
+
+
+def test_collect_result_cells_requires_a_declaration():
+    processor = KWDaggerProcessor(
+        {'pipeline': 'some.module.some_pipeline()', 'matrix': {}},
+        root_dpath=ub.Path('.'),
+    )
+    with pytest.raises(ValueError, match='result_node'):
+        processor.collect_result_cells()
+
+
+class _FakeNode:
+    def __init__(self, name, dpath, config=None):
+        self.name = name
+        self.final_node_dpath = ub.Path(dpath)
+        self.out_paths = {'o': 'out.json'}
+        self.primary_out_key = 'o'
+        self.config = config or {}
+
+
+class _FakeDag:
+    def __init__(self, nodes):
+        self.nodes = nodes
+
+
+def _processor_with_dag(nodes, root_dpath, result_node='summary'):
+    processor = KWDaggerProcessor(
+        {
+            'pipeline': 'some.module.some_pipeline()',
+            'matrix': {},
+            'result_node': result_node,
+        },
+        root_dpath=root_dpath,
+    )
+    processor.dag = _FakeDag(nodes)
+    return processor
+
+
+def _fresh(name):
+    dpath = ub.Path.appdir(f'magnet/tests/{name}')
+    ub.delete(dpath)
+    return dpath.ensuredir()
+
+
+def _write(dpath, payload):
+    artifact = ub.Path(dpath).ensuredir() / 'out.json'
+    artifact.write_text(json.dumps(payload))
+    return artifact
+
+
+def test_a_cell_carries_its_results_and_its_artifact():
+    dpath = _fresh('result_ok')
+    artifact = _write(dpath / 'summary' / 'abc', {'mae': 0.03, '_hidden': 1})
+
+    processor = _processor_with_dag(
+        {'summary_id_abc': _FakeNode('summary', dpath / 'summary' / 'abc')},
+        root_dpath=dpath,
+    )
+    cells = processor.collect_result_cells()
+
+    assert len(cells) == 1
+    assert cells[0]['results'] == {'mae': 0.03}
+    assert cells[0]['coords'] == {}
+    assert cells[0]['artifact'] == str(artifact)
+
+
+def test_a_fanned_out_result_node_yields_one_cell_each():
+    # Several configured instances is a gather with group_by, or a swept
+    # parameter. Each is one cell of the card, consumed independently.
+    dpath = _fresh('result_fanout')
+    _write(dpath / 'summary' / 'a', {'mae': 0.01})
+    _write(dpath / 'summary' / 'b', {'mae': 0.02})
+
+    processor = _processor_with_dag(
+        {
+            'summary_id_a': _FakeNode(
+                'summary', dpath / 'summary' / 'a',
+                {'dataset': 'one', 'workers': 4}),
+            'summary_id_b': _FakeNode(
+                'summary', dpath / 'summary' / 'b',
+                {'dataset': 'two', 'workers': 4}),
+        },
+        root_dpath=dpath,
+    )
+    cells = processor.collect_result_cells()
+
+    assert len(cells) == 2
+    # Only the parameter that varies is a coordinate. `workers` is shared, so
+    # it describes the run rather than distinguishing a cell.
+    assert sorted(cell['coords']['dataset'] for cell in cells) == ['one', 'two']
+    assert all(set(cell['coords']) == {'dataset'} for cell in cells)
+
+
+def test_each_instance_is_asked_for_its_own_artifact():
+    # The DAG root is shared across card versions, so an earlier version's
+    # artifact can sit beside this one under its own node id. Globbing the
+    # node directory would find both; asking the instance cannot.
+    dpath = _fresh('result_shared_root')
+    _write(dpath / 'summary' / 'mine', {'mae': 0.01})
+    _write(dpath / 'summary' / 'from_an_older_card', {'mae': 0.99})
+
+    processor = _processor_with_dag(
+        {'summary_id_mine': _FakeNode('summary', dpath / 'summary' / 'mine')},
+        root_dpath=dpath,
+    )
+    cells = processor.collect_result_cells()
+
+    assert len(cells) == 1
+    assert cells[0]['results'] == {'mae': 0.01}
+
+
+def test_unknown_result_node_names_the_available_ones():
+    dpath = _fresh('result_unknown')
+    processor = _processor_with_dag(
+        {'other_id_abc': _FakeNode('other', dpath / 'other' / 'abc')},
+        root_dpath=dpath,
+        result_node='summary',
+    )
+    with pytest.raises(ValueError, match="available: \\['other'\\]"):
+        processor.collect_result_cells()
+
+
+def test_missing_artifact_points_at_the_run_directory():
+    dpath = _fresh('result_missing')
+    processor = _processor_with_dag(
+        {'summary_id_abc': _FakeNode('summary', dpath / 'summary' / 'abc')},
+        root_dpath=dpath,
+    )
+    with pytest.raises(RuntimeError, match='produced no'):
+        processor.collect_result_cells()

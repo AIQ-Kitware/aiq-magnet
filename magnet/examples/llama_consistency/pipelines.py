@@ -1,15 +1,19 @@
 """
-Two node pipeline for llama-consistency example card
+The llama-consistency example pipeline.
+
+    llama_predict[base_model, comp_model]   one job per model pair
+        |
+    compare                                 the node the card reads
 """
 
 import kwdagger
 
-from .claim import ConsistencyClaimCLI
+from .compare import ConsistencyCompareCLI
 from .llama_predict import ExampleLlamaEndpointCLI
 
 
 class ExampleLlamaEndpoint(kwdagger.ProcessNode):
-    """Run the HELM results gathering step."""
+    """Gather HELM scores for a pair of models."""
 
     name = 'llama_predict'
     executable = 'python -m magnet.examples.llama_consistency.llama_predict'
@@ -19,29 +23,34 @@ class ExampleLlamaEndpoint(kwdagger.ProcessNode):
         pass
 
 
-class ConsistencyClaim(kwdagger.ProcessNode):
-    """Score predictions against labels and expose metrics for aggregation."""
+class ConsistencyCompare(kwdagger.ProcessNode):
+    """Reduce a pair of scores to their gap."""
 
-    name = 'claim_eval'
-    executable = 'python -m magnet.examples.llama_consistency.claim'
-    params = ConsistencyClaimCLI
+    name = 'compare'
+    executable = 'python -m magnet.examples.llama_consistency.compare'
+    params = ConsistencyCompareCLI
 
     def load_result(self, node_dpath):
         pass
 
 
 def llama_pipeline():
-    """Create the prediction pipeline."""
+    """Create the prediction pipeline.
 
+    Example:
+        >>> from magnet.examples.llama_consistency.pipelines import llama_pipeline
+        >>> dag = llama_pipeline()
+        >>> sorted(dag.node_dict)
+        ['compare', 'llama_predict']
+        >>> assert dag.node_dict['compare'].inputs['scores_fpath'].pred
+    """
     nodes = {
         'llama_predict': ExampleLlamaEndpoint(),
-        'claim_eval': ConsistencyClaim(),
+        'compare': ConsistencyCompare(),
     }
-
     nodes['llama_predict'].outputs['results_fpath'].connect(
-        nodes['claim_eval'].inputs['symbols_fpath']
+        nodes['compare'].inputs['scores_fpath']
     )
-
     dag = kwdagger.Pipeline(list(nodes.values()))
     dag.build_nx_graphs()
     return dag

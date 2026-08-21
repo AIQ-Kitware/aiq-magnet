@@ -69,9 +69,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
     def main(cls, argv=None, **kwargs):
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose=True)
 
-        run_data = {
-            'result': None,
-        }
+        run_data = {}
 
         proc_context = kwutil.ProcessContext(
             name='consistency_example',
@@ -143,16 +141,18 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
 
         # Write comp_score and base_score to results file
 
-        run_data['result'] = {
+        # Flat, because a card reads the primary output's keys directly.
+        # Anything not a result of the run goes under a leading underscore.
+        run_data.update({
             'helm_runs_path': config.helm_runs_path,
             'base_model': config.base_model,
             'base_score': base_score,
             'comp_model': config.comp_model,
             'comp_score': comp_score,
             'threshold': config.threshold,
-        }
+        })
 
-        obj = proc_context.stop()
+        run_data['_process'] = proc_context.stop()
 
         dst_fpath = ub.Path(config.results_fpath)
         dst_fpath.parent.ensuredir()

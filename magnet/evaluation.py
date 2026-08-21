@@ -20,7 +20,11 @@ from rich import print
 
 from magnet.utils.util_logger import setup_logging
 from magnet.schema import EvaluationCardSchema, MetricObjective
-from magnet._kwdagger import GenericPipelineProcessor, KWDaggerProcessor
+from magnet._kwdagger import (
+    GenericPipelineProcessor,
+    KWDaggerProcessor,
+    _resolve_pipeline_path,
+)
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -73,6 +77,18 @@ class EvaluationConfig(kwconf.Config):
         parser=str,
         choices=['loky', 'threading', 'multiprocessing'],
         help='Joblib backend used when --jobs is not 1.',
+    )
+
+    queue_backend: str | None = kwconf.Value(
+        None,
+        parser=str,
+        help=(
+            'cmd_queue backend the card DAG is scheduled onto: tmux, serial, '
+            'slurm, airflow. Defaults to $MAGNET_QUEUE_BACKEND, then tmux, '
+            'falling back to serial when unavailable. Prefer tmux even at '
+            'size 1: same jobs in the same order, but with a live monitor and '
+            'a separate log per job instead of one interleaved stream.'
+        ),
     )
 
     verbose: bool = kwconf.Value(
@@ -181,6 +197,9 @@ class EvaluationCard:
 
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
+        # Paths written inside a card resolve against the card, not the
+        # shell's cwd.
+        self.card_dpath = ub.Path(path).parent
 
         self.title = cfg.get('title', '')
         self.description = cfg.get('description', '')
@@ -194,12 +213,16 @@ class EvaluationCard:
         # explicit kwdagger spec
         self.has_kwdagger = 'kwdagger' in cfg
         self.kwdagger = cfg.get('kwdagger')
+        if self.has_kwdagger:
+            self.kwdagger = _resolve_pipeline_path(
+                self.kwdagger, self.card_dpath)
 
         # populate ProcessNode(s) programmatically
         self.has_pipeline = 'pipeline' in cfg
         self.pipeline = cfg.get('pipeline')
 
         self.evaluations = []
+        self._run_hash_cached: str | None = None
 
     def status(self) -> str:
         """
@@ -225,7 +248,7 @@ class EvaluationCard:
         """
         Handle overrides in symbol field by replacing 'value' entries and appending to sweeps
         """
-        override = kwutil.Yaml.coerce(override_str)
+        override = _plain_data(kwutil.Yaml.coerce(override_str))
 
         for key, value in override.items():
             if key not in self.symbols:
@@ -240,6 +263,20 @@ class EvaluationCard:
                     self.symbols[key]['sweep'] = value
                 else:
                     self.symbols[key]['sweep'] = [value]
+
+    @property
+    def kwdagger_dpath(self) -> Any:
+        """
+        Where the DAG's node artifacts live: ``<output>/_kwdagger``.
+
+        Shared across card versions, so a node keeps its artifacts when an
+        unrelated part of the card changes. Per-run provenance stays under the
+        card-hash directory.
+        """
+        # Underscore-prefixed so it is not mistaken for a run directory
+        # (those are ``<card hash>_<timestamp>``); the collectors already skip
+        # ``_``-prefixed names.
+        return self.output_path / '_kwdagger'
 
     def evaluate(
         self,
@@ -290,23 +327,46 @@ class EvaluationCard:
                 json.dump(raw_symbol_metadata, f, indent=2, ensure_ascii=False)
 
         if self.has_kwdagger:
-            # Explicit kwdagger pipeline defined
-            # Claim node handles symbols outside of EvaluationCard
-            kwdagger_results, symbols = KWDaggerProcessor(
-                self.kwdagger, root_dpath=card_output_path / 'kwdagger'
-            ).collect_results()
+            processor = KWDaggerProcessor(
+                self.kwdagger, root_dpath=self.kwdagger_dpath
+            )
 
-            for sweep in symbols:
-                symbol_with_value = {s: {'value': v} for s, v in sweep.items()}
-                self.symbols.update(symbol_with_value)
-                self.evaluations.extend(
-                    self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
-                )
+            if processor.result_node:
+                # The DAG is authoritative: each instance of the result node is
+                # one cell of the card, evaluated against what that instance
+                # computed.
+                cells = processor.collect_result_cells()
+
+                for cell in cells:
+                    # Coordinates bind as ordinary symbols so each cell hashes
+                    # -- and so writes its verdict -- separately.
+                    cell_symbols = dict(self.symbols)
+                    for name, value in cell['coords'].items():
+                        if name in cell_symbols:
+                            raise ValueError(
+                                f'result node parameter {name!r} collides '
+                                f'with a card symbol of the same name'
+                            )
+                        cell_symbols[name] = {'value': value}
+                    cell_symbols.update({
+                        name: {'value': value}
+                        for name, value in cell['results'].items()
+                    })
+                    self.evaluations.extend(self.dispatch(
+                        Symbols.decompose_symbol_defs(cell_symbols)))
+
+                with safer.open(
+                    card_output_path / 'result_cells.json',
+                    'w',
+                    temp_file=SAFER_USE_TEMPFILE,
+                ) as f:
+                    json.dump(cells, f, indent=2, ensure_ascii=False)
+                    f.write('\n')
 
         elif self.has_pipeline:
             # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
-                self.pipeline, root_dpath=card_output_path / 'kwdagger'
+                self.pipeline, root_dpath=self.kwdagger_dpath
             ).collect_symbols()
 
             for run in pipeline_runs:
@@ -433,11 +493,32 @@ class EvaluationCard:
         logger.info(f'[bold]CARD STATUS:[/bold] {status}')
 
     @property
-    def _run_hash(self) -> str:
-        card_hash = ub.hash_data(self.original_card)[:8]
-        timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
+    def _card_hash(self) -> str:
+        """The card's content; the same card is the same id on any day."""
+        return ub.hash_data(self.original_card)[:8]
 
-        return f'{card_hash}_{timestamp}'
+    @property
+    def _run_hash(self) -> str:
+        """
+        This card's directory: ``<card id>_<when it first ran>``.
+
+        Holds the per-run record; node artifacts live under
+        :attr:`kwdagger_dpath`. An unchanged card reuses the directory it
+        already has. Computed once per instance, since the timestamp would
+        otherwise differ per read.
+        """
+        if self._run_hash_cached is None:
+            existing = [
+                p for p in sorted(self.output_path.glob(f'{self._card_hash}_*'))
+                if p.is_dir()
+            ]
+            if existing:
+                newest = max(existing, key=lambda p: p.stat().st_mtime)
+                self._run_hash_cached = newest.name
+            else:
+                timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
+                self._run_hash_cached = f'{self._card_hash}_{timestamp}'
+        return self._run_hash_cached
 
 
 class EvaluationTask:
@@ -473,6 +554,47 @@ class EvaluationTask:
     @property
     def _execution_hash(self) -> str:
         return ub.hash_data(self.symbols.simple_view())[:12]
+
+
+def _plain_data(data: Any) -> Any:
+    """
+    Rebuild YAML data out of plain dicts, lists and scalars.
+
+    The loader returns round-trip types that carry formatting. Those reach
+    ``original_card`` through an override and then fail in ``yaml.safe_dump``
+    when the run directory's copy of the card is written, with
+    ``RepresenterError: cannot represent an object``. Any list-valued override
+    hit this, so ``--override 'seed: [1, 2]'`` could not run at all.
+
+    Example:
+        >>> import kwutil
+        >>> from magnet.evaluation import _plain_data
+        >>> data = _plain_data(kwutil.Yaml.coerce('seed: [1, 2]'))
+        >>> type(data).__name__, type(data['seed']).__name__
+        ('dict', 'list')
+        >>> import yaml
+        >>> yaml.safe_dump(data)
+        'seed:\\n- 1\\n- 2\\n'
+        >>> quoted = kwutil.Yaml.coerce("cfg: ['a:b=c']")
+        >>> yaml.safe_dump(_plain_data(quoted))
+        'cfg:\\n- a:b=c\\n'
+    """
+    if isinstance(data, dict):
+        return {_plain_data(key): _plain_data(value)
+                for key, value in data.items()}
+    if isinstance(data, (list, tuple)):
+        return [_plain_data(value) for value in data]
+    # Scalars need this too: a quoted string loads as a str subclass that
+    # remembers its quoting style, which safe_dump also refuses.
+    if isinstance(data, str):
+        return str(data)
+    if isinstance(data, bool):
+        return bool(data)
+    if isinstance(data, int):
+        return int(data)
+    if isinstance(data, float):
+        return float(data)
+    return data
 
 
 def _parse_symbol_metadata(symbols_spec: Dict[str, Any]) -> Dict[str, Any]:
@@ -943,6 +1065,12 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
     card = EvaluationCard(args.path, args.output_path, validate=validate)
     if args.override is not None:
         card.replace(args.override)
+
+    if args.queue_backend:
+        # One source of truth: the resolver reads this, and so does any nested
+        # dispatch. Threading a parameter through evaluate() would miss the
+        # dispatch calls that run from collect_result_cells().
+        os.environ['MAGNET_QUEUE_BACKEND'] = args.queue_backend
 
     card.evaluate(
         jobs=args.jobs,
