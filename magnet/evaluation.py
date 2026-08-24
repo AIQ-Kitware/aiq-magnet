@@ -2,6 +2,7 @@ import builtins
 import json
 import os
 import sys
+import warnings
 from collections.abc import Callable
 from datetime import datetime
 from graphlib import TopologicalSorter
@@ -305,6 +306,12 @@ class EvaluationCard:
                 )
 
         elif self.has_pipeline:
+            warnings.warn(
+                "a card's `pipeline:` block is soft-deprecated; declare a "
+                '`kwdagger:` block with a `result_node` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
             # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
                 self.pipeline, root_dpath=card_output_path / 'kwdagger'

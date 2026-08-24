@@ -6,7 +6,6 @@ Everything that knows about DAGs, schedules and queues lives here, so
 """
 import json
 import os
-import warnings
 from typing import Any, Dict, List, Tuple
 
 import ubelt as ub
@@ -76,12 +75,6 @@ class GenericPipelineProcessor:
     def __init__(
         self, pipeline_def: Dict[str, Any], root_dpath: ub.Path
     ) -> None:
-        warnings.warn(
-            "a card's `pipeline:` block is soft-deprecated; declare a "
-            '`kwdagger:` block with a `result_node` instead.',
-            DeprecationWarning,
-            stacklevel=2,
-        )
         self.pipeline = pipeline_def
         self.root_dpath = root_dpath
         self.dag = None
