@@ -392,7 +392,8 @@ Each configured instance of `result_node` becomes one card cell. Its kwdagger
 `process_id` is used as the stable cell identity.
 
 During the migration, `magnet evaluate_legacy` names the historical evaluator and
-`magnet evaluate` remains its compatibility alias. `magnet evaluate_new` is
+`magnet evaluate` remains its compatibility alias. Both reject cards with a
+`kwdagger:` block and point to `magnet evaluate_new`. `magnet evaluate_new` is
 the cleaner kwdagger-only path: execution parameters are passed directly with
 `--params`, `--backend`, and `--workers`, and legacy `pipeline:` computation or
 symbol sweeps are rejected. See the example README for the complete setup and

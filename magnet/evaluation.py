@@ -958,6 +958,13 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         return
 
     card = EvaluationCard(args.path, args.output_path, validate=validate)
+    if card.has_kwdagger:
+        raise SystemExit(
+            f'{args.path}: this card declares a `kwdagger:` pipeline.\n'
+            '`magnet evaluate` / `magnet evaluate_legacy` use the legacy '
+            'evaluator and do not execute kwdagger cards.\n'
+            f'Use `magnet evaluate_new {args.path}` instead.'
+        )
     if args.override is not None:
         card.replace(args.override)
 

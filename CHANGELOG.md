@@ -12,7 +12,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 * Added `magnet evaluate_legacy` as the explicit name for the historical evaluator; `magnet evaluate` remains its compatibility alias.
 * New-style cards declare `kwdagger.result_node`: the node whose output is
   the card's result. `evaluate_new` requires it; the shared schema leaves it
-  optional so historical kwdagger cards remain valid under `evaluate_legacy`.
+  optional for compatibility with card parsing. `evaluate` /
+  `evaluate_legacy` reject kwdagger execution with a pointer to `evaluate_new`.
   Every configured instance of the result node is one cell, identified by its
   kwdagger `process_id` and evaluated separately.
 * A result node's values reach a claim as `metrics.<node>.<name>`. A card that

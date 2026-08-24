@@ -6,6 +6,7 @@ import pytest
 import ubelt as ub
 import yaml
 
+from magnet.evaluation import main as legacy_main
 from magnet.evaluation_new import (
     NewEvaluationCard,
     NewEvaluationConfig,
@@ -115,3 +116,17 @@ def test_new_evaluator_rejects_legacy_pipeline(tmp_path):
     )
     with pytest.raises(ValueError, match='requires a kwdagger card'):
         evaluate_card_new(card, backend='serial')
+
+
+def test_legacy_evaluator_points_kwdagger_cards_to_evaluate_new(
+        kwdagger_card_fpath, tmp_path):
+    with pytest.raises(SystemExit) as exc_info:
+        legacy_main(argv=[
+            str(kwdagger_card_fpath),
+            '--output_path', str(ub.Path(tmp_path) / 'out'),
+            '--validate', 'off',
+        ])
+    message = str(exc_info.value)
+    assert 'declares a `kwdagger:` pipeline' in message
+    assert '`magnet evaluate`' in message
+    assert 'magnet evaluate_new' in message
