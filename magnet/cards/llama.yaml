@@ -133,7 +133,3 @@ symbols:
       exact_match_scores_df = run_stats.groupby('model')['stats.mean'].mean()
 
       exact_match_scores = list(exact_match_scores_df.items())
-
-
-
-
