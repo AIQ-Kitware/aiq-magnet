@@ -15,8 +15,6 @@ class ConsistencyCompareCLI(kwconf.Config):
     card can state its claim against a number instead of recomputing it.
     """
 
-    __command__ = 'llama_compare'
-
     scores_fpath: str = kwconf.Value(
         None, required=True, help='scores written by llama_predict',
         tags=['in_path'])
@@ -47,7 +45,5 @@ class ConsistencyCompareCLI(kwconf.Config):
         dst_fpath.write_text(json.dumps(comparison, indent=2))
 
 
-__cli__ = ConsistencyCompareCLI
-
 if __name__ == '__main__':
-    __cli__.main()
+    ConsistencyCompareCLI.main()
