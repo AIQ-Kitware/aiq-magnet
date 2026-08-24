@@ -21,6 +21,7 @@ from rich import print
 from magnet.utils.util_logger import setup_logging
 from magnet.schema import EvaluationCardSchema, MetricObjective
 from magnet._kwdagger import GenericPipelineProcessor, KWDaggerProcessor
+from magnet.exceptions import SymbolResolutionError
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -799,6 +800,7 @@ class Symbols:
         symbol_definitions = {}
 
         for symbol in self._construct_dependency_order():
+            logger.debug(f'Resolve symbol {symbol=!r}')
             symbol_value = self.symbols[symbol]
             symbol_definitions_ = symbol_definitions.copy()
             try:
@@ -816,7 +818,7 @@ class Symbols:
                     """
                 )
                 logger.error(error_message)
-                raise
+                raise SymbolResolutionError(f'Failed to resolve {symbol=!r}') from ex
 
     def _find_sweep_symbols(self) -> List['Symbol']:
         return [symbol for symbol in self.symbols.values() if symbol.sweep]
@@ -837,8 +839,9 @@ class Symbols:
         return {
             k: v
             for k, v in self().items()
+            # fixme: probably want isinstance and issubclass
             if type(v) in ALLOWABLE_TYPES
-            or (type(v) == list and type(v[0]) == int)
+            or (type(v) == list and type(v[0]) == int)   # NOQA
         }
 
     def __call__(self) -> Dict[str, Any]:
@@ -876,7 +879,7 @@ class Metric:
                     'aggregation_strategy', DEFAULT_METRIC_AGGREGATION_STRATEGY
                 )
                 strategy_name = agg_strategy.get('type')
-                parameters = agg_strategy.get('parameters') or {}
+                parameters = agg_strategy.get('parameters') or {}  # NOQA: unused
                 objective = MetricObjective(
                     metric_metadata.get('objective', MetricObjective.MINIMIZE)
                 )
