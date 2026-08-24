@@ -32,25 +32,47 @@ links:
 
 claim:
   python: |
-    c = metrics.compare
+    c = metrics.llama_compare
     assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
 kwdagger:
-  pipeline: 'magnet.examples.llama_consistency.pipelines.llama_pipeline()'
   result_node: llama_compare
+  pipeline:
+    nodes:
+      llama_predict:
+        executable: "python -m magnet.examples.llama_consistency.llama_predict"
+        algo_params:
+          base_model: null
+          comp_model: null
+          threshold: 0.1
+          helm_runs_path: "./data/crfm-helm-public/lite/benchmark_output"
+        out_paths:
+          results_fpath: results.json
+        primary_out_key: results_fpath
+
+      llama_compare:
+        executable: "python -m magnet.examples.llama_consistency.llama_compare"
+        in_paths: [scores_fpath]
+        out_paths:
+          out_fpath: comparison.json
+        primary_out_key: out_fpath
+
+    edges:
+      - llama_predict.results_fpath -> llama_compare.scores_fpath
+
   matrix:
-      llama_predict.helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'
-      llama_predict.base_model:
-          - meta/llama-2-13b
-          - meta/llama-2-70b
-          - meta/llama-2-7b
-          - meta/llama-3-70b
-          - meta/llama-3-8b
-          - meta/llama-65b
-      llama_predict.comp_model:
-          - meta/llama-2-13b
-          - meta/llama-2-70b
-          - meta/llama-2-7b
-          - meta/llama-3-70b
-          - meta/llama-3-8b
-          - meta/llama-65b
+    llama_predict.helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'
+    llama_predict.base_model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
+    llama_predict.comp_model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b

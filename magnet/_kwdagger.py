@@ -267,52 +267,41 @@ class GenericPipelineProcessor:
 
 class KWDaggerProcessor:
     """
-    Handler for full kwdagger pipeline specification
+    Handler for a full kwdagger pipeline specification.
 
-    Example
+    The pipeline may be an importable Python pipeline, a YAML file path, or a
+    declarative ``nodes`` / ``edges`` mapping embedded directly in the card.
+
+    Example:
         >>> from magnet._kwdagger import KWDaggerProcessor
-        >>> from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
         >>> import kwutil
-        >>> # Example snippet of an Evaluation Card (related to GenericPipelineProcessor example)
         >>> example_cfg = kwutil.Yaml.coerce(
-            '''
-            kwdagger:
-              pipeline: magnet.examples.llama_consistency.pipelines.llama_pipeline()
-              matrix:
-                llama_predict.base_model: ["meta/llama-2-13b", "meta/llama-2-70b"]
-                llama_predict.comp_model:  ["meta/llama-2-7b", "meta/llama-3-70b"]
-            ''')
-        >>> root_dpath = "."
-        >>> kwdagger_def = example_cfg['kwdagger']
-        >>> pipeline = KWDaggerProcessor(kwdagger_def, root_dpath)
-        >>> #
-        >>> # Construct Two Node Pipeline (llama_predict -> claim)
-        >>> kwdagger_spec = ScheduleEvaluationConfig(params=pipeline.spec, run=False)
-        >>> dag, queue = build_schedule(kwdagger_spec)
-        ...
-        >>> dag.print_graphs()
-
-        Process Graph
-        ╙── llama_predict
-            ╽
-            claim_eval
-
-        IO Graph
-        ╙── llama_predict
-            ╽
-            results_fpath
-            ╽
-            symbols_fpath
-            ╽
-            claim_eval
-            ╽
-            verdict_fpath
-
-        >>> #
-        >>> # Parameters matrix
-        >>> pipeline.spec['matrix']
-        {'llama_predict.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
-        'llama_predict.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
+        ...     '''
+        ...     kwdagger:
+        ...       result_node: compare
+        ...       pipeline:
+        ...         nodes:
+        ...           predict:
+        ...             executable: "python predict.py"
+        ...             algo_params: {model: null}
+        ...             out_paths: {result_fpath: result.json}
+        ...           compare:
+        ...             executable: "python compare.py"
+        ...             in_paths: [result_fpath]
+        ...             out_paths: {out_fpath: comparison.json}
+        ...         edges:
+        ...           - predict.result_fpath -> compare.result_fpath
+        ...       matrix:
+        ...         predict.model: [model-a, model-b]
+        ...     '''
+        ... )
+        >>> processor = KWDaggerProcessor(example_cfg['kwdagger'], '.')
+        >>> processor.result_node
+        'compare'
+        >>> sorted(processor.spec['pipeline']['nodes'])
+        ['compare', 'predict']
+        >>> processor.spec['pipeline']['edges']
+        ['predict.result_fpath -> compare.result_fpath']
     """
 
     def __init__(

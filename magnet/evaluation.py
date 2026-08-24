@@ -299,7 +299,10 @@ class EvaluationCard:
         Example:
             >>> from magnet.evaluation import EvaluationCard
             >>> from importlib.resources import files
-            >>> card_path = files('magnet') / 'cards' / 'llama_kwdagger.yaml'
+            >>> card_path = (
+            ...     files('magnet') / 'examples' / 'llama_consistency' /
+            ...     'llama_kwdagger.yaml'
+            ... )
             >>> card = EvaluationCard(card_path, './results')
             >>> card.apply_params('matrix: {llama_predict.base_model: [qwen]}')
             >>> card.kwdagger['matrix']['llama_predict.base_model']

@@ -9,17 +9,17 @@ from magnet.evaluation import EvaluationCard
 
 
 @pytest.mark.parametrize(
-    'card_name',
+    'card_relpath',
     [
-        'llama.yaml',
-        'llama_pipeline.yaml',
-        'llama_kwdagger.yaml',
+        'cards/llama.yaml',
+        'cards/llama_pipeline.yaml',
+        'examples/llama_consistency/llama_kwdagger.yaml',
     ],
 )
-def test_llama_card(run_download, tmp_path, card_name):
+def test_llama_card(run_download, tmp_path, card_relpath):
     data_path = run_download
     results_path = f'{tmp_path}/results'
-    card_path = files('magnet') / 'cards' / card_name
+    card_path = files('magnet').joinpath(*card_relpath.split('/'))
 
     card = EvaluationCard(card_path, results_path)
     override_path(card, str(data_path / 'lite' / 'benchmark_output'))

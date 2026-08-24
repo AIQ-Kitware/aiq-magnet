@@ -290,7 +290,7 @@ magnet evaluate path/to/mycard.yaml
 ```
 
 #### Resolving Symbols as a Pipeline (kwdagger)
-In the example above, symbols are explicitly defined in Python as code blocks, values, or sweeps (list) of values. [kwdagger]([https://github.com/AIQ-Kitware/kwdagger) offers an alternative flexible approach to resolving symbols as pipelines of user scripts with a variety of backends (see [tutorials](https://github.com/AIQ-Kitware/kwdagger/tree/main/docs/source/manual/tutorials) for example definitions). MAGNET can dispatch these explicitly, by referencing a fully-defined pipeline, or generate from user-provided scaffolding in the Evaluation Card.
+In the example above, symbols are explicitly defined in Python as code blocks, values, or sweeps (list) of values. [kwdagger](https://github.com/AIQ-Kitware/kwdagger) offers an alternative flexible approach to resolving symbols as pipelines of user scripts with a variety of backends (see [tutorials](https://github.com/AIQ-Kitware/kwdagger/tree/main/docs/source/manual/tutorials) for example definitions). MAGNET can dispatch these explicitly, by referencing a fully-defined pipeline, or generate from user-provided scaffolding in the Evaluation Card.
 
 The example python module (`magnet/examples/llama_consistency`) represents how a user may structure their code for testing the claim seen in `magnet/cards/llama.yaml`. Each potential 'node', or script, of a pipeline satisfies the following conditions:
  1. defines a Python class with key, value (input, output) arguments
@@ -335,32 +335,59 @@ A subdirectory for each unique sweep will be created in `{results_path}`.
 
 
 #### Explicit kwdagger Pipeline (llama_consistency example)
-Alternatively, for users that want the most flexibility an Evaluation Card can be populated with a reference to an existing `kwdagger` pipeline. An example two-node pipeline is defined in `magnet/examples/llama_consistency/pipelines.py`. There, the output filepaths of `llama_predict.py` are connected as input paths to `claim.py`. This circumvents the existing `Claim` resolution process by defining a node to aggregate the symbols. An example card is available in `magnet/cards/llama_kwdagger.yaml`.
+For new cards, prefer a declarative `kwdagger` pipeline. The pipeline can live
+in a separate YAML file, but small pipelines are often clearer inline in the
+card. `magnet/examples/llama_consistency/llama_kwdagger.yaml` is a two-node
+example: `llama_predict` writes model scores and `llama_compare` consumes that
+artifact and writes the comparison used by the card.
 
-The format of an Evaluation Card that references a `kwdagger` pipeline is similar to above, but instead of `pipeline`, the key to populate is `kwdagger`. 
+The pipeline is the standard kwdagger YAML `nodes` / `edges` form. MAGNET adds
+`result_node` to say which node produces each card result. Fields written by
+that node are available to the legacy claim under
+`metrics.<result_node>.<field>`.
 
-```
- ...
-# Same fields as original example card above with claim
-...
+```yaml
+claim:
+  python: |
+    assert metrics.second_node.score < 0.1
+
 kwdagger:
-  # pipeline definition
-  pipeline: 'importable.python.path.pipeline_definition()'
-  # node specific parameters
+  result_node: second_node
+  pipeline:
+    nodes:
+      first_node:
+        executable: 'python -m package.first_node'
+        algo_params:
+          model_name: null
+        out_paths:
+          result_fpath: result.json
+        primary_out_key: result_fpath
+
+      second_node:
+        executable: 'python -m package.second_node'
+        in_paths: [input_fpath]
+        out_paths:
+          result_fpath: result.json
+        primary_out_key: result_fpath
+
+    edges:
+      - first_node.result_fpath -> second_node.input_fpath
+
   matrix:
-      first_node.dataset_name:
-          - unique_benchmark
-      first_node.model_name:
-          - openai/gpt-4o
-          - meta/llama-3.3-70b
-      second_node.epsilon: 0.01
-...
+    first_node.model_name:
+      - openai/gpt-4o
+      - meta/llama-3.3-70b
 ```
-Example output for a kwdagger card be observed by running the example `llama_kwdagger.yaml`:
+
+Run the Llama example with:
+
 ```
-magnet evaluate magnet/cards/llama_kwdagger.yaml --results_path './results_kwdagger'
+magnet evaluate magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --results_path './results_kwdagger'
 ```
-A results file for each unique sweep of parameters will be created in a subdirectory of `{results_path}/{node_name}/.`.
+
+Each configured instance of `result_node` becomes one card cell. Its kwdagger
+`process_id` is used as the stable cell identity.
 
 Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield `FALSIFIED` cards with output similar to below: 
 ```

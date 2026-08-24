@@ -122,14 +122,26 @@ def test_symbol_dependency_aliases_must_not_disagree(simple_card):
 
 @pytest.fixture(scope='module')
 def kwdagger_card():
-    card_path = files('magnet') / 'cards' / 'llama_kwdagger.yaml'
+    card_path = (files('magnet') / 'examples' / 'llama_consistency' /
+                 'llama_kwdagger.yaml')
     with card_path.open('r') as f:
         return yaml.safe_load(f)
 
 
 def test_a_kwdagger_card_validates(kwdagger_card):
     card = EvaluationCardSchema.model_validate(kwdagger_card)
-    assert card.kwdagger.result_node == 'compare'
+    assert card.kwdagger.result_node == 'llama_compare'
+
+
+def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
+    from kwdagger.pipeline import coerce_pipeline
+
+    pipeline = kwdagger_card['kwdagger']['pipeline']
+    assert isinstance(pipeline, dict)
+    dag = coerce_pipeline(pipeline)
+    assert sorted(dag.node_dict) == ['llama_compare', 'llama_predict']
+    assert dag.node_dict['llama_compare'].inputs['scores_fpath'].pred
+    assert 'metrics.llama_compare' in kwdagger_card['claim']['python']
 
 
 def test_a_kwdagger_card_must_declare_its_result_node(kwdagger_card):

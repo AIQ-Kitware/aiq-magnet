@@ -48,6 +48,8 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   root. `<run>/kwdagger` links there for consumers that read a run.
 * An unchanged card reuses its run directory instead of stamping a new one.
 * A relative pipeline path in a card resolves against the card.
+* The Llama kwdagger example embeds its declarative `nodes` / `edges`
+  pipeline directly in the card.
 * The tmux queue is named after the run directory rather than `schedule-eval`.
 
 ### Fixed
