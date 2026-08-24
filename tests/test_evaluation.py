@@ -1,6 +1,8 @@
 import json
 
-from magnet.evaluation import EvaluationCard
+import pytest
+
+from magnet.evaluation import EvaluationCard, Symbol, Symbols
 
 
 TEST_CARD_TEXT = """
@@ -25,6 +27,7 @@ symbols:
     python: |
       score = x
 """
+
 
 def test_evaluation_preserves_metrics(tmp_path):
     card_fpath = tmp_path / 'card.yaml'
@@ -97,3 +100,30 @@ def test_parallel_evaluation_preserves_metrics(tmp_path):
             / claim_hash
             / 'verdict.json'
         ).exists()
+
+
+@pytest.mark.parametrize('dependency_key', ['depends_on', 'depends'])
+def test_symbol_dependency_alias_orders_resolution(dependency_key):
+    """
+    Check that symbol are ordered topologically by the dependency graph.
+    """
+    symbols = Symbols({
+        'y': {
+            'type': 'int',
+            'python': 'y = x + 1',
+            dependency_key: ['x'],
+        },
+        'x': {'type': 'int', 'value': 1},
+    })
+
+    symbols.resolve()
+
+    assert symbols()['y'] == 2
+
+
+def test_symbol_dependency_aliases_must_agree():
+    with pytest.raises(
+        ValueError,
+        match='`depends_on` and `depends` disagree',
+    ):
+        Symbol('y', {'depends_on': ['x'], 'depends': ['z']})

@@ -14,15 +14,16 @@ import safer
 import kwconf
 import ubelt as ub
 import yaml
-from kwdagger import Pipeline, ProcessNode
-from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
 from pydantic import ValidationError
 from rich import print
 
 from magnet.utils.util_logger import setup_logging
 from magnet.schema import EvaluationCardSchema, MetricObjective
+
 from magnet.theory.cards import report_from_card
+from magnet._kwdagger import GenericPipelineProcessor, KWDaggerProcessor
+from magnet.exceptions import SymbolResolutionError
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -410,7 +411,6 @@ class EvaluationCard:
 
         self.claim.status = card_result
         return card_result
-
     def dispatch(
         self, flattened_sweep: List['Symbols']
     ) -> List['EvaluationTask']:
@@ -453,242 +453,6 @@ class EvaluationCard:
         timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
 
         return f'{card_hash}_{timestamp}'
-
-
-class GenericPipelineProcessor:
-    """
-    Handler for yaml-based pipeline specification
-
-    NOTE:
-        *possibly merge with KWDaggerProcessor*
-
-    Example:
-        >>> from magnet.evaluation import GenericPipelineProcessor
-        >>> import kwutil
-        >>> # Example snippet of an Evaluation Card
-        >>> example_cfg = kwutil.Yaml.coerce(
-            '''
-            pipeline:
-              predict_node:
-                executable: python -m magnet.examples.llama_consistency.llama_predict
-                algo_params:
-                  base_model: ["meta/llama-2-13b", "meta/llama-2-70b"]
-                  comp_model: ["meta/llama-2-7b", "meta/llama-3-70b"]
-                out_paths:
-                  results_fpath: ./llama_results.json
-            ''')
-        >>> root_dpath = "."
-        >>> pipeline_def = example_cfg['pipeline']
-        >>> pipeline = GenericPipelineProcessor(pipeline_def, root_dpath)
-        >>> #
-        >>> # Construct One Node Pipeline
-        >>> pipeline.define_kwdagger()
-        ...
-        >>> pipeline.dag.print_graphs()
-
-        Process Graph
-        ╙── predict_node
-
-        IO Graph
-        ╙── predict_node
-            ╽
-            results_fpath
-
-        >>> for attr in ['name', 'executable', 'algo_params', 'out_paths']:
-        >>>    print(getattr(pipeline.dag.node_dict['predict_node'], attr))
-        predict_node
-        python -m magnet.examples.llama_consistency.llama_predict
-        ['base_model', 'comp_model']
-        {'results_fpath': './llama_results.json'}
-        >>> #
-        >>> # Parameters matrix
-        >>> pipeline.matrix
-        {'predict_node.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
-        'predict_node.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
-    """
-
-    def __init__(
-        self, pipeline_def: Dict[str, Any], root_dpath: ub.Path
-    ) -> None:
-        self.pipeline = pipeline_def
-        self.root_dpath = root_dpath
-        self.dag = None
-        self.matrix = None
-        self.symbols = {}
-
-    def define_kwdagger(self) -> None:
-        """
-        Construct kwdagger pipeline programmatically
-
-        *only verified for one-stage pipeline, needs 'connector' handling*
-        """
-        nodes = {}
-
-        for node_name in self.pipeline:
-            # collect nodes
-            node_params = self.pipeline[node_name]
-
-            # FIXME: should update matrix for full pipeline
-            node_params, self.matrix = self._parse_params(
-                node_name, node_params
-            )
-
-            node = ProcessNode(name=node_name, **node_params)
-            nodes[node_name] = node
-
-        self.dag = Pipeline(list(nodes.values()))
-        self.dag.build_nx_graphs()
-
-    def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
-    ) -> None:
-        self.define_kwdagger()
-
-        kwdagger_params = {'pipeline': self.dag, 'matrix': self.matrix}
-
-        kwd_config = ScheduleEvaluationConfig(
-            params=kwdagger_params,  # includes pipeline and additional params
-            root_dpath=self.root_dpath,
-            backend=backend,
-            skip_existing=skip_existing,
-            run=True,
-        )
-
-        dag, queue = build_schedule(kwd_config)
-
-    def collect_symbols(self) -> Dict[str, Any]:
-        """
-        Collect results (Evaluation Card 'symbols') in place of 'load_result' in the ProcessNode definition
-        """
-        if not self.symbols:
-            self.dispatch()
-
-        # Glob all results json (only one node in pipeline)
-        paths = self.root_dpath.glob(
-            f'**/{self.dag.node_dict[next(iter(self.dag.node_dict))].out_paths["results_fpath"]}'
-        )
-
-        for symbol_resolution in paths:
-            symbols = json.load(open(symbol_resolution, 'r'))
-            parent_dir = symbol_resolution.parent.stem
-            if 'result' in symbols:
-                # assume all fields exist
-                for symbol in symbols['result']:
-                    # record all sweeps
-                    if parent_dir not in self.symbols:
-                        self.symbols[parent_dir] = {}
-
-                    self.symbols[parent_dir][symbol] = {
-                        'value': symbols['result'][symbol]
-                    }
-
-        return self.symbols
-
-    def _parse_params(
-        self, node_name: str, node_cfg: Dict[str, Any]
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """
-        Parse sweepable parameters from definition
-        """
-        matrix = {}
-        for k in node_cfg:
-            if isinstance(node_cfg[k], dict) and '_params' in k:
-                # TODO: Construct a more robust validator
-                for param, v in node_cfg[k].items():
-                    matrix[f'{node_name}.{param}'] = v
-                # decompose yaml
-                node_cfg[k] = list(node_cfg[k].keys())
-        return node_cfg, matrix
-
-
-class KWDaggerProcessor:
-    """
-    Handler for full kwdagger pipeline specification
-
-    Example
-        >>> from magnet.evaluation import KWDaggerProcessor
-        >>> from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
-        >>> import kwutil
-        >>> # Example snippet of an Evaluation Card (related to GenericPipelineProcessor example)
-        >>> example_cfg = kwutil.Yaml.coerce(
-            '''
-            kwdagger:
-              pipeline: magnet.examples.llama_consistency.pipelines.llama_pipeline()
-              matrix:
-                llama_predict.base_model: ["meta/llama-2-13b", "meta/llama-2-70b"]
-                llama_predict.comp_model:  ["meta/llama-2-7b", "meta/llama-3-70b"]
-            ''')
-        >>> root_dpath = "."
-        >>> kwdagger_def = example_cfg['kwdagger']
-        >>> pipeline = KWDaggerProcessor(kwdagger_def, root_dpath)
-        >>> #
-        >>> # Construct Two Node Pipeline (llama_predict -> claim)
-        >>> kwdagger_spec = ScheduleEvaluationConfig(params=pipeline.spec, run=False)
-        >>> dag, queue = build_schedule(kwdagger_spec)
-        ...
-        >>> dag.print_graphs()
-
-        Process Graph
-        ╙── llama_predict
-            ╽
-            claim_eval
-
-        IO Graph
-        ╙── llama_predict
-            ╽
-            results_fpath
-            ╽
-            symbols_fpath
-            ╽
-            claim_eval
-            ╽
-            verdict_fpath
-
-        >>> #
-        >>> # Parameters matrix
-        >>> pipeline.spec['matrix']
-        {'llama_predict.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
-        'llama_predict.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
-    """
-
-    def __init__(
-        self, pipeline_def: Dict[str, Any], root_dpath: ub.Path
-    ) -> None:
-        self.spec = pipeline_def
-        self.root_dpath = root_dpath
-        self.results = []
-        self.symbols = []
-
-    def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
-    ) -> None:
-        kwd_config = ScheduleEvaluationConfig(
-            params=self.spec,  # includes pipeline and additional params
-            root_dpath=self.root_dpath,
-            backend=backend,
-            skip_existing=skip_existing,
-            run=True,
-            **kwargs,
-        )
-
-        self.dag, queue = build_schedule(kwd_config)
-
-    def collect_results(self) -> Tuple[List[str], List[Any]]:
-        if not self.results:
-            self.dispatch()
-
-        # Glob all Claim node json files recursively
-        paths = self.root_dpath.glob('**/verdict.json')
-
-        # Assumes {result: {status: value}} output format
-        for claim_json in paths:
-            claim_result = json.load(open(claim_json, 'r'))
-            if 'result' in claim_result and 'status' in claim_result['result']:
-                self.results.append(claim_result['result']['status'])
-            if 'result' in claim_result and 'symbols' in claim_result['result']:
-                self.symbols.append(claim_result['result']['symbols'])
-
-        return self.results, self.symbols
 
 
 class EvaluationTask:
@@ -856,14 +620,61 @@ class Symbol:
         [10]
     """
 
+    KNOWN_SPEC_KEYS = frozenset({
+        'type', 'value', 'sweep', 'python', 'depends_on', 'depends',
+        'metadata',
+    })
+
     def __init__(self, name: str, spec: Dict[str, Any]) -> None:
         self.name = name
         self.value = spec.get('value')
         self.sweep = spec.get('sweep')
         self.type = spec.get('type', 'List[int]')
         self.definition = spec.get('python', '')
-        self.dependencies = spec.get('depends_on', [])
+        self.dependencies = self._resolve_dependencies(name, spec)
         self.metadata = spec.get('metadata')
+
+        unknown = set(spec) - self.KNOWN_SPEC_KEYS
+        if unknown:
+            logger.warning(
+                f'symbol {name!r}: unrecognized key(s): {sorted(unknown)}'
+            )
+
+    @staticmethod
+    def _resolve_dependencies(
+        name: str, spec: Dict[str, Any]
+    ) -> List[str]:
+        """
+        Read dependencies from `depends_on` or its `depends` alias.
+
+        Args:
+            name: Symbol name used in error messages.
+            spec: Symbol specification.
+
+        Returns:
+            Declared dependency names.
+
+        Raises:
+            ValueError: If both spellings are present and disagree.
+
+        Example:
+            >>> Symbol._resolve_dependencies('y', {'depends': ['x']})
+            ['x']
+        """
+        canonical = spec.get('depends_on')
+        alias = spec.get('depends')
+
+        if (
+            canonical is not None
+            and alias is not None
+            and list(canonical) != list(alias)
+        ):
+            raise ValueError(
+                f'symbol {name!r}: `depends_on` and `depends` disagree'
+            )
+
+        dependencies = canonical if canonical is not None else alias
+        return [] if dependencies is None else list(dependencies)
 
     def eval(self, context: Dict[str, Any] = {}) -> Any:
         """
@@ -986,6 +797,7 @@ class Symbols:
         symbol_definitions = {}
 
         for symbol in self._construct_dependency_order():
+            logger.debug(f'Resolve symbol {symbol=!r}')
             symbol_value = self.symbols[symbol]
             symbol_definitions_ = symbol_definitions.copy()
             try:
@@ -1003,7 +815,7 @@ class Symbols:
                     """
                 )
                 logger.error(error_message)
-                raise
+                raise SymbolResolutionError(f'Failed to resolve {symbol=!r}') from ex
 
     def _find_sweep_symbols(self) -> List['Symbol']:
         return [symbol for symbol in self.symbols.values() if symbol.sweep]
@@ -1024,8 +836,9 @@ class Symbols:
         return {
             k: v
             for k, v in self().items()
+            # fixme: probably want isinstance and issubclass
             if type(v) in ALLOWABLE_TYPES
-            or (type(v) == list and type(v[0]) == int)
+            or (type(v) == list and type(v[0]) == int)   # NOQA
         }
 
     def __call__(self) -> Dict[str, Any]:
@@ -1063,7 +876,7 @@ class Metric:
                     'aggregation_strategy', DEFAULT_METRIC_AGGREGATION_STRATEGY
                 )
                 strategy_name = agg_strategy.get('type')
-                parameters = agg_strategy.get('parameters') or {}
+                parameters = agg_strategy.get('parameters') or {}  # NOQA: unused
                 objective = MetricObjective(
                     metric_metadata.get('objective', MetricObjective.MINIMIZE)
                 )

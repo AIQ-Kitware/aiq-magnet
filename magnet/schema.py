@@ -1,6 +1,6 @@
 from enum import StrEnum
 from typing import Any, Literal, Optional
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
 
 class LinkSchema(BaseModel):
     title: str
@@ -36,15 +36,37 @@ class SymbolSchema(BaseModel):
     type: str | None = None
     value: Any | None = None
     sweep: list | None = None
-    depends_on: list[str] = Field(default_factory=list) # TODO: modify "depends_on" to reference an actual symbol
+    # `depends` is an alias for `depends_on`.
+    # TODO: modify "depends_on" to reference an actual symbol
+    depends_on: list[str] = Field(
+        default_factory=list,
+        validation_alias=AliasChoices('depends_on', 'depends'),
+    )
     python: str | None = None # TODO: this can be validated with a syntax check
     metadata: SymbolMetadataSchema | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def dependency_aliases_agree(cls, data: Any) -> Any:
+        """
+        Error both depends_on and depends are given and they disagree.
+        """
+        if isinstance(data, dict):
+            depends_on = data.get('depends_on')
+            depends = data.get('depends')
+            if (
+                depends_on is not None
+                and depends is not None
+                and depends_on != depends
+            ):
+                raise ValueError('`depends_on` and `depends` must agree')
+        return data
 
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
         if self.value is None and self.sweep is None and self.python is None:
             if self.metadata is not None and self.metadata.define_metric is not None:
-                # Handle metric definitions in kwdagger/pipeline cards 
+                # Handle metric definitions in kwdagger/pipeline cards
                 # (i.e. ignore test for symbols defined/calculated in user script)
                 return self
             else:
