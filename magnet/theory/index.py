@@ -1,101 +1,119 @@
-"""
-The theory side: a list of objects code can point at.
-
-An index is a YAML file naming what exists, with enough structure to say what
-kind of thing each entry is::
-
-    entries:
-      - id: Examples.CoinFlip.Binomial
-        kind: theorem
-        statement: >
-          P(X = k) = C(n, k) p^k (1-p)^(n-k) for X ~ Binomial(n, p).
-
-      - id: Examples.TrainingOrder.Why
-        kind: question
-        statement: >
-          Why can changing only the order of otherwise identical training
-          examples change the learned solution?
-
-``question`` is a first-class kind. An experiment that establishes a phenomenon
-points at the question it raises, and a later conjecture or theorem can take
-the same id when someone answers it.
-
-An entry may also name where the statement is formalized::
-
-      - id: Dkps.CrossBudgetMAE
-        kind: theorem
-        declaration: DkpsQuench2026.Paper.TheoryPractice.highProbMAE_queryEfficient
-        statement: >
-          The cross-budget query-efficiency conclusion in mean absolute error.
-
-``declaration`` is the fully-qualified name in whatever proof assistant states
-it. ``source`` may identify the repository or pinned formalization that owns
-that declaration. Reading proof status out of the kernel, resolving the
-declaration against a pinned commit, and accounting for a theorem's individual
-hypotheses are all built on
-top of this field rather than replacing it.
-"""
+"""Theory objects and named premises that empirical annotations may reference."""
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Sequence
 
-import ubelt as ub
 import yaml
 
-__all__ = ['Entry', 'KINDS', 'TheoryIndex', 'load_index', 'load_indexes',
-           'parse_entries']
+from magnet.theory.links import split_ref
 
-#: Theory-facing objects that practice can point at. ``definition`` covers
-#: formal claim shapes, estimators, and quantities that are useful anchors even
-#: when they are not themselves proved theorems.
+__all__ = [
+    'INDEX_SCHEMA_VERSION',
+    'KINDS',
+    'Formalization',
+    'Premise',
+    'Entry',
+    'TheoryIndex',
+    'load_index',
+    'load_indexes',
+    'parse_entries',
+]
+
+INDEX_SCHEMA_VERSION = 1
 KINDS = ('theorem', 'conjecture', 'question', 'definition')
 
 
 @dataclass(frozen=True)
+class Formalization:
+    """Structured provenance for a formal theory source."""
+
+    system: str
+    repository: str = ''
+    revision: str = ''
+
+    def to_dict(self) -> dict:
+        data = {'system': self.system}
+        if self.repository:
+            data['repository'] = self.repository
+        if self.revision:
+            data['revision'] = self.revision
+        return data
+
+
+@dataclass(frozen=True)
+class Premise:
+    """One named premise, normally a proposition-valued formal binder."""
+
+    id: str
+    type: str = ''
+    statement: str = ''
+
+    def to_dict(self) -> dict:
+        data = {'id': self.id}
+        if self.type:
+            data['type'] = self.type
+        if self.statement:
+            data['statement'] = self.statement
+        return data
+
+
+@dataclass(frozen=True)
 class Entry:
-    """One theoretical object."""
+    """One theoretical object, optionally tied to a formal declaration."""
 
     id: str
     kind: str
     statement: str = ''
-
-    #: Fully-qualified name of the statement where it is formalized, e.g. a
-    #: Lean declaration. Empty when the entry is prose only.
     declaration: str = ''
+    formalization: Formalization | None = None
+    source_path: str = ''
+    premises: tuple[Premise, ...] = ()
 
-    #: Optional provenance for the formalization, such as a repository URL,
-    #: pinned source path, or generated-index source identifier.
-    source: str = ''
+    def premise(self, premise_id: str) -> Premise:
+        for premise in self.premises:
+            if premise.id == premise_id:
+                return premise
+        raise KeyError(f'{self.id}::{premise_id}')
 
     def to_dict(self) -> dict:
-        data = {'id': self.id, 'kind': self.kind, 'statement': self.statement}
+        data = {'id': self.id, 'kind': self.kind}
+        if self.statement:
+            data['statement'] = self.statement
         if self.declaration:
             data['declaration'] = self.declaration
-        if self.source:
-            data['source'] = self.source
+        if self.formalization is not None:
+            data['formalization'] = self.formalization.to_dict()
+        if self.source_path:
+            data['source_path'] = self.source_path
+        if self.premises:
+            data['premises'] = [premise.to_dict() for premise in self.premises]
         return data
 
 
 class TheoryIndex:
-    """
-    Entries loaded from one or more index files.
-
-    Example:
-        >>> from magnet.theory.index import TheoryIndex, Entry
-        >>> index = TheoryIndex([Entry('A.b', 'theorem', 'x = y')])
-        >>> index['A.b'].kind
-        'theorem'
-        >>> 'A.c' in index
-        False
-    """
+    """Entries loaded from inline card data and versioned theory index files."""
 
     def __init__(self, entries: Sequence[Entry] = ()) -> None:
-        self._entries = {entry.id: entry for entry in entries}
+        self._entries: dict[str, Entry] = {}
+        for entry in entries:
+            if entry.id in self._entries:
+                raise ValueError(f'duplicate theory entry id: {entry.id!r}')
+            self._entries[entry.id] = entry
 
     def __contains__(self, ref: str) -> bool:
-        return ref in self._entries
+        try:
+            self.resolve(ref)
+        except KeyError:
+            return False
+        return True
 
     def __getitem__(self, ref: str) -> Entry:
-        return self._entries[ref]
+        entry_id, premise_id = split_ref(ref)
+        if premise_id is not None:
+            raise KeyError(
+                f'{ref!r} names a premise; index entries are addressed by EntryId'
+            )
+        return self._entries[entry_id]
 
     def __iter__(self):
         return iter(self._entries.values())
@@ -103,90 +121,174 @@ class TheoryIndex:
     def __len__(self) -> int:
         return len(self._entries)
 
-    def unresolved(self, refs: Sequence[str]) -> list[str]:
-        """
-        Which of ``refs`` this index cannot resolve.
+    def resolve(self, ref: str) -> Entry | Premise:
+        entry_id, premise_id = split_ref(ref)
+        entry = self._entries[entry_id]
+        if premise_id is None:
+            return entry
+        return entry.premise(premise_id)
 
-        Example:
-            >>> from magnet.theory.index import TheoryIndex, Entry
-            >>> index = TheoryIndex([Entry('A.b', 'theorem')])
-            >>> index.unresolved(['A.b', 'A.c', 'A.c'])
-            ['A.c']
-        """
-        missing = {ref for ref in refs if ref not in self._entries}
+    def unresolved(self, refs: Sequence[str]) -> list[str]:
+        missing = []
+        for ref in dict.fromkeys(refs):
+            try:
+                self.resolve(ref)
+            except (KeyError, ValueError):
+                missing.append(ref)
         return sorted(missing)
 
     def to_list(self) -> list[dict]:
         return [entry.to_dict() for entry in self._entries.values()]
 
 
-def parse_entries(raw_entries, where: str = 'entries') -> list:
-    """
-    Validate a list of entry mappings.
+def _parse_formalization(raw, where: str) -> Formalization | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise ValueError(f'{where}: formalization must be a mapping')
+    allowed = {'system', 'repository', 'revision'}
+    extra = set(raw) - allowed
+    if extra:
+        raise ValueError(f'{where}: unknown formalization fields: {sorted(extra)}')
+    system = raw.get('system')
+    if not isinstance(system, str) or not system:
+        raise ValueError(f'{where}: formalization.system is required')
+    repository = raw.get('repository') or ''
+    revision = raw.get('revision') or ''
+    if not isinstance(repository, str) or not isinstance(revision, str):
+        raise ValueError(f'{where}: formalization repository/revision must be strings')
+    if repository and not revision:
+        raise ValueError(f'{where}: formalization.revision is required with repository')
+    return Formalization(system=system, repository=repository, revision=revision)
 
-    Shared by the file and inline paths, so a card that writes its entries out
-    is checked exactly as a card that names an index file.
 
-    Args:
-        raw_entries: mappings with ``id``, and optionally ``kind``,
-            ``statement``, ``declaration`` and ``source``.
-        where (str): named in error messages.
+def _parse_premises(raw_premises, where: str) -> tuple[Premise, ...]:
+    premises = []
+    seen = set()
+    for index, raw in enumerate(raw_premises or []):
+        item_where = f'{where}[{index}]'
+        if not isinstance(raw, dict):
+            raise ValueError(f'{item_where} must be a mapping')
+        allowed = {'id', 'type', 'statement'}
+        extra = set(raw) - allowed
+        if extra:
+            raise ValueError(f'{item_where} has unknown fields: {sorted(extra)}')
+        premise_id = raw.get('id')
+        if not isinstance(premise_id, str) or not premise_id:
+            raise ValueError(f'{item_where} has no id')
+        if '::' in premise_id:
+            raise ValueError(f'{item_where} id must be a binder name, not a full reference')
+        if premise_id in seen:
+            raise ValueError(f'{where}: duplicate premise id {premise_id!r}')
+        seen.add(premise_id)
+        premise_type = raw.get('type') or ''
+        statement = raw.get('statement') or ''
+        if not isinstance(premise_type, str) or not isinstance(statement, str):
+            raise ValueError(f'{item_where} type/statement must be strings')
+        premises.append(
+            Premise(
+                id=premise_id,
+                type=premise_type.strip(),
+                statement=statement.strip(),
+            )
+        )
+    return tuple(premises)
 
-    Returns:
-        list: :class:`Entry`
 
-    Raises:
-        ValueError: on a missing id, or a kind outside :data:`KINDS`.
-
-    Example:
-        >>> from magnet.theory.index import parse_entries
-        >>> parse_entries([{'id': 'A.b', 'kind': 'question'}])[0].kind
-        'question'
-        >>> parse_entries([{'kind': 'theorem'}])
-        Traceback (most recent call last):
-            ...
-        ValueError: entries: an entry has no id
-    """
+def parse_entries(
+    raw_entries,
+    where: str = 'entries',
+    *,
+    default_formalization: Formalization | None = None,
+) -> list[Entry]:
+    """Validate entry mappings shared by inline cards and index files."""
     entries = []
-    for raw in raw_entries or []:
+    for index, raw in enumerate(raw_entries or []):
+        item_where = f'{where}[{index}]'
+        if not isinstance(raw, dict):
+            raise ValueError(f'{item_where} must be a mapping')
+        allowed = {
+            'id',
+            'kind',
+            'statement',
+            'declaration',
+            'formalization',
+            'source_path',
+            'premises',
+        }
+        extra = set(raw) - allowed
+        if extra:
+            raise ValueError(f'{item_where} has unknown fields: {sorted(extra)}')
+
         ref = raw.get('id')
-        if not ref:
-            raise ValueError(f'{where}: an entry has no id')
-        kind = raw.get('kind', 'theorem')
+        if not isinstance(ref, str) or not ref:
+            raise ValueError(f'{item_where}: an entry has no id')
+        if '::' in ref:
+            raise ValueError(f'{item_where}: entry ids may not contain ::')
+
+        kind = raw.get('kind')
         if kind not in KINDS:
             raise ValueError(
-                f'{where}: entry {ref!r} has kind {kind!r}; '
-                f'known kinds are {list(KINDS)}')
-        entries.append(Entry(
-            id=ref,
-            kind=kind,
-            statement=(raw.get('statement') or '').strip(),
-            declaration=raw.get('declaration', ''),
-            source=raw.get('source', ''),
-        ))
+                f'{item_where}: entry {ref!r} has kind {kind!r}; '
+                f'known kinds are {list(KINDS)}'
+            )
+
+        statement = raw.get('statement') or ''
+        declaration = raw.get('declaration') or ''
+        source_path = raw.get('source_path') or ''
+        if not all(isinstance(value, str) for value in (statement, declaration, source_path)):
+            raise ValueError(
+                f'{item_where}: statement, declaration, and source_path must be strings'
+            )
+        if not statement and not declaration:
+            raise ValueError(
+                f'{item_where}: entry {ref!r} needs a statement or declaration'
+            )
+
+        if 'formalization' in raw:
+            formalization = _parse_formalization(
+                raw.get('formalization'), f'{item_where}.formalization'
+            )
+        else:
+            formalization = default_formalization
+
+        premises = _parse_premises(raw.get('premises'), f'{item_where}.premises')
+        entries.append(
+            Entry(
+                id=ref,
+                kind=kind,
+                statement=statement.strip(),
+                declaration=declaration,
+                formalization=formalization,
+                source_path=source_path,
+                premises=premises,
+            )
+        )
     return entries
 
 
 def load_index(fpath) -> TheoryIndex:
-    """
-    Read one index file.
-
-    Args:
-        fpath (str | PathLike): a YAML file with an ``entries`` list.
-
-    Returns:
-        TheoryIndex
-
-    Raises:
-        ValueError: on a missing id, or a kind outside :data:`KINDS`.
-    """
-    path = ub.Path(fpath)
+    """Read one versioned YAML theory index."""
+    path = Path(fpath)
     data = yaml.safe_load(path.read_text()) or {}
-    return TheoryIndex(parse_entries(data.get('entries'), str(path)))
+    schema_version = data.get('schema_version')
+    if schema_version != INDEX_SCHEMA_VERSION:
+        raise ValueError(
+            f'{path}: expected schema_version {INDEX_SCHEMA_VERSION}, got {schema_version!r}'
+        )
+    allowed = {'schema_version', 'formalization', 'entries'}
+    extra = set(data) - allowed
+    if extra:
+        raise ValueError(f'{path}: unknown top-level fields: {sorted(extra)}')
+    formalization = _parse_formalization(data.get('formalization'), str(path))
+    entries = parse_entries(
+        data.get('entries'), str(path), default_formalization=formalization
+    )
+    return TheoryIndex(entries)
 
 
 def load_indexes(fpaths: Sequence[str]) -> TheoryIndex:
-    """Read several index files into one index."""
+    """Read several theory index files and reject duplicate entry IDs."""
     entries: list[Entry] = []
     for fpath in fpaths:
         entries.extend(load_index(fpath))

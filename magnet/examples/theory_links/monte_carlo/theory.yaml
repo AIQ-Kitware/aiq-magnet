@@ -1,0 +1,12 @@
+schema_version: 1
+formalization:
+  system: lean4
+entries:
+  - id: Examples.Circle.AreaRatio
+    kind: theorem
+    declaration: MagnetExamples.Circle.volume_quarterDisc
+    source_path: Circle.lean
+    statement: >
+      The quarter disc of radius 1 occupies pi/4 of the unit square, so
+      the fraction of uniformly drawn points landing inside it converges
+      to pi/4.

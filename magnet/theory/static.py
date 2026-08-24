@@ -1,117 +1,134 @@
 """
-Read theory links out of source, without importing it.
+Read theory annotations out of Python source without importing it.
 
-One canonical spelling is accepted::
-
-    import magnet.theory as theory        # or: import magnet_theory as theory
-
-    @theory.tests('Literal.Reference')
-    def experiment(): ...
-
-    with theory.approximates(
-            'Literal.Reference', note='finite sample stands in for population'):
-        ...
-
-The reference has to be a literal string, and the call has to be a decorator or
-a ``with`` item. An optional literal ``note=`` travels with the link. Anything
-else is ignored, which keeps the walk short and keeps a reader's model of what
-counts accurate.
+A recognized annotation is a decorator or ``with`` item on the namespace bound
+by ``magnet.theory`` or a vendored ``magnet_theory`` module. References and
+optional notes must be literal strings. Once a recognized relation is used as
+an annotation, malformed arguments are errors rather than annotations that
+disappear from the report.
 """
 import ast
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Iterator, Sequence
 
-import ubelt as ub
+from magnet.theory.annotations import (
+    PREMISE_RELATIONS,
+    RELATIONS,
+    STATEMENT_RELATIONS,
+)
+from magnet.theory.links import Link, split_ref
 
-from magnet.theory.links import Link, RELATIONS
+__all__ = ['Link', 'TheoryAnnotationError', 'extract', 'extract_tree']
 
-__all__ = ['Link', 'extract', 'extract_tree']
-
-#: Module names that may be aliased to the relation namespace.
 THEORY_MODULES = ('magnet.theory', 'magnet_theory')
+
+
+class TheoryAnnotationError(ValueError):
+    """A recognized theory annotation has an invalid static form."""
 
 
 @dataclass
 class _Namespaces:
-    """Names bound to the theory module in this file."""
+    """Names bound to the theory annotation namespace in one source file."""
 
-    aliases: set = field(default_factory=set)
+    aliases: set[str] = field(default_factory=set)
 
-    def visit_import(self, node) -> None:
+    def visit_import(self, node: ast.AST) -> None:
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name in THEORY_MODULES:
                     self.aliases.add(alias.asname or alias.name.split('.')[0])
         elif isinstance(node, ast.ImportFrom):
-            if node.module == 'magnet' and any(
-                    a.name == 'theory' for a in node.names):
-                for a in node.names:
-                    if a.name == 'theory':
-                        self.aliases.add(a.asname or 'theory')
+            if node.module == 'magnet':
+                for alias in node.names:
+                    if alias.name == 'theory':
+                        self.aliases.add(alias.asname or 'theory')
+            # A vendored annotation module naturally lives inside the team's
+            # package, e.g. ``from .. import magnet_theory as theory``.
+            for alias in node.names:
+                if alias.name == 'magnet_theory':
+                    self.aliases.add(alias.asname or 'magnet_theory')
 
-    def is_relation_call(self, call: ast.Call) -> str | None:
-        """The relation name, when this call is ``<alias>.<relation>(...)``."""
+    def relation_name(self, call: ast.Call) -> str | None:
         func = call.func
-        if not isinstance(func, ast.Attribute):
+        if not isinstance(func, ast.Attribute) or func.attr not in RELATIONS:
             return None
-        if func.attr not in RELATIONS:
-            return None
+
         value = func.value
         if isinstance(value, ast.Name) and value.id in self.aliases:
             return func.attr
-        # `magnet.theory.tests(...)` spelled out in full.
+
+        # ``magnet.theory.tests(...)`` spelled out in full.
         if isinstance(value, ast.Attribute) and value.attr == 'theory':
             if isinstance(value.value, ast.Name) and value.value.id == 'magnet':
                 return func.attr
         return None
 
 
-def _literal_ref(call: ast.Call) -> str | None:
-    if not call.args:
-        return None
+def _annotation_error(call: ast.Call, fpath: str, message: str) -> TheoryAnnotationError:
+    return TheoryAnnotationError(f'{fpath}:{call.lineno}: {message}')
+
+
+def _parse_annotation(call: ast.Call, relation: str, fpath: str) -> Link:
+    if len(call.args) != 1:
+        raise _annotation_error(
+            call,
+            fpath,
+            f'theory.{relation} requires exactly one literal reference argument',
+        )
+
     first = call.args[0]
-    if isinstance(first, ast.Constant) and isinstance(first.value, str):
-        return first.value
-    return None
+    if not isinstance(first, ast.Constant) or not isinstance(first.value, str):
+        raise _annotation_error(
+            call,
+            fpath,
+            f'theory.{relation} reference must be a literal string',
+        )
+    ref = first.value
 
-
-def _literal_note(call: ast.Call) -> str:
-    """Return a literal ``note=`` value; dynamic notes stay out of output."""
+    note = ''
     for keyword in call.keywords:
-        if keyword.arg == 'note':
-            value = keyword.value
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                return value.value
-    return ''
+        if keyword.arg != 'note':
+            name = '**kwargs' if keyword.arg is None else keyword.arg
+            raise _annotation_error(
+                call,
+                fpath,
+                f'theory.{relation} has unsupported keyword {name!r}',
+            )
+        value = keyword.value
+        if not isinstance(value, ast.Constant) or not isinstance(value.value, str):
+            raise _annotation_error(
+                call,
+                fpath,
+                f'theory.{relation} note must be a literal string',
+            )
+        note = value.value
+
+    try:
+        _, premise_id = split_ref(ref)
+    except ValueError as ex:
+        raise _annotation_error(call, fpath, str(ex)) from ex
+
+    if premise_id is None and relation not in STATEMENT_RELATIONS:
+        raise _annotation_error(
+            call,
+            fpath,
+            f'theory.{relation} targets a premise; use an EntryId::binder reference',
+        )
+    if premise_id is not None and relation not in PREMISE_RELATIONS:
+        raise _annotation_error(
+            call,
+            fpath,
+            f'theory.{relation} targets a whole statement; remove ::binder',
+        )
+
+    return Link(relation=relation, ref=ref, note=note)
 
 
 def extract_tree(tree: ast.AST, fpath: str) -> list[Link]:
-    """
-    Collect the links in one parsed module.
-
-    Args:
-        tree (ast.AST): a parsed module.
-        fpath (str): path recorded on each link.
-
-    Returns:
-        list[Link]
-
-    Example:
-        >>> import ast
-        >>> from magnet.theory.static import extract_tree
-        >>> source = ub.codeblock(
-        ...     '''
-        ...     import magnet.theory as theory
-        ...
-        ...     @theory.tests('A.b')
-        ...     def experiment():
-        ...         with theory.motivates('C.d'):
-        ...             pass
-        ...     ''')
-        >>> links = extract_tree(ast.parse(source), 'demo.py')
-        >>> [(l.relation, l.ref, l.qualname) for l in links]
-        [('tests', 'A.b', 'experiment'), ('motivates', 'C.d', 'experiment')]
-    """
+    """Collect valid theory annotations in one parsed Python module."""
     namespaces = _Namespaces()
     for node in ast.walk(tree):
         namespaces.visit_import(node)
@@ -121,20 +138,24 @@ def extract_tree(tree: ast.AST, fpath: str) -> list[Link]:
     links: list[Link] = []
 
     def record(call: ast.Call, qualname: str) -> None:
-        relation = namespaces.is_relation_call(call)
+        relation = namespaces.relation_name(call)
         if relation is None:
             return
-        ref = _literal_ref(call)
-        if ref is None:
-            return
-        links.append(Link(relation=relation, ref=ref, file=fpath,
-                          line=call.lineno, qualname=qualname,
-                          note=_literal_note(call)))
+        link = _parse_annotation(call, relation, fpath)
+        links.append(
+            Link(
+                relation=link.relation,
+                ref=link.ref,
+                note=link.note,
+                file=fpath,
+                line=call.lineno,
+                qualname=qualname,
+            )
+        )
 
     def walk(node: ast.AST, prefix: str) -> None:
         for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef,
-                                  ast.ClassDef)):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
                 qualname = f'{prefix}.{child.name}' if prefix else child.name
                 for decorator in child.decorator_list:
                     if isinstance(decorator, ast.Call):
@@ -152,31 +173,43 @@ def extract_tree(tree: ast.AST, fpath: str) -> list[Link]:
     return links
 
 
-def extract(paths: Sequence[str]) -> list[Link]:
-    """
-    Collect links from files and directories.
-
-    Args:
-        paths (Sequence[str]): files, or directories walked for ``*.py``.
-
-    Returns:
-        list[Link]: in file then line order.
-    """
-    links: list[Link] = []
-    for fpath in _python_files(paths):
-        try:
-            tree = ast.parse(fpath.read_text())
-        except SyntaxError:
-            continue
-        links.extend(extract_tree(tree, str(fpath)))
-    links.sort(key=lambda link: (link.file, link.line))
-    return links
+def _display_path(
+    path: Path, raw: Path, resolved_source: Path, root: Path
+) -> str:
+    if raw.is_absolute():
+        return os.path.relpath(path, root).replace(os.sep, '/')
+    if resolved_source.is_dir():
+        rel = path.relative_to(resolved_source)
+        return str(raw / rel).replace(os.sep, '/')
+    return str(raw).replace(os.sep, '/')
 
 
-def _python_files(paths: Sequence[str]) -> Iterator[ub.Path]:
-    for raw in paths:
-        path = ub.Path(raw)
+def _python_files(
+    paths: Sequence[str], root: str | os.PathLike[str]
+) -> Iterator[tuple[Path, str]]:
+    root_path = Path(root).resolve()
+    for raw_text in paths:
+        raw = Path(raw_text)
+        path = raw if raw.is_absolute() else root_path / raw
+        path = path.resolve()
         if path.is_dir():
-            yield from sorted(path.rglob('*.py'))
+            for fpath in sorted(path.rglob('*.py')):
+                yield fpath, _display_path(fpath, raw, path, root_path)
         elif path.suffix == '.py':
-            yield path
+            yield path, _display_path(path, raw, path, root_path)
+        else:
+            raise ValueError(
+                f'empirical source {raw_text!r} is neither a Python file nor directory'
+            )
+
+
+def extract(
+    paths: Sequence[str], *, root: str | os.PathLike[str] = '.'
+) -> list[Link]:
+    """Collect static theory links from explicitly declared empirical sources."""
+    links: list[Link] = []
+    for fpath, display_path in _python_files(paths, root):
+        tree = ast.parse(fpath.read_text(), filename=str(fpath))
+        links.extend(extract_tree(tree, display_path))
+    links.sort(key=lambda link: (link.file, link.line or 0))
+    return links

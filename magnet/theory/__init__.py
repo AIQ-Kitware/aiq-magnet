@@ -1,78 +1,40 @@
 """
-Record how empirical code relates to a theoretical object.
+Static annotations describing how empirical code relates to theory.
 
-Annotate the code with one of three relations, each read as
-``practice <relation> theory``::
+The public API is the annotation vocabulary. Statement annotations connect
+practice to a theoretical object; premise annotations explain how empirical
+code treats one named premise of that object. All annotations are runtime
+no-ops and are read from source by MAGNET.
 
-    import magnet.theory as theory
-
-    @theory.tests('Examples.CoinFlip.Binomial')
-    def exact_tail_probability(n, k):
-        ...
-
-    @theory.motivates('Examples.TrainingOrder.Why')
-    def training_order_sensitivity(examples):
-        ...
-
-Name the theoretical objects in an index::
-
-    entries:
-      - id: Examples.CoinFlip.Binomial
-        kind: theorem
-        statement: ...
-
-      - id: Examples.TrainingOrder.Why
-        kind: question
-        statement: Why can training order change the learned solution?
-
-Then point a card at them. The card can also link its overall evaluation claim
-directly, while source annotations describe implementation sites::
-
-    theory:
-      links:
-        - relation: tests
-          ref: Examples.CoinFlip.Binomial
-      sources: [../examples/theory_links/coin_flip.py]
-      indexes: [../examples/theory_links/theory.yaml]
-
-Evaluating it writes ``theory.json`` beside the verdict.
-
-Annotations are collected from source, so nothing here executes to be read, and
-a team can annotate with :mod:`magnet.theory.shim` instead of depending on
-MAGNET.
+Example:
+    >>> import magnet.theory as theory
+    >>> @theory.tests('Examples.Stability.Theorem')
+    ... @theory.assumes('Examples.Stability.Theorem::hiid')
+    ... def experiment():
+    ...     return 42
+    >>> experiment()
+    42
 """
-from magnet.theory.index import (
-    KINDS,
-    Entry,
-    TheoryIndex,
-    load_index,
-    load_indexes,
-)
-from magnet.theory.links import (
-    RELATIONS,
-    Link,
-    TheoryLink,
+from magnet.theory.annotations import (
     approximates,
+    assumes,
+    checks,
+    ignores,
     motivates,
+    satisfies,
+    substitutes,
     tests,
+    violates,
 )
-from magnet.theory.static import extract, extract_tree
 
 __all__ = [
-    # relations
     'tests',
     'approximates',
     'motivates',
-    'TheoryLink',
-    'RELATIONS',
-    # extraction
-    'Link',
-    'extract',
-    'extract_tree',
-    # index
-    'Entry',
-    'TheoryIndex',
-    'KINDS',
-    'load_index',
-    'load_indexes',
+    'satisfies',
+    'substitutes',
+    'assumes',
+    'ignores',
+    'violates',
+    'checks',
 ]

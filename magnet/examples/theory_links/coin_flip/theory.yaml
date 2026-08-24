@@ -1,0 +1,10 @@
+schema_version: 1
+formalization:
+  system: lean4
+entries:
+  - id: Examples.CoinFlip.Binomial
+    kind: theorem
+    declaration: MagnetExamples.CoinFlip.card_heads_eq_choose
+    source_path: CoinFlip.lean
+    statement: >
+      Exactly choose(n, k) of the 2^n sequences of n flips show k heads.

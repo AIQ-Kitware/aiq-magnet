@@ -269,6 +269,13 @@ class EvaluationCard:
         │   │           └── kwdagger
         │   │           └── results
         """
+        # Resolve all static theory references before any empirical work runs.
+        # A broken source annotation or theory index should fail before an
+        # expensive evaluation starts.
+        theory_report = report_from_card(
+            self.original_card, root=self.card_dpath
+        )
+
         results = []
 
         card_output_path = self.output_path / self._run_hash
@@ -398,9 +405,8 @@ class EvaluationCard:
             json.dump(aggregate_verdict, f, indent=2, ensure_ascii=False)
             f.write('\n')
 
-        report = report_from_card(self.original_card, root=self.card_dpath)
-        if report is not None:
-            report.write(card_output_path / 'theory.json')
+        if theory_report is not None:
+            theory_report.write(card_output_path / 'theory.json')
 
         self.claim.status = card_result
         return card_result
@@ -1131,8 +1137,9 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
             with open(args.path, 'r') as f:
                 cfg = yaml.safe_load(f)
             EvaluationCardSchema.model_validate(cfg)
+            report_from_card(cfg, root=ub.Path(args.path).parent)
             print('Card validation succeeded.')
-        except ValidationError as e:
+        except (ValidationError, ValueError, SyntaxError) as e:
             print('Card validation failed.')
             print(e)
             sys.exit(1)

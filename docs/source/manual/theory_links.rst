@@ -1,12 +1,30 @@
-Linking Practice to Theory
-==========================
+Linking Empirical Code to Theory
+================================
 
-An evaluation produces a number. What that number has to do with a formal
-claim, theorem, conjecture, or open question usually lives in someone's head,
-or in a paper nobody reads next to the code. A theory link writes the
-connection down and carries it into the run's output.
+MAGNET can record a static argument connecting empirical code to theoretical
+objects. The connection is read from source without importing the annotated
+module and without recording runtime values.
 
-There are three relations, each read as ``practice <relation> theory``:
+The model has two layers:
+
+.. code:: text
+
+    empirical claim/code
+        -- tests / approximates / motivates --> theoretical statement
+
+    empirical implementation
+        -- satisfies / approximates / substitutes / assumes /
+           ignores / violates / checks ------> named statement premise
+
+The first layer says what theoretical object an evaluation bears on. The second
+accounts for the assumptions underneath that object. Together they can produce
+a useful report before Python semantics or runtime values are formally modeled.
+
+
+Statement relations
+-------------------
+
+Statement relations read as ``practice <relation> theory``:
 
 ===============  ============================================================
 ``tests``        practice directly evaluates the named claim or consequence
@@ -14,267 +32,278 @@ There are three relations, each read as ``practice <relation> theory``:
 ``motivates``    practice establishes a phenomenon theory is asked to explain
 ===============  ============================================================
 
-``motivates`` is the one people miss. An experiment does not have to confirm or
-estimate anything to be worth connecting: showing that a phenomenon exists
-gives theory something to explain, and naming the question is what lets the
-explanation arrive later.
+``tests`` should target the closest theoretical proposition that directly
+matches the empirical claim. A finite empirical proposition is often a better
+``tests`` target than a stronger population theorem. The same evaluation may
+``approximates`` that population theorem separately.
 
-``tests`` is deliberately narrower than "the theorem applies." It says the
-empirical procedure directly evaluates the claim or consequence named by the
-entry. Whether a theorem's hypotheses actually hold is separate information;
-assumption accounting can refine a link later without changing this first
-layer.
+``motivates`` targets a question, conjecture, or other object that the
+observation asks theory to explain. It does not claim logical support.
 
-
-Annotating code
----------------
-
-Import the module and use a relation as a decorator:
+Use a statement relation as a decorator or context manager:
 
 .. code:: python
 
     import magnet.theory as theory
 
-    @theory.tests('Examples.CoinFlip.Binomial')
-    def enumerated_head_counts(n_flips):
+    @theory.tests('Examples.Stability.FiniteClaim')
+    def evaluate_stability(...):
         ...
 
-or as a context manager, when the part that relates to the theory is smaller
-than a function:
+    with theory.approximates(
+            'Examples.Stability.PopulationClaim',
+            note='finite samples stand in for the population quantity'):
+        ...
+
+The annotations are runtime no-ops.
+
+
+Premise relations
+-----------------
+
+A formal theorem usually depends on named premises. Empirical code can state
+how it treats each premise using an ``EntryId::binder`` reference:
+
+===============  ============================================================
+``satisfies``    the code is asserted to establish the premise
+``approximates`` the same object is represented finitely or numerically
+``substitutes``  a different object stands in for the one theory requires
+``assumes``      the premise is relied on without being established or checked
+``ignores``      the premise is deliberately left out of the empirical model
+``violates``     the premise is known not to hold
+``checks``       the code contains a runtime check for the premise
+===============  ============================================================
+
+For example:
 
 .. code:: python
 
-    def estimate_area_ratio(seed, samples):
-        with theory.approximates(
-                'Examples.Circle.AreaRatio',
-                note='finite samples estimate the exact area ratio'):
+    import magnet.theory as theory
+
+    @theory.tests('Examples.Stability.Theorem')
+    @theory.satisfies(
+        'Examples.Stability.Theorem::hbounded',
+        note='input validation establishes the bounded domain')
+    def evaluate(...):
+        with theory.assumes(
+                'Examples.Stability.Theorem::hiid',
+                note='the sampler is treated as IID'):
             ...
 
-Both forms do nothing at runtime. A relation returns what it wraps, so
-annotated code behaves identically whether or not anyone is reading the
-annotations.
+These annotations are authored scientific claims. ``satisfies`` does not mean
+MAGNET has proved Python establishes the premise. It records a precise proof
+obligation that can later be checked more formally.
+
+``checks`` is also static. MAGNET records that a check exists at the annotated
+site; it does not record whether a particular execution passed that check.
 
 
-Naming the theory
------------------
-
-References point at entries, which a card can write out directly:
-
-.. code:: yaml
-
-    theory:
-      sources:
-        - experiment.py
-      entries:
-        - id: Examples.CoinFlip.Binomial
-          kind: theorem
-          statement: >
-            For n independent fair flips, the probability of exactly k heads
-            is C(n, k) / 2^n.
-
-        - id: Examples.TrainingOrder.Why
-          kind: question
-          statement: >
-            Why can changing only the order of otherwise identical training
-            observations change the learned solution?
-
-or read from index files, which is what an index generated from a
-formalization looks like:
-
-.. code:: yaml
-
-    theory:
-      sources:
-        - experiment.py
-      indexes:
-        - ../../theory/indexes/dkps-144de76c.yaml
-
-Inline suits a card with one or two objects of its own. A file suits pointing
-at two entries out of fifty. Both may appear together, and the entries are
-validated the same way either way.
-
-Four kinds are available: ``theorem``, ``conjecture``, ``question`` and
-``definition``. ``definition`` matters for real formalizations: an empirical
-claim shape, estimator, loss, or other ``Prop`` may be the exact object a card
-tests even when that object is not itself a proved theorem. An id can keep its
-name as a question develops into a conjecture and then a theorem.
-
-
-Pointing at Lean
-----------------
-
-An entry may name where its statement is formalized:
-
-.. code:: yaml
-
-      - id: Examples.CoinFlip.Binomial
-        kind: theorem
-        declaration: MagnetExamples.CoinFlip.count_headCount_eq
-        source: CoinFlip.lean
-        statement: >
-          Exactly choose(n, k) of the 2^n sequences of n flips show k heads.
-
-``declaration`` is the fully-qualified name in whatever proof assistant states
-it. ``source`` is optional provenance for the formalization: a local source
-path, repository URL, pinned revision identifier, or whatever an index
-generator can preserve. All three shipped examples carry a declaration and a
-local source path, with the Lean beside the Python that points at it:
-
-.. code:: text
-
-    magnet/examples/theory_links/coin_flip/
-        card.yaml           the evaluation card, with its entries inline
-        experiment.py       the annotated code, runnable as a node
-        CoinFlip.lean       the statement it points at
-
-The statements import Mathlib, so checking them needs a Lean project that has
-one built. Rather than carry a lake project and a Mathlib pin here, borrow one:
-
-.. code:: bash
-
-    MAGNET_LEAN_PROJECT=~/code/aiq-dkps-formalization \
-        magnet/examples/theory_links/check_lean.sh
-
-    coin_flip/CoinFlip.lean                  ok (0 sorry)
-    monte_carlo/Circle.lean                  ok (1 sorry)
-    training_order/TrainingOrder.lean        ok (0 sorry)
-
-A ``sorry`` is reported rather than treated as a failure. A statement can be
-well-formed and unproved, and which of the two it is belongs in the output:
-the quarter-disc area the Monte Carlo card samples is stated and unproved,
-while the unit-disc area beside it follows from Mathlib's
-``Complex.volume_closedBall``.
-
-Reading proof status out of the kernel rather than from a script's output,
-resolving a declaration against a pinned commit, and accounting for a
-theorem's individual hypotheses are built on top of this field. None of that
-is here yet.
-
-
-Connecting it to a card
+Theory indexes and Lean
 -----------------------
 
-A card can link its overall evaluation claim directly. This is important for
-real MAGNET cards whose claim lives in YAML rather than in one Python function:
+Formalized theory should normally come through a versioned theory index. The
+index is the bridge between compact MAGNET entry IDs and exact declarations in
+a pinned formalization:
+
+.. code:: yaml
+
+    schema_version: 1
+
+    formalization:
+      system: lean4
+      repository: https://example.invalid/formalization.git
+      revision: 0123456789abcdef
+
+    entries:
+      - id: Examples.Stability.Theorem
+        kind: theorem
+        declaration: Example.Stability.theorem
+        source_path: Example/Stability.lean
+        statement: >
+          A short human-readable description of the theorem.
+        premises:
+          - id: hbounded
+            type: Bounded xs
+          - id: hiid
+            type: IID samples
+          - id: hunique
+            type: Unique optimum
+
+``declaration`` names the formal object. ``formalization`` identifies the proof
+system and, when available, the repository and revision. ``source_path`` points
+inside that formalization. ``premises`` contains named formal binders that
+empirical source may reference.
+
+A future Lean exporter can generate this structure directly from declarations.
+The important interface is already present: premise annotations refer to the
+named binder through ``EntryId::binder`` rather than a source line number.
+Renaming or removing a binder then breaks resolution and forces the empirical
+annotation to be reconsidered.
+
+When a formal declaration exists, that declaration is authoritative. The
+optional ``statement`` is explanatory text for reports; it is not a second
+formal definition.
+
+Four entry kinds are available: ``theorem``, ``conjecture``, ``question`` and
+``definition``. Entry IDs should identify stable theoretical objects. A new
+conjecture or theorem answering an earlier question should receive its own ID
+rather than changing what an existing ID denotes.
+
+
+Inline entries
+--------------
+
+A card may define a small local object inline when no formal index exists:
+
+.. code:: yaml
+
+    theory:
+      empirical_sources:
+        - experiment.py
+      entries:
+        - id: Examples.OrderSensitivity.Why
+          kind: question
+          statement: >
+            Under what conditions should changing only observation order leave
+            the learned solution unchanged?
+
+Inline entries are useful for questions and local empirical claim shapes. Shared
+or formalized theory should normally live in an index so multiple cards can
+refer to one definition.
+
+
+Connecting a card
+-----------------
+
+A card declares which empirical source files MAGNET should scan and which
+indexes resolve their references:
 
 .. code:: yaml
 
     theory:
       links:
         - relation: tests
-          ref: Dkps.EmpiricalCrossBudgetMAEClaim
-          note: the card directly evaluates the finite cross-budget MAE claim
-        - relation: approximates
-          ref: Dkps.PopulationMAEQueryEfficiency
-          note: finite replicates stand in for a population high-probability claim
-      sources:
+          ref: Examples.Stability.FiniteClaim
+          note: the card claim directly evaluates this finite proposition
+      empirical_sources:
         - predictor.py
+        - evaluation/
       indexes:
-        - ../../theory/indexes/dkps.yaml
+        - ../../theory/stability.yaml
 
-Card-level links and source annotations are complementary. A card link says how
-the *evaluation claim* relates to theory; a source annotation can point at the
-specific implementation step where a relationship is realized. Both become
-ordinary entries in the same ``links`` list.
+``links`` is for relationships owned by the card-level evaluation claim.
+Premise relationships belong next to the empirical implementation and therefore
+come from ``empirical_sources``.
 
-Paths in ``sources`` and ``indexes`` are relative to the card. Evaluating the
-card merges both kinds of links, checks that every reference resolves, and
-writes ``theory.json`` beside ``verdict.json``:
+Paths are relative to the card. Source locations written to ``theory.json``
+remain relative rather than embedding a workstation path.
+
+Theory is preflighted before evaluation begins. Missing index entries, missing
+premises, malformed annotations, and unparsable declared source files fail
+before empirical work runs.
+
+
+Premise coverage
+----------------
+
+Coverage is computed from the theory index and annotations; authors do not
+maintain a coverage status manually.
+
+If ``Examples.Stability.Theorem`` exports three premises and empirical source
+accounts for two, ``theory.json`` records the remaining premise as unaccounted:
 
 .. code:: json
 
     {
-      "links": [
+      "schema_version": 1,
+      "statement_links": [
         {
-          "relation": "motivates",
-          "ref": "Examples.TrainingOrder.Why",
-          "file": ".../training_order/experiment.py",
-          "line": 72,
-          "qualname": "training_order_sensitivity"
+          "relation": "tests",
+          "ref": "Examples.Stability.Theorem",
+          "file": "evaluation.py",
+          "line": 20,
+          "qualname": "evaluate"
         }
       ],
-      "entries": [
+      "premise_links": [
         {
-          "id": "Examples.TrainingOrder.Why",
-          "kind": "question",
-          "statement": "Why can changing only the order of ..."
+          "relation": "satisfies",
+          "ref": "Examples.Stability.Theorem::hbounded",
+          "file": "evaluation.py",
+          "line": 21
+        },
+        {
+          "relation": "assumes",
+          "ref": "Examples.Stability.Theorem::hiid",
+          "file": "evaluation.py",
+          "line": 25
+        }
+      ],
+      "premise_coverage": [
+        {
+          "ref": "Examples.Stability.Theorem",
+          "premise_count": 3,
+          "accounted_count": 2,
+          "complete": false,
+          "unaccounted": ["hunique"]
         }
       ]
     }
 
-The entries a run points at travel with the links, so the artifact reads on its
-own without the index beside it. A reference with no entry in the card's
-inline entries or declared indexes raises rather than passing silently.
+The full artifact also carries the referenced entries and premise descriptions,
+so reporting code can display what each binder means and which source site
+accounts for it.
 
-A short ``note`` is optional on both card links and source annotations. It is
-for the scientifically important gap -- for example, "32 finite MAE replicates
-stand in for a population eventual-high-probability statement" -- not for a
-second ontology. Hypothesis satisfaction, proof status, severity, and review
-workflow remain later refinement layers.
+This report does not claim formal verification of the empirical implementation.
+It makes the team's argument explicit and identifies the premise-level proof
+obligations that remain.
 
 
 Annotating without depending on MAGNET
 --------------------------------------
 
-Annotations are collected from **source**, so nothing has to import MAGNET for
-them to be read. A repository that would rather not take the dependency can
-copy ``magnet/theory/shim.py`` in as ``magnet_theory.py``:
+``magnet/theory/annotations.py`` is dependency-free. A team repository can copy
+that exact file as ``magnet_theory.py`` and keep the same annotation syntax:
 
 .. code:: python
 
-    import magnet_theory as theory
+    from .. import magnet_theory as theory
 
-    @theory.tests('Examples.CoinFlip.Binomial')
+    @theory.tests('Examples.Stability.Theorem')
+    @theory.assumes('Examples.Stability.Theorem::hiid')
     def experiment():
         ...
 
-The shim implements the same three relations as no-ops and imports nothing.
-The extractor reads that spelling exactly as it reads the real one.
+The extractor also accepts ``import magnet_theory as theory``. The vendored
+file and MAGNET use the same implementation rather than parallel copies of the
+annotation API.
 
 
 What counts as an annotation
 ----------------------------
 
-The extractor accepts one spelling, deliberately. A relation call is recorded
-when all of the following hold:
+A relation is read when it appears as a decorator or ``with`` item on a
+recognized theory namespace and uses literal strings for the reference and
+optional ``note=`` value.
 
-1. the module is imported as ``import magnet.theory as theory`` or
-   ``import magnet_theory as theory`` (any alias works; the full
-   ``magnet.theory.tests(...)`` is also accepted)
-2. the call is ``<alias>.tests``, ``.approximates`` or ``.motivates``
-3. the first argument is a literal string
-4. an optional ``note=`` is recorded when it is also a literal string
-5. the call is a decorator or a ``with`` item
+Once a recognized relation is used as an annotation, malformed arguments are an
+error. For example, ``@theory.tests(REF)`` does not disappear from the report;
+it fails because the reference is not a literal. Bare calls in ordinary
+function bodies are not annotations.
 
-A variable holding the reference, a concatenated string, an unrecognized
-relation, or a bare call in a function body is ignored. Keeping the accepted
-set this small means the rule fits in your head, and an annotation either
-appears in ``theory.json`` or does not exist.
+Statement-only verbs reject ``::binder`` references. Premise-only verbs require
+them. ``approximates`` is valid at either layer.
 
 
-Worked examples
----------------
+Current boundary
+----------------
 
-Three examples ship with MAGNET, one per relation. Each is a directory holding
-its card, its code, and its Lean statement, so an example can be read in one
-place and copied out in one piece:
+The static model deliberately leaves out runtime theory recording. MAGNET does
+not bind Lean parameters to Python values, attach annotations to runtime
+objects, or record per-run outcomes of premise checks.
 
-=====================  =================  ==============================
-directory              relation           what it shows
-=====================  =================  ==============================
-``coin_flip``          ``tests``          enumeration matches the
-                                          binomial law exactly
-``monte_carlo``        ``approximates``   sampling estimates pi/4, with
-                                          error the closed form lacks
-``training_order``     ``motivates``      reordering the same data
-                                          changes the learned solution
-=====================  =================  ==============================
-
-Each runs offline in a fraction of a second:
-
-.. code:: bash
-
-    python -m magnet.evaluation \
-        magnet/examples/theory_links/training_order/card.yaml
-
-and leaves ``theory.json`` in the run directory beside the verdict.
+The current artifact also leaves out severity scales, human review workflow,
+proof-status dashboards, axiom accounting, and freshness status fields. Exact
+reference resolution against versioned indexes provides the structural check
+needed by this layer; additional verification can build on the same statement
+and premise identities later.

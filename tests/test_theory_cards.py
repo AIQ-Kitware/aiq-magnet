@@ -1,17 +1,12 @@
-"""
-The three demo cards, end to end.
-
-Each runs offline in a fraction of a second, reaches a verdict, and leaves a
-theory.json naming the relation its code declares.
-"""
+"""Theory cards resolve static links and compute premise coverage."""
 import json
+import textwrap
 from importlib.resources import files
+from pathlib import Path
 
 import pytest
-import ubelt as ub
 from pydantic import ValidationError
 
-from magnet.evaluation import EvaluationCard
 from magnet.schema import TheorySchema
 
 CARDS = [
@@ -24,44 +19,44 @@ EXAMPLES = files('magnet') / 'examples' / 'theory_links'
 
 
 def _run(example, output_path):
-    card_fpath = (files('magnet') / 'cards' / example if example.endswith('.yaml')
-                  else EXAMPLES / example / 'card.yaml')
+    from magnet.evaluation import EvaluationCard
+    card_fpath = (
+        files('magnet') / 'cards' / example
+        if example.endswith('.yaml')
+        else EXAMPLES / example / 'card.yaml'
+    )
     card = EvaluationCard(card_fpath, output_path)
     status = card.evaluate()
-    run_dpath = ub.Path(next(iter(ub.Path(output_path).iterdir())))
+    run_dpath = Path(next(iter(Path(output_path).iterdir())))
     return status, run_dpath
 
 
 @pytest.mark.parametrize('example,relation,ref', CARDS)
-def test_a_demo_card_verifies_and_records_its_relation(
-        example, relation, ref, tmp_path):
+def test_demo_cards_write_versioned_statement_links(example, relation, ref, tmp_path):
     status, run_dpath = _run(example, tmp_path / 'runs')
     assert status == 'VERIFIED'
 
-    theory = json.loads((run_dpath / 'theory.json').read_text())
-    assert [link['relation'] for link in theory['links']] == [relation]
-    assert theory['links'][0]['ref'] == ref
+    report = json.loads((run_dpath / 'theory.json').read_text())
+    assert report['schema_version'] == 1
+    assert [link['relation'] for link in report['statement_links']] == [relation]
+    assert report['statement_links'][0]['ref'] == ref
+    assert report['premise_links'] == []
+    assert report['premise_coverage'] == []
+    assert [entry['id'] for entry in report['entries']] == [ref]
+    assert report['entries'][0]['statement']
+    assert 'unresolved' not in report
 
-    # The entry the link points at travels with it, so the artifact reads on
-    # its own without the index beside it.
-    assert [entry['id'] for entry in theory['entries']] == [ref]
-    assert theory['entries'][0]['statement']
-    assert 'unresolved' not in theory
 
-
-def test_the_link_names_the_code_that_declares_it(tmp_path):
+def test_source_paths_are_portable_and_formalization_is_structured(tmp_path):
     _, run_dpath = _run('training_order', tmp_path / 'runs')
-    link = json.loads((run_dpath / 'theory.json').read_text())['links'][0]
+    report = json.loads((run_dpath / 'theory.json').read_text())
+    link = report['statement_links'][0]
     assert link['qualname'] == 'training_order_sensitivity'
-    assert link['file'].endswith('training_order/experiment.py')
-    assert '..' not in link['file']
-    assert link['line'] > 0
-
-
-def test_the_question_is_carried_as_a_question(tmp_path):
-    _, run_dpath = _run('training_order', tmp_path / 'runs')
-    entry = json.loads((run_dpath / 'theory.json').read_text())['entries'][0]
-    assert entry['kind'] == 'question'
+    assert link['file'] == 'experiment.py'
+    assert not link['file'].startswith('/')
+    entry = report['entries'][0]
+    assert entry['formalization'] == {'system': 'lean4'}
+    assert entry['source_path'] == 'TrainingOrder.lean'
 
 
 def test_a_card_without_a_theory_block_writes_no_artifact(tmp_path):
@@ -69,16 +64,19 @@ def test_a_card_without_a_theory_block_writes_no_artifact(tmp_path):
     assert not (run_dpath / 'theory.json').exists()
 
 
-def test_a_reference_with_no_entry_is_an_error(tmp_path):
-    (tmp_path / 'demo.py').write_text(ub.codeblock(
-        '''
-        import magnet.theory as theory
+def test_broken_theory_fails_before_the_run_directory_is_created(tmp_path):
+    (tmp_path / 'demo.py').write_text(
+        textwrap.dedent(
+            '''
+            import magnet.theory as theory
 
-        @theory.tests('Nope.Missing')
-        def experiment():
-            pass
-        '''))
-    (tmp_path / 'card.yaml').write_text(ub.codeblock(
+            @theory.tests('Nope.Missing')
+            def experiment():
+                pass
+            '''
+        )
+    )
+    card_data = textwrap.dedent(
         '''
         title: unresolved
         description: names something the card does not define
@@ -90,75 +88,217 @@ def test_a_reference_with_no_entry_is_an_error(tmp_path):
             type: int
             value: 1
         theory:
-          sources: [demo.py]
+          empirical_sources: [demo.py]
           entries: []
-        '''))
-    card = EvaluationCard(tmp_path / 'card.yaml', tmp_path / 'runs',
-                          validate='off')
+        '''
+    )
+    (tmp_path / 'card.yaml').write_text(card_data)
+    output_path = tmp_path / 'runs'
+    from magnet.evaluation import EvaluationCard
+    card = EvaluationCard(tmp_path / 'card.yaml', output_path, validate='off')
     with pytest.raises(ValueError, match='Nope.Missing'):
         card.evaluate()
+    assert not output_path.exists()
 
 
-def test_card_and_source_links_share_one_report(tmp_path):
-    # A real card can put its claim-level relation in YAML while source
-    # annotations identify a finer-grained implementation relationship.
-    (tmp_path / 'demo.py').write_text(ub.codeblock(
-        '''
-        import magnet.theory as theory
+def test_card_and_source_statement_links_share_one_report(tmp_path):
+    (tmp_path / 'demo.py').write_text(
+        textwrap.dedent(
+            '''
+            import magnet.theory as theory
 
-        @theory.approximates('From.File', note='finite implementation proxy')
-        def one():
-            pass
-        '''))
+            @theory.approximates('From.File', note='finite implementation proxy')
+            def one():
+                pass
+            '''
+        )
+    )
     (tmp_path / 'shared.yaml').write_text(
-        'entries:\n  - id: From.File\n    kind: theorem\n')
-    (tmp_path / 'card.yaml').write_text(ub.codeblock(
-        '''
-        title: both
-        description: one entry from a file, one written out here
-        claim:
-          python: |
-            assert True
-        symbols:
-          x:
-            type: int
-            value: 1
-        theory:
-          links:
-            - relation: tests
-              ref: From.Card
-              note: the card claim directly evaluates this finite proposition
-          sources: [demo.py]
-          indexes: [shared.yaml]
-          entries:
-            - id: From.Card
-              kind: definition
-        '''))
-    card = EvaluationCard(tmp_path / 'card.yaml', tmp_path / 'runs',
-                          validate='off')
-    assert card.evaluate() == 'VERIFIED'
-    run_dpath = ub.Path(next(iter((tmp_path / 'runs').iterdir())))
-    theory = json.loads((run_dpath / 'theory.json').read_text())
-    assert sorted(e['id'] for e in theory['entries']) == ['From.Card', 'From.File']
-    assert [link['relation'] for link in theory['links']] == ['tests', 'approximates']
-    card_link, source_link = theory['links']
-    assert card_link['note'].startswith('the card claim')
-    assert 'file' not in card_link
-    assert source_link['note'] == 'finite implementation proxy'
-    assert source_link['file'].endswith('demo.py')
-
-
-def test_an_unresolved_card_level_link_is_an_error(tmp_path):
+        textwrap.dedent(
+            '''
+            schema_version: 1
+            entries:
+              - id: From.File
+                kind: theorem
+                statement: shared theorem
+            '''
+        )
+    )
     card = {
         'theory': {
-            'links': [{'relation': 'tests', 'ref': 'Nope.Missing'}],
+            'links': [
+                {
+                    'relation': 'tests',
+                    'ref': 'From.Card',
+                    'note': 'the card claim directly evaluates this proposition',
+                }
+            ],
+            'empirical_sources': ['demo.py'],
+            'indexes': ['shared.yaml'],
+            'entries': [
+                {'id': 'From.Card', 'kind': 'definition', 'statement': 'finite claim'}
+            ],
         }
     }
     from magnet.theory.cards import report_from_card
-    with pytest.raises(ValueError, match='Nope.Missing'):
+
+    report = report_from_card(card, tmp_path).to_dict()
+    assert [entry['id'] for entry in report['entries']] == ['From.Card', 'From.File']
+    assert [link['relation'] for link in report['statement_links']] == [
+        'tests', 'approximates'
+    ]
+    card_link, source_link = report['statement_links']
+    assert 'file' not in card_link
+    assert source_link['file'] == 'demo.py'
+
+
+def test_static_premise_coverage_is_computed_from_index_and_source(tmp_path):
+    (tmp_path / 'experiment.py').write_text(
+        textwrap.dedent(
+            '''
+            import magnet.theory as theory
+
+            @theory.tests('Example.Stability')
+            @theory.satisfies(
+                'Example.Stability::hbounded',
+                note='input validation establishes the bounded domain')
+            def evaluate():
+                with theory.assumes(
+                        'Example.Stability::hiid',
+                        note='the sampling procedure is treated as IID'):
+                    return True
+            '''
+        )
+    )
+    (tmp_path / 'theory.yaml').write_text(
+        textwrap.dedent(
+            '''
+            schema_version: 1
+            formalization:
+              system: lean4
+              repository: https://example.invalid/formalization.git
+              revision: synthetic-revision
+            entries:
+              - id: Example.Stability
+                kind: theorem
+                declaration: Example.stability
+                source_path: Example/Stability.lean
+                statement: synthetic stability theorem
+                premises:
+                  - id: hbounded
+                    type: Bounded xs
+                  - id: hiid
+                    type: IID samples
+                  - id: hunique
+                    type: Unique optimum
+            '''
+        )
+    )
+    card = {
+        'theory': {
+            'empirical_sources': ['experiment.py'],
+            'indexes': ['theory.yaml'],
+        }
+    }
+    from magnet.theory.cards import report_from_card
+
+    report = report_from_card(card, tmp_path).to_dict()
+    assert [link['relation'] for link in report['statement_links']] == ['tests']
+    assert [link['relation'] for link in report['premise_links']] == [
+        'satisfies', 'assumes'
+    ]
+    coverage = report['premise_coverage'][0]
+    assert coverage['ref'] == 'Example.Stability'
+    assert coverage['premise_count'] == 3
+    assert coverage['accounted_count'] == 2
+    assert coverage['complete'] is False
+    assert coverage['unaccounted'] == ['hunique']
+    by_id = {premise['id']: premise for premise in coverage['premises']}
+    assert by_id['hbounded']['links'][0]['relation'] == 'satisfies'
+    assert by_id['hiid']['links'][0]['relation'] == 'assumes'
+    assert by_id['hunique']['accounted'] is False
+
+
+def test_unknown_premise_is_a_static_resolution_error(tmp_path):
+    (tmp_path / 'experiment.py').write_text(
+        textwrap.dedent(
+            '''
+            import magnet.theory as theory
+
+            @theory.tests('Example.Stability')
+            @theory.assumes('Example.Stability::hmissing')
+            def evaluate():
+                pass
+            '''
+        )
+    )
+    card = {
+        'theory': {
+            'empirical_sources': ['experiment.py'],
+            'entries': [
+                {
+                    'id': 'Example.Stability',
+                    'kind': 'theorem',
+                    'statement': 'demo',
+                    'premises': [{'id': 'hexists'}],
+                }
+            ],
+        }
+    }
+    from magnet.theory.cards import report_from_card
+
+    with pytest.raises(ValueError, match='hmissing'):
         report_from_card(card, tmp_path)
 
 
-def test_theory_schema_rejects_silent_extra_keys():
+def test_card_level_premise_links_are_rejected():
+    with pytest.raises(ValidationError, match='cannot target premises'):
+        TheorySchema.model_validate(
+            {
+                'links': [
+                    {'relation': 'approximates', 'ref': 'Example.Stability::hiid'}
+                ]
+            }
+        )
+
+
+def test_theory_schema_uses_empirical_sources_and_rejects_old_name():
+    parsed = TheorySchema.model_validate({'empirical_sources': ['experiment.py']})
+    assert parsed.empirical_sources == ['experiment.py']
+    with pytest.raises(ValidationError, match='sources'):
+        TheorySchema.model_validate({'sources': ['experiment.py']})
     with pytest.raises(ValidationError, match='ledger'):
         TheorySchema.model_validate({'ledger': 'old-theory-ledger.json'})
+
+
+def test_motivates_does_not_create_premise_coverage_obligation(tmp_path):
+    (tmp_path / 'experiment.py').write_text(
+        textwrap.dedent(
+            '''
+            import magnet.theory as theory
+
+            @theory.motivates('Example.Question')
+            @theory.assumes('Example.Question::hcontext')
+            def observe():
+                pass
+            '''
+        )
+    )
+    card = {
+        'theory': {
+            'empirical_sources': ['experiment.py'],
+            'entries': [
+                {
+                    'id': 'Example.Question',
+                    'kind': 'question',
+                    'statement': 'why does the phenomenon occur?',
+                    'premises': [{'id': 'hcontext'}],
+                }
+            ],
+        }
+    }
+    from magnet.theory.cards import report_from_card
+
+    report = report_from_card(card, tmp_path).to_dict()
+    assert report['premise_coverage'] == []
+    assert report['unattached_premise_links'] == []

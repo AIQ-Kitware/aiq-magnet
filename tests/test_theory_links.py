@@ -1,186 +1,251 @@
-"""
-The three relations, and reading them back out of source.
-"""
+"""The static annotation vocabulary and versioned theory index."""
 import ast
+import textwrap
+from pathlib import Path
 
 import pytest
-import ubelt as ub
 
 import magnet.theory as theory
 from magnet.theory.index import Entry, TheoryIndex, load_index
-from magnet.theory.static import extract, extract_tree
+from magnet.theory.static import TheoryAnnotationError, extract, extract_tree
 
 
-def test_a_relation_is_inert_as_a_decorator():
-    @theory.tests('A.b')
+def test_annotations_are_runtime_inert():
+    @theory.tests('A.Statement')
+    @theory.assumes('A.Statement::hpremise')
     def experiment(value):
         return value * 2
 
     assert experiment(21) == 42
-
-
-def test_a_relation_is_inert_as_a_context_manager():
-    with theory.approximates('A.b', note='finite sample') as link:
+    with theory.checks('A.Statement::hpremise') as link:
         result = 1 + 1
     assert result == 2
-    assert (link.relation, link.ref) == ('approximates', 'A.b')
-    assert link.note == 'finite sample'
+    assert (link.relation, link.ref) == ('checks', 'A.Statement::hpremise')
 
 
-def test_the_shim_matches_the_real_relations():
-    from magnet.theory import shim
+def test_annotation_module_is_dependency_free_and_copyable(tmp_path):
+    from magnet.theory import annotations
 
-    @shim.motivates('A.b')
-    def experiment():
-        return 'unchanged'
+    source = Path(annotations.__file__).read_text()
+    assert 'import magnet' not in source
+    vendored = tmp_path / 'magnet_theory.py'
+    vendored.write_text(source)
+    namespace = {}
+    exec(compile(source, str(vendored), 'exec'), namespace)
+    assert namespace['tests'].__test__ is False
+    assert namespace['satisfies']('A::h').ref == 'A::h'
 
-    assert experiment() == 'unchanged'
-    with shim.tests('A.b'):
-        pass
 
-
-SOURCE = ub.codeblock(
+SOURCE = textwrap.dedent(
     '''
     import magnet.theory as theory
 
-    @theory.tests('Examples.CoinFlip.Binomial')
+    @theory.tests('Examples.Stability.Theorem')
+    @theory.satisfies('Examples.Stability.Theorem::hbounded')
     def exact(n):
-        return n
+        with theory.assumes(
+                'Examples.Stability.Theorem::hiid',
+                note='sampling is treated as IID'):
+            return n
 
     class Estimator:
         @theory.approximates(
-            'Examples.Dice.SumSevenProbability', note='finite sample')
+            'Examples.Stability.Population', note='finite sample')
         def estimate(self):
-            with theory.motivates('Examples.TrainingOrder.Why'):
+            with theory.checks('Examples.Stability.Population::hpositive'):
                 return 0
-    ''')
+    '''
+)
 
 
-def test_extraction_records_relation_ref_and_site():
+def test_extraction_records_statement_and_premise_links():
     links = extract_tree(ast.parse(SOURCE), 'demo.py')
     found = [(link.relation, link.ref, link.qualname) for link in links]
     assert found == [
-        ('tests', 'Examples.CoinFlip.Binomial', 'exact'),
-        ('approximates', 'Examples.Dice.SumSevenProbability',
-         'Estimator.estimate'),
-        ('motivates', 'Examples.TrainingOrder.Why', 'Estimator.estimate'),
+        ('tests', 'Examples.Stability.Theorem', 'exact'),
+        ('satisfies', 'Examples.Stability.Theorem::hbounded', 'exact'),
+        ('assumes', 'Examples.Stability.Theorem::hiid', 'exact'),
+        ('approximates', 'Examples.Stability.Population', 'Estimator.estimate'),
+        ('checks', 'Examples.Stability.Population::hpositive', 'Estimator.estimate'),
     ]
-    assert all(link.file == 'demo.py' for link in links)
-    assert links[1].note == 'finite sample'
-    assert links[0].line == 3
+    assert links[0].target_kind == 'statement'
+    assert links[1].target_kind == 'premise'
+    assert links[2].note == 'sampling is treated as IID'
 
 
-def test_the_vendored_alias_is_read_the_same_way():
-    source = SOURCE.replace('import magnet.theory as theory',
-                            'import magnet_theory as theory')
+@pytest.mark.parametrize(
+    'import_line',
+    [
+        'import magnet_theory as theory',
+        'from .. import magnet_theory as theory',
+        'from magnet import theory',
+    ],
+)
+def test_supported_annotation_namespace_imports(import_line):
+    source = SOURCE.replace('import magnet.theory as theory', import_line)
     links = extract_tree(ast.parse(source), 'demo.py')
     assert [link.relation for link in links] == [
-        'tests', 'approximates', 'motivates']
+        'tests', 'satisfies', 'assumes', 'approximates', 'checks'
+    ]
 
 
 def test_a_file_that_never_imports_theory_is_skipped():
-    source = ub.codeblock(
+    source = textwrap.dedent(
         '''
         import something_else as theory
 
-        @theory.tests('A.b')
+        @theory.tests('A.Statement')
         def experiment():
             pass
-        ''')
+        '''
+    )
     assert extract_tree(ast.parse(source), 'demo.py') == []
 
 
-@pytest.mark.parametrize('call', [
-    "theory.tests(REF)",             # a name, not a literal
-    "theory.tests('A.' + 'b')",      # concatenated
-    "theory.tests()",                # no reference at all
-    "theory.believes('A.b')",        # not one of the three relations
-])
-def test_only_a_literal_reference_in_a_known_relation_counts(call):
-    source = ub.codeblock(
+@pytest.mark.parametrize(
+    'call,match',
+    [
+        ('theory.tests(REF)', 'literal string'),
+        ("theory.tests('A.' + 'b')", 'literal string'),
+        ('theory.tests()', 'exactly one'),
+        ("theory.tests('A', extra='x')", 'unsupported keyword'),
+        ("theory.satisfies('A')", 'EntryId::binder'),
+        ("theory.tests('A::h')", 'whole statement'),
+    ],
+)
+def test_malformed_recognized_annotations_are_errors(call, match):
+    source = textwrap.dedent(
         f'''
         import magnet.theory as theory
-        REF = 'A.b'
+        REF = 'A.Statement'
 
         @{call}
         def experiment():
             pass
-        ''')
-    assert extract_tree(ast.parse(source), 'demo.py') == []
+        '''
+    )
+    with pytest.raises(TheoryAnnotationError, match=match):
+        extract_tree(ast.parse(source), 'demo.py')
 
 
-def test_a_bare_call_is_not_an_annotation():
-    # Only a decorator or a with-item counts, so a stray call in a function
-    # body cannot quietly add a link.
-    source = ub.codeblock(
+def test_unknown_relation_and_bare_calls_are_not_annotations():
+    source = textwrap.dedent(
         '''
         import magnet.theory as theory
 
+        @theory.believes('A.Statement')
         def experiment():
-            theory.tests('A.b')
-        ''')
+            theory.tests('A.Statement')
+        '''
+    )
     assert extract_tree(ast.parse(source), 'demo.py') == []
 
 
-def test_extract_walks_a_directory(tmp_path):
-    (tmp_path / 'annotated.py').write_text(SOURCE)
-    (tmp_path / 'plain.py').write_text('x = 1\n')
-    (tmp_path / 'broken.py').write_text('def (:\n')
-    links = extract([str(tmp_path)])
-    assert [link.relation for link in links] == [
-        'tests', 'approximates', 'motivates']
+def test_extract_is_strict_and_records_declared_relative_paths(tmp_path):
+    source_dpath = tmp_path / 'src'
+    source_dpath.mkdir()
+    (source_dpath / 'annotated.py').write_text(SOURCE)
+    links = extract(['src'], root=tmp_path)
+    assert links[0].file == 'src/annotated.py'
+
+    (source_dpath / 'broken.py').write_text('def (:\n')
+    with pytest.raises(SyntaxError):
+        extract(['src'], root=tmp_path)
 
 
-def test_an_index_resolves_references(tmp_path):
+def test_versioned_index_resolves_entries_and_premises(tmp_path):
     fpath = tmp_path / 'theory.yaml'
-    fpath.write_text(ub.codeblock(
-        '''
-        entries:
-          - id: Examples.CoinFlip.Binomial
-            kind: theorem
-            statement: P(X = k) = C(n, k) p^k (1-p)^(n-k)
-          - id: Examples.TrainingOrder.Why
-            kind: question
-            statement: Why does order change the learned solution?
-        '''))
+    fpath.write_text(
+        textwrap.dedent(
+            '''
+            schema_version: 1
+            formalization:
+              system: lean4
+              repository: https://example.invalid/formalization.git
+              revision: deadbeef
+            entries:
+              - id: Examples.Stability.Theorem
+                kind: theorem
+                declaration: MagnetExamples.Stability.theorem
+                source_path: MagnetExamples/Stability.lean
+                premises:
+                  - id: hbounded
+                    type: Bounded xs
+                  - id: hiid
+                    statement: samples are independent and identically distributed
+            '''
+        )
+    )
     index = load_index(fpath)
-    assert len(index) == 2
-    assert index['Examples.TrainingOrder.Why'].kind == 'question'
+    entry = index['Examples.Stability.Theorem']
+    assert entry.formalization.system == 'lean4'
+    assert entry.formalization.revision == 'deadbeef'
+    assert index.resolve('Examples.Stability.Theorem::hbounded').type == 'Bounded xs'
     assert index.unresolved(
-        ['Examples.CoinFlip.Binomial', 'Nope.Missing']) == ['Nope.Missing']
+        ['Examples.Stability.Theorem::hbounded', 'Examples.Stability.Theorem::hmissing']
+    ) == ['Examples.Stability.Theorem::hmissing']
 
 
-def test_a_definition_and_source_are_valid_theory_entries(tmp_path):
+def test_index_schema_version_is_required(tmp_path):
     fpath = tmp_path / 'theory.yaml'
-    fpath.write_text(ub.codeblock(
-        '''
-        entries:
-          - id: Dkps.EmpiricalCrossBudgetMAEClaim
-            kind: definition
-            declaration: DkpsQuench2026.Paper.TheoryPractice.EmpiricalCrossBudgetMAEClaim
-            source: https://example.invalid/dkps@deadbeef
-        '''))
-    entry = load_index(fpath)['Dkps.EmpiricalCrossBudgetMAEClaim']
-    assert entry.kind == 'definition'
-    assert entry.declaration.endswith('EmpiricalCrossBudgetMAEClaim')
-    assert entry.source.endswith('@deadbeef')
-
-
-def test_an_unknown_kind_is_rejected(tmp_path):
-    fpath = tmp_path / 'theory.yaml'
-    fpath.write_text('entries:\n  - id: A.b\n    kind: vibes\n')
-    with pytest.raises(ValueError, match='vibes'):
+    fpath.write_text(
+        'entries:\n  - id: A.Statement\n    kind: theorem\n    statement: demo\n'
+    )
+    with pytest.raises(ValueError, match='schema_version'):
         load_index(fpath)
 
 
-def test_an_entry_without_an_id_is_rejected(tmp_path):
-    fpath = tmp_path / 'theory.yaml'
-    fpath.write_text('entries:\n  - kind: theorem\n')
-    with pytest.raises(ValueError, match='no id'):
-        load_index(fpath)
+def test_duplicate_entry_and_premise_ids_are_rejected(tmp_path):
+    duplicate_entries = tmp_path / 'entries.yaml'
+    duplicate_entries.write_text(
+        textwrap.dedent(
+            '''
+            schema_version: 1
+            entries:
+              - {id: A.Statement, kind: theorem, statement: one}
+              - {id: A.Statement, kind: theorem, statement: two}
+            '''
+        )
+    )
+    with pytest.raises(ValueError, match='duplicate theory entry'):
+        load_index(duplicate_entries)
+
+    duplicate_premises = tmp_path / 'premises.yaml'
+    duplicate_premises.write_text(
+        textwrap.dedent(
+            '''
+            schema_version: 1
+            entries:
+              - id: A.Statement
+                kind: theorem
+                statement: demo
+                premises:
+                  - {id: h}
+                  - {id: h}
+            '''
+        )
+    )
+    with pytest.raises(ValueError, match='duplicate premise'):
+        load_index(duplicate_premises)
+
+
+def test_entry_kind_and_identity_are_explicit(tmp_path):
+    missing_kind = tmp_path / 'missing-kind.yaml'
+    missing_kind.write_text(
+        'schema_version: 1\nentries:\n  - id: A.Statement\n    statement: demo\n'
+    )
+    with pytest.raises(ValueError, match='kind None'):
+        load_index(missing_kind)
+
+    empty = tmp_path / 'empty.yaml'
+    empty.write_text(
+        'schema_version: 1\nentries:\n  - id: A.Statement\n    kind: theorem\n'
+    )
+    with pytest.raises(ValueError, match='statement or declaration'):
+        load_index(empty)
 
 
 def test_index_membership():
-    index = TheoryIndex([Entry('A.b', 'conjecture')])
-    assert 'A.b' in index
-    assert 'A.c' not in index
+    index = TheoryIndex([Entry('A.Statement', 'conjecture', statement='demo')])
+    assert 'A.Statement' in index
+    assert 'A.Missing' not in index

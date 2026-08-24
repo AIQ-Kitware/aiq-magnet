@@ -5,7 +5,7 @@
 # than carry a lake project and a Mathlib pin in this repository, borrow an
 # existing one:
 #
-#   MAGNET_LEAN_PROJECT=~/code/aiq-dkps-formalization ./check_lean.sh
+#   MAGNET_LEAN_PROJECT=~/code/mathlib-project ./check_lean.sh
 #
 # A `sorry` is reported rather than treated as a failure: a statement can be
 # well-formed and unproved, and which of the two it is belongs in the output.

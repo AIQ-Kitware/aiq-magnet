@@ -1,147 +1,91 @@
-# Theory links: what this is, and what it deliberately is not
+# Static theory links: design boundary
 
-Notes from the design discussion, kept because the shape of this feature is
-the result of throwing away a larger one, and the reasons will not be visible
-from the code that survived.
+The feature has one job: make the team's argument about how empirical code
+relates to theory explicit, structured, and reportable without importing the
+team's code or recording runtime theory state.
 
-The user-facing documentation is `docs/source/manual/theory_links.rst`. This
-file is the argument behind it.
+## Two static layers
 
-## The sentence the feature has to establish
-
-> MAGNET can record how empirical code relates to a theoretical object.
-
-Everything merged serves that. An earlier attempt tried to establish it *and*
-build hypothesis-level assumption auditing at the same time, and came to ~3,490
-added lines. Reviewing it meant understanding a coverage model, a severity
-scale, proof status, freshness, review workflow and binder-level references
-before you could judge whether the core idea was right.
-
-## Three relations, one grammar
+Statement links connect empirical claims or procedures to theoretical objects:
 
     practice tests theory
     practice approximates theory
     practice motivates theory
 
-The three read as sentences with the same structure, which is what makes the
-vocabulary learnable. They also form a progression:
+Premise links connect implementation sites to named premises of those objects:
 
-| relation | the role theory plays |
-|---|---|
-| `tests` | theory says exactly what should happen; practice checks it |
-| `approximates` | theory defines something exact; practice estimates it |
-| `motivates` | practice finds something; theory is asked to explain it |
+    satisfies
+    approximates
+    substitutes
+    assumes
+    ignores
+    violates
+    checks
 
-`motivates` is the one that took discussion to arrive at, and the one that
-matters most for real evaluation work. An experiment that establishes a
-phenomenon does not have to explain it. Naming the question is what lets an
-explanation arrive later, and it is an honest connection where inventing a
-theorem to point at would not be.
+The shared `approximates` verb is intentional. At statement scope it says the
+empirical procedure is a finite or proxy version of a theoretical object. At
+premise scope it says the implementation represents the same required object
+finitely or numerically.
 
-The loop this opens:
+A premise reference is `EntryId::binder`. The entry resolves through a theory
+index to a formal declaration; the binder resolves against the premise list
+exported for that entry. This gives static reporting a precise join point and
+creates a future formal-verification obligation without defining Python runtime
+semantics now.
 
-    empirical observation
-        └── motivates → question
-                           └── conjecture
-                                  └── tests → new experiment
+## Lean owns formal statements
 
-An entry keeps its id as it moves along that path, so code pointing at a
-question keeps working when the question becomes a conjecture and then a
-theorem.
+Formalized objects should normally enter MAGNET through a versioned index:
 
-## The examples are miniature methods
+    Lean declaration -> generated theory index -> MAGNET entry ID
 
-Each example directory is a small stand-in for what a team brings to the
-program: a method, an idea it is evidence for, and a card that runs it.
+The index carries formalization provenance, declaration identity, and named
+premises. Human-readable `statement` text is report metadata when a declaration
+exists. Cards do not redefine the formal proposition.
 
-    coin_flip/       card.yaml  experiment.py  CoinFlip.lean
-    monte_carlo/     card.yaml  experiment.py  Circle.lean
-    training_order/  card.yaml  experiment.py  TrainingOrder.lean
+Inline entries remain useful for local questions, conjectures, and claim shapes
+that do not yet have a formal home.
 
-`experiment.py` is the method. It carries the annotation, because the
-relationship belongs next to the code that does the work rather than in a
-separate registry that drifts from it. It also has a `kwconf` CLI and writes a
-JSON artifact, so it is already a node executable. `card.yaml` is what MAGNET
-runs, and names what the method is evidence for in its own `theory.entries`.
-The `.lean` file is that statement, formally.
+Entry IDs identify stable theoretical objects. A question that later receives a
+conjecture or theorem keeps its historical identity and gets a new related
+object; an old ID does not change its proposition underneath existing empirical
+annotations.
 
-Entries are inline rather than in a sibling index file. Three files per example
-where two will do is a file to keep in sync for no reader. A card pointing at
-an index generated from a formalization still names it with `theory.indexes`;
-both paths share one validator.
+## Empirical source owns premise accounting
 
-Keeping them in one directory means an example can be read in one place and
-copied out in one piece. It also means the card names its siblings
-(`sources: [experiment.py]`) rather than reaching across the tree.
+The card names `empirical_sources` to scan. Statement links may also live in the
+card when the relationship belongs to the card-level claim. Premise links stay
+next to the implementation because they describe what code does about a named
+formal assumption.
 
-None of the three uses kwdagger. A card whose symbol imports a helper is
-enough to exercise the mechanism, and it keeps DAG execution, leasing,
-scheduling and result-cell machinery out of the review. Each card carries a
-commented block showing the pipeline it would become once that work lands --
-the shape is known, and writing it down is cheaper than rediscovering it.
+Annotations are runtime no-ops. Static extraction accepts a narrow literal
+syntax and fails on malformed recognized annotations. The dependency-free
+`annotations.py` file can be copied verbatim into a team package as
+`magnet_theory.py`.
 
-Verified rather than assumed: the cards carry neither a `kwdagger:` nor a
-`pipeline:` key, so `evaluate` takes its serial branch. A run leaves
-`card.yaml`, `log`, `results`, `verdict.json` and `theory.json`, with no
-`kwdagger/` tree and no cmd_queue entry. The theory link is read from source in
-either case, so the block does not change when a card is ported.
+## Coverage is derived
 
-## Where the claim lives today, and where it is going
+A statement entry declares its premise list. Source annotations account for
+some subset of those premises. MAGNET computes the remainder as unaccounted and
+writes that result to the versioned `theory.json` artifact.
 
-Right now each card decides its verdict with a `claim:` block of Python:
+No author maintains a coverage flag. No severity, review, or freshness workflow
+is required to answer the basic reporting question:
 
-```yaml
-claim:
-  python: |
-    assert deviation == 0
-```
-
-That is what `upstream/main` supports. The direction is a declarative
-`evidence:` block — what was measured, the relation asserted, the scope it
-holds over, what had to be relaxed — which exists on
-`dev/evidence-and-per-cell-results` and is not part of this branch.
-
-The two fit together without conflict: `evidence:` is how a card states its
-finding, and a theory link is what that finding is evidence *for*. When the
-branches meet, these three cards are the natural first users of both at once.
-Wiring it in here would merge two reviews into one.
+    Which premises does this empirical argument satisfy, approximate,
+    substitute, assume, ignore, violate, check, or leave unaccounted?
 
 ## Deliberately absent
 
-Moved to a later pass, once reviewers understand the graph being enriched:
+This layer does not record runtime theory state. In particular it does not:
 
-- `satisfies`, `substitutes`, `assumes`, `ignores`, `violates`, and
-  hypothesis-level `approximates`
-- `grounds`, whose theorem-level distinction the three relations replace
-- coverage reports, assumption accounting, dangling-hypothesis bookkeeping
-- severity, review status, freshness as modeled axes
-- proof status read from the kernel; `#print axioms` and `KERNEL_AXIOMS`
-- `Declaration::binder` references and hypothesis enumeration
-- a generated ledger artifact separate from the card
-- runtime attachment of annotations to the objects they decorate
+- bind Lean parameters to concrete Python values;
+- attach theory metadata to runtime Python objects;
+- record whether a particular runtime premise check passed;
+- model severity or human review status;
+- model proof status or axiom dependencies;
+- maintain freshness as a status axis;
+- require a separate generated ledger.
 
-The last one is worth a sentence: nothing consumed those attributes except
-their own tests. Static extraction was already the declared source of truth,
-so the runtime half was cost with no reader.
-
-## Choices that are easy to get wrong
-
-**One accepted spelling.** The extractor takes `<alias>.<relation>('literal')`
-as a decorator or a with-item, and nothing else. Being liberal in what you
-accept means nobody can predict whether an annotation counts. An earlier
-version accepted object references, f-strings, concatenation, module-level
-bindings and `typing.Annotated`, and needed 734 lines to do it.
-
-**The relations are inert.** They return what they wrap. Annotated code behaves
-identically whether or not anyone reads the annotations, which is what makes it
-reasonable to ask a team to add them.
-
-**`tests.__test__ = False`.** pytest collects any module-level callable named
-`test*`, so importing the relation into a test file turns it into a collected
-test that fails on its own argument. The verb is right; the collection
-convention should not get to veto it.
-
-**An entry without a `declaration` is valid.** It says the statement exists in
-prose and nobody has formalized it, which is the state most entries start in.
-Requiring formalization would push people toward pointing at whatever theorem
-happens to exist.
+Those capabilities can use the same stable statement and premise identities if
+they become necessary later.

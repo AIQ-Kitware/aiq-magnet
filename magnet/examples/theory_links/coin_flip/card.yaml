@@ -56,16 +56,10 @@ links:
 
 # The statement is proved in CoinFlip.lean beside this file.
 theory:
-  sources:
+  empirical_sources:
     - experiment.py
-  entries:
-    - id: Examples.CoinFlip.Binomial
-      kind: theorem
-      declaration: MagnetExamples.CoinFlip.card_heads_eq_choose
-      source: CoinFlip.lean
-      statement: >
-        Exactly choose(n, k) of the 2^n sequences of n flips show k heads,
-        so each head count has probability choose(n, k) / 2^n.
+  indexes:
+    - theory.yaml
 
 claim:
   python: |

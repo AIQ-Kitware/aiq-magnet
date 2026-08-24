@@ -64,17 +64,10 @@ links:
 # The property is defined in TrainingOrder.lean beside this file, which
 # proves order invariance is a real restriction. The question is open.
 theory:
-  sources:
+  empirical_sources:
     - experiment.py
-  entries:
-    - id: Examples.TrainingOrder.Why
-      kind: question
-      declaration: MagnetExamples.TrainingOrder.OrderInvariant
-      source: TrainingOrder.lean
-      statement: >
-        Why can changing only the order of otherwise identical training
-        observations change the learned solution, and under what
-        conditions should a learning rule be order-invariant?
+  indexes:
+    - theory.yaml
 
 claim:
   python: |
