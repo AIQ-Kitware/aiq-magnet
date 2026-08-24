@@ -1,16 +1,19 @@
 """
-The kwdagger-native evaluation path.
+The replacement evaluation API built around kwdagger execution.
 
-``magnet evaluate`` remains an alias of the legacy evaluator. This module is
-where the replacement semantics are allowed to evolve: kwdagger owns
-computation and cardinality, MAGNET collects a configured result node, and the
-existing Python claim/verdict machinery is used only as a temporary
-result-consumption tail.
+``magnet evaluate`` remains an alias of the legacy evaluator. This module owns
+new evaluation terminology and execution semantics: a ``NewEvaluationRecipe``
+describes what to run, kwdagger owns computation and cardinality, and MAGNET
+turns each configured result-node cell into a ``NewEvaluationCellResult``.
+Those cell results are then reduced into a ``NewEvaluationResultCard``.
+
+The existing Python claim and verdict vocabulary is retained only as a
+transitional result-consumption layer while the replacement API takes shape.
 """
 from __future__ import annotations
 
 import json
-import sys
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
@@ -28,29 +31,37 @@ from magnet.evaluation import (
     SAFER_USE_TEMPFILE,
     Claim,
     EvaluationCard,
-    EvaluationTask,
     Metric,
     Symbols,
     _calculate_metrics,
     _parse_symbol_metadata,
     _reduce_results,
 )
-from magnet.schema import EvaluationCardSchema
+from magnet.schema import NewEvaluationRecipeSchema
 from magnet.utils.util_logger import setup_logging
 
+__all__ = [
+    'ClaimResultNamespace',
+    'NewEvaluationCLI',
+    'NewEvaluationCellResult',
+    'NewEvaluationRecipe',
+    'NewEvaluationResultCard',
+    'evaluate_new_recipe',
+]
 
-class NewEvaluationConfig(kwconf.Config):
-    """Run a kwdagger-native Evaluation Card."""
+
+class NewEvaluationCLI(kwconf.Config):
+    """Run a ``NewEvaluationRecipe`` with kwdagger."""
 
     __epilog__ = """
     This command intentionally has a smaller surface than `magnet evaluate`.
-    It accepts only cards with a `kwdagger:` block. Legacy `pipeline:`
+    It accepts only recipes with a `kwdagger:` block. Legacy `pipeline:`
     execution and symbol sweeps belong to `magnet evaluate` /
     `magnet evaluate_legacy` during the migration period.
     """
 
     path: str = kwconf.Value(
-        None, required=True, position=1, help='Path to evaluation card YAML'
+        None, required=True, position=1, help='Path to evaluation recipe YAML'
     )
 
     output_path: str = kwconf.Value(
@@ -62,7 +73,7 @@ class NewEvaluationConfig(kwconf.Config):
         None,
         parser=str,
         help=(
-            "YAML/JSON merged into the card's `kwdagger:` block, or a path "
+            "YAML/JSON merged into the recipe's `kwdagger:` block, or a path "
             'to a file containing it. This uses the same matrix/config '
             'language as `kwdagger schedule --params`.'
         ),
@@ -126,22 +137,85 @@ class NewEvaluationConfig(kwconf.Config):
         ),
     )
 
+    @classmethod
+    def main(
+        cls, argv: list[str] | None = None, **kwargs: Any
+    ) -> NewEvaluationResultCard | None:
+        args = cls.cli(
+            argv=argv,
+            data=kwargs,
+            strict=True,
+            verbose='auto',
+            special_options=False,
+        )
 
-class Results:
-    """Pipeline results addressed through their qualified dotted names."""
+        validate = args['validate']
+        if validate == 'only':
+            try:
+                with open(args.path, 'r') as file:
+                    cfg = yaml.safe_load(file)
+                NewEvaluationRecipeSchema.model_validate(cfg)
+                print('Recipe validation succeeded.')
+            except ValidationError as ex:
+                print('Recipe validation failed.')
+                print(ex)
+                raise SystemExit(1)
+            return None
+
+        recipe = NewEvaluationRecipe(
+            args.path, args.output_path, validate=validate
+        )
+        if args.params is not None:
+            recipe.apply_params(args.params)
+
+        schedule_options = {
+            key: args[key]
+            for key in [
+                'backend',
+                'tmux_workers',
+                'skip_existing',
+                'cache',
+                'max_configs',
+            ]
+        }
+        result_card = recipe.evaluate(
+            verbose=bool(args.verbose),
+            **schedule_options,
+        )
+        recipe.summarize()
+        return result_card
+
+
+class ClaimResultNamespace:
+    """
+    Attribute-access view of kwdagger result values used by Python claims.
+
+    KWDagger result leaves are collected under qualified names such as
+    ``metrics.llama_compare.gap``. A Python claim consumes those values through
+    the matching attribute expression, for example
+    ``metrics.llama_compare.gap < threshold``.
+
+    This proxy presents the flat result mapping as nested attributes and
+    records which leaf values were accessed. The access log is stored with the
+    per-cell claim result so the run record shows which kwdagger outputs the
+    claim actually consumed.
+
+    This object is claim-evaluation plumbing. It is neither an evaluation
+    result nor the aggregate ``NewEvaluationResultCard``.
+    """
 
     def __init__(
         self,
         flat: Dict[str, Any],
         prefix: str = '',
-        accessed: set | None = None,
+        accessed: set[str] | None = None,
     ) -> None:
         self._flat = dict(flat)
         self._prefix = prefix
         self._accessed = set() if accessed is None else accessed
 
     @property
-    def accessed(self) -> set:
+    def accessed(self) -> set[str]:
         return self._accessed
 
     def bind(self) -> Dict[str, Any]:
@@ -152,17 +226,10 @@ class Results:
             if root in self._flat:
                 bound[root] = self._flat[root]
             else:
-                bound[root] = Results(self._flat, f'{root}.', self._accessed)
+                bound[root] = ClaimResultNamespace(
+                    self._flat, f'{root}.', self._accessed
+                )
         return bound
-
-    def as_dict(self) -> Dict[str, Any]:
-        """Return the leaf values at this level, with prefixes removed."""
-        depth = self._prefix.count('.') + 1
-        return {
-            key.split('.')[depth]: value
-            for key, value in self._flat.items()
-            if key.startswith(self._prefix) and key.count('.') == depth
-        }
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith('_'):
@@ -173,7 +240,7 @@ class Results:
             return self._flat[key]
         deeper = f'{key}.'
         if any(k.startswith(deeper) for k in self._flat):
-            return Results(self._flat, deeper, self._accessed)
+            return ClaimResultNamespace(self._flat, deeper, self._accessed)
         available = sorted({
             k[len(self._prefix):].split('.')[0]
             for k in self._flat
@@ -185,98 +252,130 @@ class Results:
         )
 
     def __repr__(self) -> str:
-        return f'<Results {self._prefix or "/"}>'
+        return f'<ClaimResultNamespace {self._prefix or "/"}>'
 
 
-class NewEvaluationTask(EvaluationTask):
-    """A legacy claim evaluated against one kwdagger result-node cell."""
+@dataclass
+class NewEvaluationCellResult:
+    """
+    Result of applying one recipe claim to one kwdagger result-node cell.
 
-    def __init__(
-        self,
-        claim: Claim,
-        symbols: Symbols,
-        results: Dict[str, Any] | None = None,
-        cell_key: str | None = None,
-        measured: set | None = None,
-    ) -> None:
-        super().__init__(claim, symbols)
-        self.results = Results(results or {})
-        self.cell_key = cell_key
-        self.measured = measured or set()
+    ``result_values`` contains the qualified kwdagger outputs made available to
+    the claim. ``consumed`` records the subset the claim actually accessed.
+    ``result_id`` is stable for the kwdagger cell and the non-measured recipe
+    symbols, so changing a measured output does not create a second identity
+    for the same configured cell.
+    """
 
-    def execute(self) -> Tuple[str, str]:
-        self.symbols.resolve()
-        context = self.symbols()
-        for name, value in self.results.bind().items():
-            if name in context:
-                raise ValueError(
-                    f'symbol {name!r} collides with a pipeline result of the '
-                    f'same name; rename the symbol'
-                )
-            context[name] = value
-        self.result, self.output_msg = self.claim.evaluate(context)
-        self.record_run()
-        return self.result, self.output_msg
+    result_id: str
+    status: str
+    output: str
+    symbols: Dict[str, Any]
+    timestamp: str
+    cell_key: str
+    consumed: List[str] = field(default_factory=list)
+    result_values: Dict[str, Any] = field(default_factory=dict, repr=False)
 
-    def record_run(self) -> None:
-        super().record_run()
-        if self.cell_key:
-            self.log['cell'] = self.cell_key
-        if self.results.accessed:
-            self.log['consumed'] = sorted(self.results.accessed)
+    def as_record(self) -> Dict[str, Any]:
+        """Return the persisted per-cell verdict record."""
+        record = {
+            'status': self.status,
+            'output': self.output,
+            'symbols': self.symbols,
+            'timestamp': self.timestamp,
+            'cell': self.cell_key,
+        }
+        if self.consumed:
+            record['consumed'] = self.consumed
+        return record
+
+
+@dataclass
+class NewEvaluationResultCard:
+    """
+    Aggregate result produced by evaluating one ``NewEvaluationRecipe``.
+
+    The card contains the final reduced result, all per-cell claim results, and
+    any derived metrics. ``as_record`` preserves the current ``verdict.json``
+    representation while the replacement Python API gets distinct recipe and
+    result types.
+    """
+
+    result: str
+    claim_aggregation_strategy: Dict[str, Any]
+    cell_results: List[NewEvaluationCellResult]
+    metrics: Dict[str, Any] = field(default_factory=dict)
 
     @property
-    def cell_id(self) -> str:
-        """Stable verdict-directory identity for one result-node cell."""
-        if self.cell_key is None:
-            return self._execution_hash
-        return f'{self.cell_key}_{self._execution_hash}'
+    def cell_result_ids(self) -> List[str]:
+        return [cell.result_id for cell in self.cell_results]
 
-    @property
-    def _execution_hash(self) -> str:
-        view = self.symbols.simple_view()
-        view = {k: v for k, v in view.items() if k not in self.measured}
-        return ub.hash_data(view)[:12]
+    def as_record(self) -> Dict[str, Any]:
+        record: Dict[str, Any] = {
+            'result': self.result,
+            'claim_aggregation_strategy': self.claim_aggregation_strategy,
+            'claims': self.cell_result_ids,
+        }
+        if self.metrics:
+            record['metrics'] = self.metrics
+        return record
 
 
-class NewEvaluationCard(EvaluationCard):
-    """EvaluationCard state needed only by the kwdagger-native evaluator."""
+class NewEvaluationRecipe(EvaluationCard):
+    """
+    Input recipe for the replacement kwdagger-native evaluation API.
+
+    The recipe owns MAGNET metadata, the Python claim, declared symbols, and a
+    required ``kwdagger:`` execution block. KWDagger owns computation and
+    matrix expansion. MAGNET consumes the configured ``result_node`` cells and
+    returns a ``NewEvaluationResultCard``.
+
+    The legacy ``EvaluationCard`` base is reused temporarily for common card
+    parsing, claim, symbol, metric, and summary behavior. Legacy pipeline
+    execution and legacy symbol sweeps are rejected by this class.
+    """
 
     def __init__(
         self, path, output_path: str | ub.Path, validate: str = 'error'
     ) -> None:
-        super().__init__(path, output_path, validate=validate)
-        self.card_dpath = ub.Path(path).parent
-        if self.has_kwdagger:
-            if not self.kwdagger.get('result_node'):
-                raise ValueError(
-                    f'{path}: a kwdagger card must declare '
-                    '`kwdagger.result_node`, naming the node whose output is '
-                    'the card result'
+        super().__init__(path, output_path, validate='off')
+        _check_new_evaluation_recipe(self)
+
+        if validate in ('error', 'warning'):
+            try:
+                NewEvaluationRecipeSchema.model_validate(self.original_card)
+            except ValidationError as ex:
+                if validate == 'error':
+                    raise
+                logger.warning(
+                    f'WARNING! Recipe validation failed with error:\n{ex}'
                 )
-            self.kwdagger = _resolve_pipeline_path(
-                self.kwdagger, self.card_dpath
-            )
+
+        self.recipe_dpath = ub.Path(path).parent
+        self.kwdagger = _resolve_pipeline_path(
+            self.kwdagger, self.recipe_dpath
+        )
+        self.original_card['kwdagger'] = self.kwdagger
+        self.result_card: NewEvaluationResultCard | None = None
         self._run_hash_cached: str | None = None
 
     def apply_params(self, params: Any) -> None:
-        """Merge kwdagger-style params into this card's execution block."""
+        """Merge kwdagger-style params into this recipe's execution block."""
         params = kwutil.Yaml.coerce(params, backend='pyyaml')
         if not params:
             return
-        if not self.has_kwdagger:
-            raise ValueError('--params requires a card with `kwdagger:`')
         merged = _deep_merge(self.original_card['kwdagger'], params)
         self.original_card['kwdagger'] = merged
-        self.kwdagger = _resolve_pipeline_path(merged, self.card_dpath)
+        self.kwdagger = _resolve_pipeline_path(merged, self.recipe_dpath)
+        _check_new_evaluation_recipe(self)
 
     @property
     def kwdagger_dpath(self) -> ub.Path:
-        """Shared DAG artifact root, independent of the card run directory."""
+        """Shared DAG artifact root, independent of the recipe run directory."""
         return self.output_path / '_kwdagger'
 
     @property
-    def _card_hash(self) -> str:
+    def _recipe_hash(self) -> str:
         return ub.hash_data(self.original_card)[:8]
 
     @property
@@ -284,7 +383,7 @@ class NewEvaluationCard(EvaluationCard):
         if self._run_hash_cached is None:
             existing = [
                 p
-                for p in sorted(self.output_path.glob(f'{self._card_hash}_*'))
+                for p in sorted(self.output_path.glob(f'{self._recipe_hash}_*'))
                 if p.is_dir()
             ]
             if existing:
@@ -292,49 +391,69 @@ class NewEvaluationCard(EvaluationCard):
                 self._run_hash_cached = newest.name
             else:
                 timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
-                self._run_hash_cached = f'{self._card_hash}_{timestamp}'
+                self._run_hash_cached = f'{self._recipe_hash}_{timestamp}'
         return self._run_hash_cached
-
-    def dispatch(
-        self,
-        flattened_sweep: List[Symbols],
-        results: Dict[str, Any] | None = None,
-        cell_key: str | None = None,
-        measured: set | None = None,
-    ) -> List[NewEvaluationTask]:
-        return [
-            NewEvaluationTask(
-                Claim({'python': self.claim.claim}),
-                symbols,
-                results=results,
-                cell_key=cell_key,
-                measured=measured,
-            )
-            for symbols in flattened_sweep
-        ]
 
     def evaluate(
         self,
         verbose: bool = False,
         **schedule_options: Any,
-    ) -> str:
-        return evaluate_card_new(
+    ) -> NewEvaluationResultCard:
+        return evaluate_new_recipe(
             self, verbose=verbose, **schedule_options
         )
 
 
-def _run_one_new(
-    evaluation: NewEvaluationTask, claim_results_path: ub.Path
-) -> Tuple[str, ub.Path, str, Dict[str, Any]]:
-    status, _ = evaluation.execute()
-    execution_hash = evaluation.cell_id
-    resolved_symbols = evaluation.log['symbols']
-    results_fpath = claim_results_path / execution_hash / 'verdict.json'
+def _claim_execution_hash(symbols: Symbols, measured: set[str]) -> str:
+    view = symbols.simple_view()
+    view = {key: value for key, value in view.items() if key not in measured}
+    return ub.hash_data(view)[:12]
+
+
+def _evaluate_claim_cell(
+    claim_text: str,
+    symbols: Symbols,
+    result_values: Dict[str, Any],
+    cell_key: str,
+    measured: set[str],
+) -> NewEvaluationCellResult:
+    """Evaluate the recipe claim for one kwdagger result-node cell."""
+    symbols.resolve()
+    namespace = ClaimResultNamespace(result_values)
+    context = symbols()
+    for name, value in namespace.bind().items():
+        if name in context:
+            raise ValueError(
+                f'symbol {name!r} collides with a pipeline result of the '
+                f'same name; rename the symbol'
+            )
+        context[name] = value
+
+    claim = Claim({'python': claim_text})
+    status, output = claim.evaluate(context)
+    execution_hash = _claim_execution_hash(symbols, measured)
+    result_id = f'{cell_key}_{execution_hash}'
+    return NewEvaluationCellResult(
+        result_id=result_id,
+        status=status,
+        output=output,
+        symbols=symbols.simple_view(),
+        timestamp=datetime.now().isoformat(),
+        cell_key=cell_key,
+        consumed=sorted(namespace.accessed),
+        result_values=dict(result_values),
+    )
+
+
+def _write_cell_result(
+    cell_result: NewEvaluationCellResult, cell_results_path: ub.Path
+) -> ub.Path:
+    results_fpath = cell_results_path / cell_result.result_id / 'verdict.json'
     results_fpath.parent.ensuredir()
     with safer.open(results_fpath, 'w', temp_file=SAFER_USE_TEMPFILE) as file:
-        json.dump(evaluation.log, file, indent=2, ensure_ascii=False)
+        json.dump(cell_result.as_record(), file, indent=2, ensure_ascii=False)
         file.write('\n')
-    return status, results_fpath, execution_hash, resolved_symbols
+    return results_fpath
 
 
 def _deep_merge(base: Any, update: Any) -> Any:
@@ -349,7 +468,7 @@ def _deep_merge(base: Any, update: Any) -> Any:
 
 def _fill_declared_symbols(
     symbols: Dict[str, Any], results: Dict[str, Any]
-) -> Tuple[Dict[str, Any], set]:
+) -> Tuple[Dict[str, Any], set[str]]:
     """Fill unresolved declared symbols from same-named result leaves."""
     filled = set()
     out = {}
@@ -365,36 +484,41 @@ def _fill_declared_symbols(
     return out, filled
 
 
-def _link_dag_root(card_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
+def _link_dag_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
     """Keep the historical ``<run>/kwdagger`` artifact location visible."""
-    link = card_output_path / 'kwdagger'
+    link = recipe_output_path / 'kwdagger'
     try:
         ub.symlink(kwdagger_dpath, link, overwrite=True)
     except OSError as ex:
         logger.warning(f'could not link {link} to the DAG root: {ex}')
 
 
-def _check_new_evaluation_card(card: NewEvaluationCard) -> None:
-    """Enforce the computation boundary of the new evaluator."""
-    if not card.has_kwdagger:
-        if card.has_pipeline:
+def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
+    """Enforce the execution boundary of the replacement evaluator."""
+    if not recipe.has_kwdagger:
+        if recipe.has_pipeline:
             detail = 'it uses the legacy `pipeline:` execution block'
         else:
             detail = 'it has no `kwdagger:` execution block'
         raise ValueError(
-            f'evaluate_new requires a kwdagger card; {detail}. '
+            f'evaluate_new requires a kwdagger recipe; {detail}. '
             'Use `magnet evaluate` / `magnet evaluate_legacy` for legacy '
             'cards, or migrate computation into `kwdagger:`.'
         )
-    if card.has_pipeline:
+    if recipe.has_pipeline:
         raise ValueError(
             'evaluate_new does not combine `kwdagger:` with the legacy '
             '`pipeline:` executor. Remove the legacy block or use '
             '`magnet evaluate_legacy`.'
         )
+    if not recipe.kwdagger.get('result_node'):
+        raise ValueError(
+            'evaluate_new requires `kwdagger.result_node`, naming the node '
+            'whose configured instances become evaluation cells.'
+        )
     sweep_symbols = sorted(
         name
-        for name, spec in card.symbols.items()
+        for name, spec in recipe.symbols.items()
         if spec.get('sweep') is not None
     )
     if sweep_symbols:
@@ -406,56 +530,58 @@ def _check_new_evaluation_card(card: NewEvaluationCard) -> None:
         )
 
 
-def evaluate_card_new(
-    card: NewEvaluationCard,
+def evaluate_new_recipe(
+    recipe: NewEvaluationRecipe,
     *,
     verbose: bool = False,
     **schedule_options: Any,
-) -> str:
-    """Evaluate a card with kwdagger as the sole computation engine."""
-    _check_new_evaluation_card(card)
+) -> NewEvaluationResultCard:
+    """Evaluate a recipe with kwdagger as the sole computation engine."""
+    _check_new_evaluation_recipe(recipe)
 
-    card_output_path = card.output_path / card._run_hash
-    card_output_path.ensuredir()
-    setup_logging(verbose, card_output_path)
+    recipe_output_path = recipe.output_path / recipe._run_hash
+    recipe_output_path.ensuredir()
+    setup_logging(verbose, recipe_output_path)
 
     with safer.open(
-        card_output_path / 'card.yaml', 'w', temp_file=SAFER_USE_TEMPFILE
+        recipe_output_path / 'card.yaml', 'w', temp_file=SAFER_USE_TEMPFILE
     ) as file:
-        yaml.safe_dump(card.original_card, file, sort_keys=False)
+        yaml.safe_dump(recipe.original_card, file, sort_keys=False)
 
-    claim_results_path = card_output_path / 'results'
-    raw_symbol_metadata = _parse_symbol_metadata(card.symbols)
+    cell_results_path = recipe_output_path / 'results'
+    raw_symbol_metadata = _parse_symbol_metadata(recipe.symbols)
     if raw_symbol_metadata:
         with safer.open(
-            card_output_path / 'symbol_metadata.json',
+            recipe_output_path / 'symbol_metadata.json',
             'w',
             temp_file=SAFER_USE_TEMPFILE,
         ) as file:
             json.dump(raw_symbol_metadata, file, indent=2, ensure_ascii=False)
 
-    card.evaluations = []
     processor = KWDaggerProcessor(
-        card.kwdagger, root_dpath=card.kwdagger_dpath
+        recipe.kwdagger, root_dpath=recipe.kwdagger_dpath
     )
     processor.dispatch(**schedule_options)
     cells = processor.collect_result_cells()
 
+    cell_results = []
     for cell in cells:
         cell_symbols, measured = _fill_declared_symbols(
-            card.symbols, cell['results']
+            recipe.symbols, cell['results']
         )
-        card.evaluations.extend(
-            card.dispatch(
-                [Symbols(cell_symbols)],
-                results=cell['results'],
-                cell_key=cell['key'],
-                measured=measured,
-            )
+        cell_result = _evaluate_claim_cell(
+            recipe.claim.claim,
+            Symbols(cell_symbols),
+            cell['results'],
+            cell['key'],
+            measured,
         )
+        cell_results.append(cell_result)
+        results_fpath = _write_cell_result(cell_result, cell_results_path)
+        logger.info(f'Wrote cell result to {results_fpath}')
 
     with safer.open(
-        card_output_path / 'result_cells.json',
+        recipe_output_path / 'result_cells.json',
         'w',
         temp_file=SAFER_USE_TEMPFILE,
     ) as file:
@@ -464,27 +590,17 @@ def evaluate_card_new(
 
     if processor.incomplete:
         with safer.open(
-            card_output_path / 'incomplete_cells.json',
+            recipe_output_path / 'incomplete_cells.json',
             'w',
             temp_file=SAFER_USE_TEMPFILE,
         ) as file:
             json.dump(processor.incomplete, file, indent=2, ensure_ascii=False)
             file.write('\n')
 
-    _link_dag_root(card_output_path, card.kwdagger_dpath)
+    _link_dag_root(recipe_output_path, recipe.kwdagger_dpath)
 
-    # Transitional compatibility tail. No legacy joblib execution controls are
-    # exposed by evaluate_new.
-    out = [_run_one_new(e, claim_results_path) for e in card.evaluations]
-
-    results = []
-    resolved_symbols = []
-    claim_hashes = []
-    for status, results_fpath, execution_hash, symbols in out:
-        results.append(status)
-        resolved_symbols.append(symbols)
-        claim_hashes.append(execution_hash)
-        logger.info(f'Wrote claim output to {results_fpath}')
+    statuses = [cell.status for cell in cell_results]
+    resolved_symbols = [cell.symbols for cell in cell_results]
 
     calculated_metrics: Dict[str, Any] = {}
     if raw_symbol_metadata and resolved_symbols:
@@ -502,14 +618,14 @@ def evaluate_card_new(
                 metric_statement += f'  {metric}: {value: .3f}\n'
             logger.info(metric_statement[:-1])
 
-    total = len(results)
+    total = len(statuses)
 
     def percentage(count: int) -> float:
         return count / total if total else 0.0
 
-    verified_count = results.count('VERIFIED')
-    falsified_count = results.count('FALSIFIED')
-    inconclusive_count = results.count('INCONCLUSIVE')
+    verified_count = statuses.count('VERIFIED')
+    falsified_count = statuses.count('FALSIFIED')
+    inconclusive_count = statuses.count('INCONCLUSIVE')
 
     logger.info('================================')
     logger.info(f'Settings Evaluated: {total}')
@@ -519,73 +635,30 @@ def evaluate_card_new(
     logger.info('================================')
     logger.info('\n')
 
-    card_result = _reduce_results(results, card.claim_aggregation_strategy)
-    aggregate_verdict: Dict[str, Any] = {
-        'result': card_result,
-        'claim_aggregation_strategy': card.claim_aggregation_strategy,
-        'claims': claim_hashes,
-    }
-    if raw_symbol_metadata and calculated_metrics:
-        aggregate_verdict['metrics'] = calculated_metrics
+    aggregate_result = _reduce_results(
+        statuses, recipe.claim_aggregation_strategy
+    )
+    result_card = NewEvaluationResultCard(
+        result=aggregate_result,
+        claim_aggregation_strategy=recipe.claim_aggregation_strategy,
+        cell_results=cell_results,
+        metrics=calculated_metrics,
+    )
 
     with safer.open(
-        card_output_path / 'verdict.json',
+        recipe_output_path / 'verdict.json',
         'w',
         temp_file=SAFER_USE_TEMPFILE,
     ) as file:
-        json.dump(aggregate_verdict, file, indent=2, ensure_ascii=False)
+        json.dump(result_card.as_record(), file, indent=2, ensure_ascii=False)
         file.write('\n')
 
-    card.claim.status = card_result
-    return card_result
+    recipe.result_card = result_card
+    recipe.claim.status = aggregate_result
+    return result_card
 
 
-def main(argv: list[str] | None = None, **kwargs: Any) -> None:
-    args = NewEvaluationConfig.cli(
-        argv=argv,
-        data=kwargs,
-        strict=True,
-        verbose='auto',
-        special_options=False,
-    )
-
-    validate = args['validate']
-    if validate == 'only':
-        try:
-            with open(args.path, 'r') as file:
-                cfg = yaml.safe_load(file)
-            EvaluationCardSchema.model_validate(cfg)
-            print('Card validation succeeded.')
-        except ValidationError as ex:
-            print('Card validation failed.')
-            print(ex)
-            sys.exit(1)
-        return
-
-    card = NewEvaluationCard(args.path, args.output_path, validate=validate)
-    _check_new_evaluation_card(card)
-    if args.params is not None:
-        card.apply_params(args.params)
-
-    schedule_options = {
-        key: args[key]
-        for key in [
-            'backend',
-            'tmux_workers',
-            'skip_existing',
-            'cache',
-            'max_configs',
-        ]
-    }
-    card.evaluate(
-        verbose=bool(args.verbose),
-        **schedule_options,
-    )
-    card.summarize()
-
-
-__cli__ = NewEvaluationConfig
-__cli__.main = main
+__cli__ = NewEvaluationCLI
 
 if __name__ == '__main__':
-    main(sys.argv[1:])
+    __cli__.main()

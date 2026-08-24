@@ -2,7 +2,7 @@ import pytest
 import yaml
 from importlib.resources import files
 from pydantic import ValidationError
-from magnet.schema import EvaluationCardSchema
+from magnet.schema import EvaluationCardSchema, NewEvaluationRecipeSchema
 
 
 @pytest.fixture(scope='module')
@@ -133,6 +133,11 @@ def test_a_kwdagger_card_validates(kwdagger_card):
     assert card.kwdagger.result_node == 'llama_compare'
 
 
+def test_a_kwdagger_recipe_validates(kwdagger_card):
+    recipe = NewEvaluationRecipeSchema.model_validate(kwdagger_card)
+    assert recipe.kwdagger.result_node == 'llama_compare'
+
+
 def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
     from kwdagger.pipeline import coerce_pipeline
 
@@ -153,6 +158,26 @@ def test_shared_schema_allows_legacy_kwdagger_without_result_node(kwdagger_card)
         {**kwdagger_card, 'kwdagger': kwdagger}
     )
     assert card.kwdagger.result_node is None
+
+
+def test_new_recipe_schema_requires_result_node(kwdagger_card):
+    kwdagger = {
+        k: v for k, v in kwdagger_card['kwdagger'].items()
+        if k != 'result_node'
+    }
+    with pytest.raises(ValidationError, match='result_node'):
+        NewEvaluationRecipeSchema.model_validate(
+            {**kwdagger_card, 'kwdagger': kwdagger}
+        )
+
+
+def test_new_recipe_schema_rejects_legacy_symbol_sweeps(kwdagger_card):
+    data = {
+        **kwdagger_card,
+        'symbols': {'legacy_axis': {'sweep': [1, 2]}},
+    }
+    with pytest.raises(ValidationError, match='symbol sweeps'):
+        NewEvaluationRecipeSchema.model_validate(data)
 
 
 def test_kwdagger_keys_magnet_does_not_read_are_passed_through(kwdagger_card):

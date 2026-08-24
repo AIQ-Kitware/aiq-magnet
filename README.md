@@ -388,11 +388,11 @@ magnet evaluate_new magnet/examples/llama_consistency/llama_kwdagger.yaml \
     --backend serial
 ```
 
-Each configured instance of `result_node` becomes one card cell. Its kwdagger
+Each configured instance of `result_node` becomes one recipe result cell. Its kwdagger
 `process_id` is used as the stable cell identity.
 
 During the migration, `magnet evaluate_legacy` names the historical evaluator and
-`magnet evaluate` remains its compatibility alias. Both reject cards with a
+`magnet evaluate` remains its compatibility alias. Both reject recipes with a
 `kwdagger:` block and point to `magnet evaluate_new`. `magnet evaluate_new` is
 the cleaner kwdagger-only path: execution parameters are passed directly with
 `--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and
@@ -400,7 +400,7 @@ the cleaner kwdagger-only path: execution parameters are passed directly with
 computation or symbol sweeps are rejected. See the example README for the
 complete setup, recomputation, and materialization commands.
 
-Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield `FALSIFIED` cards with output similar to below: 
+Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield a `FALSIFIED` aggregate result with output similar to below:
 ```
 ================================
 Settings Evaluated: 36

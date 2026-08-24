@@ -16,7 +16,7 @@ Example:
 import kwconf
 from magnet.cli.download_cli import DownloadModalCLI
 from magnet.evaluation import EvaluationConfig
-from magnet.evaluation_new import NewEvaluationConfig
+from magnet.evaluation_new import NewEvaluationCLI
 from magnet import __version__
 
 
@@ -33,7 +33,7 @@ MagnetCLI.register(DownloadModalCLI, command='download')
 MagnetCLI.register(
     EvaluationConfig, command='evaluate_legacy', alias=['evaluate']
 )
-MagnetCLI.register(NewEvaluationConfig, command='evaluate_new')
+MagnetCLI.register(NewEvaluationCLI, command='evaluate_new')
 
 
 __cli__ = MagnetCLI

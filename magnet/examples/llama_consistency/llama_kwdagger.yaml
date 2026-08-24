@@ -1,4 +1,4 @@
-# Preliminary Working Evaluation Card Example
+# Preliminary Working Evaluation Recipe Example
 
 title: "In-domain Model Consistency for Llama Family"
 description: |
@@ -84,7 +84,7 @@ kwdagger:
       - llama_predict.results_fpath -> llama_compare.scores_fpath
 
   # KWDagger expands this matrix into concrete pipeline configurations. The
-  # two six-element axes below form the 36 model-pair cells for this card.
+  # two six-element axes below form the 36 model-pair cells for this recipe.
   matrix:
     llama_predict.helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'
     llama_predict.base_model:

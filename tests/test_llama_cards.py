@@ -6,7 +6,7 @@ from importlib.resources import files
 
 from magnet.backends.helm.cli import download_helm_results
 from magnet.evaluation import EvaluationCard
-from magnet.evaluation_new import NewEvaluationCard
+from magnet.evaluation_new import NewEvaluationRecipe
 
 
 @pytest.mark.parametrize(
@@ -22,16 +22,19 @@ def test_llama_card(run_download, tmp_path, card_relpath, use_new_evaluator):
     results_path = f'{tmp_path}/results'
     card_path = files('magnet').joinpath(*card_relpath.split('/'))
 
-    card_cls = NewEvaluationCard if use_new_evaluator else EvaluationCard
+    card_cls = NewEvaluationRecipe if use_new_evaluator else EvaluationCard
     card = card_cls(card_path, results_path)
     override_path(card, str(data_path / 'lite' / 'benchmark_output'))
 
     if use_new_evaluator:
-        result = card.evaluate(backend='serial')
+        result = card.evaluate(backend='serial').result
     else:
         result = card.evaluate()
     assert result == 'FALSIFIED'
-    assert len(card.evaluations) == 36
+    if use_new_evaluator:
+        assert len(card.result_card.cell_results) == 36
+    else:
+        assert len(card.evaluations) == 36
 
 
 def override_path(card, corrected_path):

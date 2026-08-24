@@ -8,7 +8,7 @@ import magnet
 from magnet.backends.helm.cli.download_helm_results import DownloadHelmConfig
 from magnet.backends.helm.cli.inspect_helm_models import InspectHelmModelsConfig
 from magnet.evaluation import EvaluationConfig
-from magnet.evaluation_new import NewEvaluationConfig
+from magnet.evaluation_new import NewEvaluationCLI
 
 
 def _discover_config_classes():
@@ -38,7 +38,7 @@ ALL_CONFIG_CLASSES = _discover_config_classes()
 def test_configs_were_discovered():
     # A discovery bug would make the checks below vacuously pass.
     assert EvaluationConfig in ALL_CONFIG_CLASSES
-    assert NewEvaluationConfig in ALL_CONFIG_CLASSES
+    assert NewEvaluationCLI in ALL_CONFIG_CLASSES
     assert len(ALL_CONFIG_CLASSES) >= 5
 
 
@@ -100,7 +100,7 @@ def test_no_config_option_shadows_a_config_method():
         # Renaming it would break `--validate` and every card that sets it, so
         # it is read as an item instead. See magnet/evaluation.py:main.
         (EvaluationConfig, 'validate'),
-        (NewEvaluationConfig, 'validate'),
+        (NewEvaluationCLI, 'validate'),
     }
 
     collisions = set()
@@ -116,7 +116,7 @@ def test_no_config_option_shadows_a_config_method():
 
 
 def test_new_evaluator_has_only_kwdagger_execution_controls():
-    keys = set(NewEvaluationConfig().keys())
+    keys = set(NewEvaluationCLI().keys())
     assert {
         'path', 'output_path', 'params', 'backend', 'tmux_workers',
         'skip_existing', 'cache', 'max_configs',
@@ -129,7 +129,7 @@ def test_new_evaluator_has_only_kwdagger_execution_controls():
 def test_new_evaluator_schedule_defaults_match_kwdagger():
     from kwdagger.schedule import ScheduleEvaluationConfig
 
-    magnet_cfg = NewEvaluationConfig()
+    magnet_cfg = NewEvaluationCLI()
     kwdagger_cfg = ScheduleEvaluationConfig()
     for key in [
         'backend', 'tmux_workers', 'skip_existing', 'cache', 'max_configs'

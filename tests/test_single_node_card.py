@@ -8,7 +8,7 @@ import pytest
 import ubelt as ub
 import yaml
 
-from magnet.evaluation_new import NewEvaluationCard as EvaluationCard
+from magnet.evaluation_new import NewEvaluationRecipe
 
 SCRIPT = """
 import json, sys, pathlib
@@ -65,13 +65,14 @@ def write_card(tmp_path):
 def test_a_one_node_pipeline_needs_no_python(write_card, tmp_path):
     # An inline `nodes:` mapping, a matrix, and the node's name. No module
     # path, no pipeline function, no claim node.
-    card = EvaluationCard(write_card([1, 2]), ub.Path(tmp_path) / 'out')
-    assert card.evaluate(backend='serial') == 'VERIFIED'
-    assert len(card.evaluations) == 2
-    assert {e.cell_key for e in card.evaluations} != {None}
+    recipe = NewEvaluationRecipe(write_card([1, 2]), ub.Path(tmp_path) / 'out')
+    result_card = recipe.evaluate(backend='serial')
+    assert result_card.result == 'VERIFIED'
+    assert len(result_card.cell_results) == 2
+    assert {e.cell_key for e in result_card.cell_results} != {None}
 
 
 def test_a_kwdagger_card_must_name_its_result_node(write_card, tmp_path):
     with pytest.raises(ValueError, match='result_node'):
-        EvaluationCard(
+        NewEvaluationRecipe(
             write_card([1], result_node=None), ub.Path(tmp_path) / 'out')

@@ -10,8 +10,9 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 * Added `magnet evaluate_new`, a kwdagger-only migration path that forwards selected `kwdagger schedule` controls directly: `--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and `--max_configs`. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
 * Added `magnet evaluate_legacy` as the explicit name for the historical evaluator; `magnet evaluate` remains its compatibility alias.
-* New-style cards declare `kwdagger.result_node`: the node whose output is
-  the card's result. `evaluate_new` requires it; the shared schema leaves it
+* New evaluation recipes declare `kwdagger.result_node`: the node whose output
+  supplies the recipe's result cells. `evaluate_new` requires it; the shared
+  legacy schema leaves it
   optional for compatibility with card parsing. `evaluate` /
   `evaluate_legacy` reject kwdagger execution with a pointer to `evaluate_new`.
   Every configured instance of the result node is one cell, identified by its
@@ -20,13 +21,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   declares a symbol of the same name still gets it unqualified, which is how a
   `define_metric` symbol is supplied.
 * A verdict records the `cell` it belongs to and the results it `consumed`.
-* A card reports the cells its run computed. A result node instance that
-  produced nothing is skipped rather than failing the card, and recorded in
+* A new evaluation result reports the cells its run computed. A result node
+  instance that produced nothing is skipped rather than failing the recipe,
+  and recorded in
   `incomplete_cells.json` as `failed` (with its exit code), `pending`, or
   `empty`.
 * `magnet evaluate_new --params` merges a YAML/JSON blob (or a file of one)
-  into a card's `kwdagger:` block, in the same language as `kwdagger schedule
-  --params`. The merged card is written to the run directory.
+  into a recipe's `kwdagger:` block, in the same language as `kwdagger
+  schedule --params`. The merged recipe is written to the run directory.
 
 ### Deprecated
 
@@ -36,6 +38,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Changed
 
 * Requires `kwdagger>=0.4.0`.
+* The replacement Python API now uses `NewEvaluationRecipe` for input,
+  `NewEvaluationCellResult` for one kwdagger result-node cell, and
+  `NewEvaluationResultCard` for the aggregate output. `NewEvaluationTask` is
+  removed; per-cell claim evaluation is a direct transformation from a recipe
+  and kwdagger result values into a cell result.
 * A cell's identity no longer depends on the values it measured, so a metric
   that moves replaces its verdict instead of writing a second one beside it.
 * Under `evaluate_new`, node artifacts live in `<output>/_kwdagger`, shared

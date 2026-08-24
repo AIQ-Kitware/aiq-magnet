@@ -1,6 +1,7 @@
 from enum import StrEnum
 from typing import Any, Literal, Optional
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import ConfigDict
 
 class LinkSchema(BaseModel):
     title: str
@@ -180,5 +181,33 @@ class EvaluationCardSchema(BaseModel):
         if self.kwdagger is None and self.pipeline is None and self.symbols is None:
             raise ValueError(
                 "if 'pipeline'/'kwdagger' undefined, 'symbols' must be defined"
+            )
+        return self
+
+
+class NewEvaluationKWDaggerSchema(KWDaggerSchema):
+    """KWDagger block required by the replacement evaluation API."""
+
+    result_node: str
+
+
+class NewEvaluationRecipeSchema(EvaluationCardSchema):
+    """Schema for a recipe consumed by ``magnet evaluate_new``."""
+
+    kwdagger: NewEvaluationKWDaggerSchema
+    pipeline: None = None
+
+    @model_validator(mode='after')
+    def no_legacy_symbol_sweeps(self) -> 'NewEvaluationRecipeSchema':
+        sweep_symbols = sorted(
+            name
+            for name, symbol in (self.symbols or {}).items()
+            if symbol.sweep is not None
+        )
+        if sweep_symbols:
+            raise ValueError(
+                'evaluate_new does not execute legacy symbol sweeps; move '
+                'experimental variation into `kwdagger.matrix`. Sweep '
+                f'symbols: {sweep_symbols}'
             )
         return self

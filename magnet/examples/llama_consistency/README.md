@@ -75,12 +75,12 @@ Use `--mode=compute_if_missing` when a pipeline has the model deployment
 configuration needed to compute a cache miss. `--mode=force_recompute` bypasses
 cache reuse.
 
-This Llama card reads the complete downloaded HELM-Lite corpus rather than one
+This Llama recipe reads the complete downloaded HELM-Lite corpus rather than one
 materialized run because each cell compares scores averaged across the MMLU
 subjects. The materializer is the lower-level primitive for held-out pipelines
 where each missing `(model, dataset)` run is represented by a kwdagger node.
 
-## Run the card with the new evaluator
+## Run the recipe with the new evaluator
 
 `evaluate_new` forwards the KWDagger schedule controls it exposes using the
 same names and semantics as `kwdagger schedule`. MAGNET does not resolve
@@ -121,7 +121,7 @@ magnet evaluate_new \
     --cache=0
 ```
 
-`--max_configs` is useful for a matrix smoke test without changing the card:
+`--max_configs` is useful for a matrix smoke test without changing the recipe:
 
 ```bash
 magnet evaluate_new \
@@ -135,8 +135,8 @@ Node-level selection remains part of the KWDagger pipeline configuration
 (e.g. `node.__enabled__` in a matrix/config row); `evaluate_new` does not add a
 second interpretation of it.
 
-Use `--params` to override the card's kwdagger matrix/configuration without
-editing the card. For example:
+Use `--params` to override the recipe's kwdagger matrix/configuration without
+editing the recipe. For example:
 
 ```bash
 magnet evaluate_new \
@@ -146,20 +146,20 @@ magnet evaluate_new \
     --params='matrix: {llama_predict.base_model: [meta/llama-2-13b]}'
 ```
 
-The matrix in the checked-in card has six base models and six comparison models,
+The matrix in the checked-in recipe has six base models and six comparison models,
 so `llama_compare` normally produces 36 result cells. KWDagger artifacts are
 shared under `./results_kwdagger/_kwdagger`; the MAGNET run directory records
-the card provenance and links to those artifacts.
+the recipe provenance and links to those artifacts.
 
 The current claim/verdict layer is transitional. `evaluate_new` lets result-node
-values and non-sweep card symbols feed that existing claim machinery, but it
+values and non-sweep recipe symbols feed that existing claim machinery, but it
 does not run legacy `pipeline:` computation or legacy symbol sweeps. Those
 remain available through `magnet evaluate_legacy` and its
 `magnet evaluate` compatibility alias until the old evaluator can be retired.
 
 ## Pipeline shape
 
-The card uses the standard declarative kwdagger YAML form:
+The recipe uses the standard declarative kwdagger YAML form:
 
 ```yaml
 kwdagger:

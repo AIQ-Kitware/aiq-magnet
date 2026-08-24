@@ -1,71 +1,70 @@
 """
-A cell's identity comes from the node that produced it, not from its results.
+A new-evaluator cell's identity comes from the kwdagger node that produced it,
+plus non-measured recipe symbols consumed by the claim environment.
 """
 
 import pytest
 
-from magnet.evaluation import Claim, Symbols
+from magnet.evaluation import Symbols
 from magnet.evaluation_new import (
-    NewEvaluationTask as EvaluationTask, Results, _fill_declared_symbols)
+    ClaimResultNamespace,
+    _evaluate_claim_cell,
+    _fill_declared_symbols,
+)
 
 
-def _task(symbols, results=None, cell_key=None):
-    return EvaluationTask(
-        Claim({'python': 'assert True'}),
+def _cell_result(
+    symbols,
+    result_values=None,
+    cell_key='n_id_abc',
+    measured=None,
+    claim='assert True',
+):
+    return _evaluate_claim_cell(
+        claim,
         Symbols.decompose_symbol_defs(symbols)[0],
-        results=results,
-        cell_key=cell_key,
+        result_values or {},
+        cell_key,
+        measured or set(),
     )
 
 
 def test_a_moving_metric_does_not_move_the_cell():
-    # Results used to be bound as symbols, so re-running a card whose metric
-    # drifted wrote a second verdict beside the first instead of replacing it.
     symbols = {'tolerance': {'type': 'float', 'value': 0.1}}
-    first = _task(symbols, {'metrics.n.mae': 0.030}, cell_key='n_id_abc')
-    second = _task(symbols, {'metrics.n.mae': 0.031}, cell_key='n_id_abc')
+    first = _cell_result(symbols, {'metrics.n.mae': 0.030})
+    second = _cell_result(symbols, {'metrics.n.mae': 0.031})
 
-    assert first.cell_id == second.cell_id
+    assert first.result_id == second.result_id
 
 
-def test_cells_of_one_card_stay_distinct():
+def test_cells_of_one_recipe_stay_distinct():
     symbols = {'tolerance': {'type': 'float', 'value': 0.1}}
-    a = _task(symbols, {'metrics.n.mae': 0.03}, cell_key='n_id_abc')
-    b = _task(symbols, {'metrics.n.mae': 0.03}, cell_key='n_id_def')
+    a = _cell_result(symbols, {'metrics.n.mae': 0.03}, cell_key='n_id_abc')
+    b = _cell_result(symbols, {'metrics.n.mae': 0.03}, cell_key='n_id_def')
 
-    assert a.cell_id != b.cell_id
-
-
-def test_a_card_without_a_pipeline_keeps_hashing_its_symbols():
-    task = _task({'seed': {'type': 'int', 'value': 1}})
-    assert task.cell_id == task._execution_hash
+    assert a.result_id != b.result_id
 
 
 def test_a_result_cannot_shadow_a_symbol():
-    task = _task(
-        {'metrics': {'type': 'str', 'value': 'mine'}},
-        {'metrics.n.mae': 0.03},
-    )
     with pytest.raises(ValueError, match='collides'):
-        task.execute()
+        _cell_result(
+            {'metrics': {'type': 'str', 'value': 'mine'}},
+            {'metrics.n.mae': 0.03},
+        )
 
 
 def test_a_claim_reads_results_through_their_qualified_names():
-    task = EvaluationTask(
-        Claim({'python': 'assert metrics.n.mae < tolerance'}),
-        Symbols.decompose_symbol_defs(
-            {'tolerance': {'type': 'float', 'value': 0.1}})[0],
-        results={'metrics.n.mae': 0.03, 'metrics.n.unused': 9},
+    result = _cell_result(
+        {'tolerance': {'type': 'float', 'value': 0.1}},
+        {'metrics.n.mae': 0.03, 'metrics.n.unused': 9},
+        claim='assert metrics.n.mae < tolerance',
     )
-    status, _ = task.execute()
 
-    assert status == 'VERIFIED'
-    assert task.log['consumed'] == ['metrics.n.mae']
+    assert result.status == 'VERIFIED'
+    assert result.consumed == ['metrics.n.mae']
 
 
 def test_a_declared_symbol_is_filled_from_the_result_of_that_name():
-    # How a card that defines a metric gets its value: it names the symbol,
-    # and the result node supplies it.
     symbols, measured = _fill_declared_symbols(
         {'mae': {'type': 'float'}, 'tolerance': {'value': 0.1}},
         {'metrics.n.mae': 0.03, 'metrics.n.rmse': 0.05},
@@ -75,24 +74,22 @@ def test_a_declared_symbol_is_filled_from_the_result_of_that_name():
     assert measured == {'mae'}
 
 
-def test_a_filled_symbol_stays_out_of_the_cell_id():
+def test_a_filled_symbol_stays_out_of_the_result_id():
     symbols = {'mae': {'type': 'float'}}
-    first, _ = _fill_declared_symbols(symbols, {'metrics.n.mae': 0.03})
-    second, measured = _fill_declared_symbols(symbols, {'metrics.n.mae': 0.99})
+    first, measured = _fill_declared_symbols(
+        symbols, {'metrics.n.mae': 0.03}
+    )
+    second, _ = _fill_declared_symbols(
+        symbols, {'metrics.n.mae': 0.99}
+    )
 
-    a = EvaluationTask(
-        Claim({'python': 'assert True'}),
-        Symbols.decompose_symbol_defs(first)[0],
-        cell_key='n_id_abc', measured=measured)
-    b = EvaluationTask(
-        Claim({'python': 'assert True'}),
-        Symbols.decompose_symbol_defs(second)[0],
-        cell_key='n_id_abc', measured=measured)
+    a = _cell_result(first, {'metrics.n.mae': 0.03}, measured=measured)
+    b = _cell_result(second, {'metrics.n.mae': 0.99}, measured=measured)
 
-    assert a.cell_id == b.cell_id
+    assert a.result_id == b.result_id
 
 
-def test_results_report_what_is_available():
-    results = Results({'metrics.n.mae': 0.03})
+def test_claim_result_namespace_reports_what_is_available():
+    namespace = ClaimResultNamespace({'metrics.n.mae': 0.03})
     with pytest.raises(AttributeError, match="available: \\['mae'\\]"):
-        results.bind()['metrics'].n.rmse
+        namespace.bind()['metrics'].n.rmse

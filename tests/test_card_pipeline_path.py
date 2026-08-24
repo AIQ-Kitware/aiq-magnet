@@ -9,7 +9,7 @@ directory it came from.
 import ubelt as ub
 import yaml
 
-from magnet.evaluation_new import NewEvaluationCard as EvaluationCard
+from magnet.evaluation_new import NewEvaluationRecipe
 
 
 def _write_card(dpath, pipeline):
@@ -40,13 +40,13 @@ def _write_card(dpath, pipeline):
 def test_a_relative_pipeline_file_resolves_against_the_card(tmp_path):
     dpath = ub.Path(tmp_path) / 'cards'
     dpath.ensuredir()
-    card = EvaluationCard(_write_card(dpath, 'dag.yaml'), tmp_path)
+    card = NewEvaluationRecipe(_write_card(dpath, 'dag.yaml'), tmp_path)
     # Not './dag.yaml' relative to the shell's cwd.
     assert card.kwdagger['pipeline'] == str(dpath / 'dag.yaml')
 
 
 def test_a_pipeline_callable_is_left_alone(tmp_path):
     # Only file paths are resolved; an import path is not one.
-    card = EvaluationCard(_write_card(tmp_path, 'some.module.pipeline()'),
+    card = NewEvaluationRecipe(_write_card(tmp_path, 'some.module.pipeline()'),
                           tmp_path)
     assert card.kwdagger['pipeline'] == 'some.module.pipeline()'

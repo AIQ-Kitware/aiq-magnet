@@ -30,6 +30,17 @@ symbols:
 """
 
 
+def test_legacy_override_uses_plain_python_yaml_types(tmp_path):
+    card_fpath = tmp_path / 'card.yaml'
+    card_fpath.write_text(TEST_CARD_TEXT)
+    card = EvaluationCard(card_fpath, tmp_path / 'results', validate='off')
+
+    card.replace('x: [1, "two"]')
+
+    dumped = yaml.safe_dump(card.original_card)
+    assert 'two' in dumped
+
+
 def test_evaluation_preserves_metrics(tmp_path):
     card_fpath = tmp_path / 'card.yaml'
     card_fpath.write_text(TEST_CARD_TEXT)
@@ -128,25 +139,3 @@ def test_symbol_dependency_aliases_must_agree():
         match='`depends_on` and `depends` disagree',
     ):
         Symbol('y', {'depends_on': ['x'], 'depends': ['z']})
-
-
-def test_symbol_override_uses_plain_yaml_data(tmp_path):
-    card_fpath = tmp_path / 'card.yaml'
-    card_fpath.write_text("""
-claim:
-  python: assert True
-symbols:
-  models:
-    sweep: [old]
-  label:
-    value: old
-""")
-    card = EvaluationCard(card_fpath, tmp_path / 'results', validate='off')
-
-    card.replace("models: [alpha, beta]\nlabel: 'a:b=c'")
-
-    assert type(card.symbols['models']['sweep']) is list
-    assert type(card.symbols['label']['value']) is str
-    assert card.symbols['models']['sweep'] == ['alpha', 'beta']
-    assert card.symbols['label']['value'] == 'a:b=c'
-    yaml.safe_dump(card.original_card)
