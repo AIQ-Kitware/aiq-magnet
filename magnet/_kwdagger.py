@@ -320,16 +320,32 @@ class KWDaggerProcessor:
         self.incomplete = []
 
     def dispatch(
-        self, backend: str | None = None, skip_existing: bool = True,
-        **kwargs: Any
+        self,
+        backend: str | None = None,
+        skip_existing: bool = True,
+        workers: int | None = None,
+        use_environment_defaults: bool = True,
+        **kwargs: Any,
     ) -> None:
         backend = resolve_queue_backend(backend)
+
+        # ``magnet evaluate`` is the compatibility path and keeps honoring the
+        # historical MAGNET_TMUX_WORKERS environment setting. The new
+        # evaluator passes ``use_environment_defaults=False`` and threads its
+        # CLI values directly into kwdagger instead.
+        if workers is None and use_environment_defaults:
+            workers = _tmux_workers()
+        if workers is not None and workers < 1:
+            raise ValueError('workers must be >= 1')
+
+        worker_config = (
+            {'tmux_workers': workers} if workers is not None else {}
+        )
         kwd_config = ScheduleEvaluationConfig(
             params=self.spec,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
             queue_name=_queue_name_for(self.root_dpath),
-            **({'tmux_workers': _tmux_workers()}
-               if _tmux_workers() is not None else {}),
+            **worker_config,
             backend=backend,
             skip_existing=skip_existing,
             run=True,
@@ -338,7 +354,12 @@ class KWDaggerProcessor:
 
         self.dag, self.queue = build_schedule(kwd_config)
 
-    def collect_result_cells(self) -> List[Dict[str, Any]]:
+    def collect_result_cells(
+        self,
+        backend: str | None = None,
+        workers: int | None = None,
+        use_environment_defaults: bool = True,
+    ) -> List[Dict[str, Any]]:
         """
         Read the result node's output for each of its configured instances.
 
@@ -367,7 +388,11 @@ class KWDaggerProcessor:
             raise ValueError('card must declare kwdagger.result_node')
 
         if not getattr(self, 'dag', None):
-            self.dispatch()
+            self.dispatch(
+                backend=backend,
+                workers=workers,
+                use_environment_defaults=use_environment_defaults,
+            )
 
         # build_schedule returns configured instances keyed by process id;
         # node.name is the template name the card refers to.

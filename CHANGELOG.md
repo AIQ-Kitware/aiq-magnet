@@ -5,8 +5,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## Unreleased
 
+
 ### Added
 
+* Added `magnet evaluate_new`, a kwdagger-only migration path with direct `--params`, `--backend`, and `--workers` configuration. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
+* Added `magnet evaluate_legacy` as the explicit name for the unchanged historical evaluator; `magnet evaluate` remains its compatibility alias.
 * Cards declare `kwdagger.result_node`: the node whose output is the card's
   result. Every configured instance of it is one cell, identified by that
   instance's kwdagger `process_id` and evaluated separately.
@@ -55,6 +58,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+* The inline Llama kwdagger card addresses result fields through `metrics.llama_compare`, matching its declared `result_node`.
 * `--override` accepts list and quoted values; both raised `RepresenterError`
   when the card was written back out.
 * Accept `depends` as an alias for `depends_on` in symbol dependencies.

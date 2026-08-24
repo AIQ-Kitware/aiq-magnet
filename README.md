@@ -328,9 +328,9 @@ symbols: # define any remaining values
 ```
 Example output can be observed by running the example card `llama_pipeline.yaml`:
 ```
-magnet evaluate magnet/cards/llama_pipeline.yaml --results_path './results'
+magnet evaluate magnet/cards/llama_pipeline.yaml --output_path './results'
 ```
-A subdirectory for each unique sweep will be created in `{results_path}`.
+A subdirectory for each unique sweep will be created in `{output_path}`.
 
 
 #### Explicit kwdagger Pipeline (llama_consistency example)
@@ -380,15 +380,23 @@ kwdagger:
 
 The example directory also contains a README with the exact HELM-Lite download, single-run materialization, and execution commands.
 
-Run the Llama example with:
+Run the Llama example with the kwdagger-native evaluator:
 
 ```
-magnet evaluate magnet/examples/llama_consistency/llama_kwdagger.yaml \
-    --results_path './results_kwdagger'
+magnet evaluate_new magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --output_path './results_kwdagger' \
+    --backend serial
 ```
 
 Each configured instance of `result_node` becomes one card cell. Its kwdagger
 `process_id` is used as the stable cell identity.
+
+During the migration, `magnet evaluate_legacy` names the historical evaluator and
+`magnet evaluate` remains its compatibility alias. `magnet evaluate_new` is
+the cleaner kwdagger-only path: execution parameters are passed directly with
+`--params`, `--backend`, and `--workers`, and legacy `pipeline:` computation or
+symbol sweeps are rejected. See the example README for the complete setup and
+materialization commands.
 
 Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield `FALSIFIED` cards with output similar to below: 
 ```

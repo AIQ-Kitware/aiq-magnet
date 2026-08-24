@@ -13,6 +13,12 @@ class ExampleLlamaConsistencyCompareCLI(kwconf.Config):
 
     The node reads what `llama_predict` wrote and emits the comparison, so the
     card can state its claim against a number instead of recomputing it.
+
+    This problem does not require two pipeline stages: ``llama_predict`` could
+    compute and emit the gap itself. The separate comparison node is retained
+    for now to demonstrate a real kwdagger artifact edge and result-node
+    handoff. A future example should replace this with a case where the second
+    stage is computationally necessary.
     """
 
     scores_fpath: str = kwconf.Value(
