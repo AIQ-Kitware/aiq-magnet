@@ -228,10 +228,9 @@ An example demonstration is provided below (assuming you've downloaded helm-lite
 ```
 At least one pair of models in the llama family do not satisfy the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
 
-(NOTE: If to run the following command you need data from the helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
-```
-magnet download helm --download_dir ./data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
-```
+The Llama examples require MMLU results from more than one HELM-Lite release.
+See `magnet/examples/llama_consistency/README.md` for the exact incremental
+download commands and a `materialize_helm_run` reuse smoke test.
 
 Optionally, you could evaluate this card using the `magnet evaluate` command as follows:
 
@@ -378,6 +377,8 @@ kwdagger:
       - openai/gpt-4o
       - meta/llama-3.3-70b
 ```
+
+The example directory also contains a README with the exact HELM-Lite download, single-run materialization, and execution commands.
 
 Run the Llama example with:
 
