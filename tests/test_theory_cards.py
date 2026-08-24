@@ -92,16 +92,31 @@ def test_monte_carlo_example_demonstrates_static_premise_accounting():
     ]
 
 
-def test_source_paths_are_portable_and_formalization_is_structured(tmp_path):
-    _, run_dpath = _run('training_order', tmp_path / 'runs')
-    report = json.loads((run_dpath / 'theory.json').read_text())
+def test_source_paths_are_portable_and_formalization_is_structured():
+    from magnet.theory.cards import report_from_card
+
+    root = EXAMPLES / 'coin_flip'
+    card = yaml.safe_load((root / 'card.yaml').read_text())
+    report = report_from_card(card, root).to_dict()
     link = report['statement_links'][0]
-    assert link['qualname'] == 'training_order_sensitivity'
+    assert link['qualname'] == 'enumerated_head_counts'
     assert link['file'] == 'experiment.py'
     assert not link['file'].startswith('/')
     entry = report['entries'][0]
     assert entry['formalization'] == {'system': 'lean4'}
-    assert entry['source_path'] == 'TrainingOrder.lean'
+    assert entry['source_path'] == 'CoinFlip.lean'
+
+
+def test_unformalized_question_does_not_claim_formalization():
+    from magnet.theory.cards import report_from_card
+
+    root = EXAMPLES / 'training_order'
+    card = yaml.safe_load((root / 'card.yaml').read_text())
+    report = report_from_card(card, root).to_dict()
+    entry = report['entries'][0]
+    assert entry['kind'] == 'question'
+    assert 'formalization' not in entry
+    assert 'source_path' not in entry
 
 
 def test_a_card_without_a_theory_block_writes_no_artifact(tmp_path):
