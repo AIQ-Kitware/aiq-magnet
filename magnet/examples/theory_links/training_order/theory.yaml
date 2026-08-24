@@ -1,8 +1,0 @@
-schema_version: 1
-entries:
-  - id: Examples.TrainingOrder.Why
-    kind: question
-    statement: >
-      Why can changing only the order of otherwise identical training
-      observations change the learned solution, and under what conditions
-      should a learning rule be order-invariant?

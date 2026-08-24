@@ -12,7 +12,6 @@ from magnet.schema import TheorySchema
 
 SIMPLE_CARDS = [
     ('coin_flip', 'tests', 'Examples.CoinFlip.Binomial'),
-    ('training_order', 'motivates', 'Examples.TrainingOrder.Why'),
 ]
 
 EXAMPLES = files('magnet') / 'examples' / 'theory_links'
@@ -107,16 +106,39 @@ def test_source_paths_are_portable_and_formalization_is_structured():
     assert entry['source_path'] == 'CoinFlip.lean'
 
 
-def test_unformalized_question_does_not_claim_formalization():
+def test_fibonacci_performance_example_separates_question_from_explanation(tmp_path):
     from magnet.theory.cards import report_from_card
 
-    root = EXAMPLES / 'training_order'
+    root = EXAMPLES / 'fibonacci_performance'
     card = yaml.safe_load((root / 'card.yaml').read_text())
     report = report_from_card(card, root).to_dict()
-    entry = report['entries'][0]
-    assert entry['kind'] == 'question'
-    assert 'formalization' not in entry
-    assert 'source_path' not in entry
+    assert [
+        (link['relation'], link['ref']) for link in report['statement_links']
+    ] == [
+        ('motivates', 'Examples.FibonacciPerformance.Why'),
+        ('approximates', 'Examples.FibonacciPerformance.RecursiveCallGapAt28'),
+    ]
+    assert report['premise_links'] == []
+    assert report['premise_coverage'] == []
+
+    entries = {entry['id']: entry for entry in report['entries']}
+    question = entries['Examples.FibonacciPerformance.Why']
+    assert question['kind'] == 'question'
+    assert 'formalization' not in question
+    assert 'source_path' not in question
+
+    explanation = entries['Examples.FibonacciPerformance.RecursiveCallGapAt28']
+    assert explanation['kind'] == 'theorem'
+    assert explanation['formalization'] == {'system': 'lean4'}
+    assert explanation['source_path'] == 'FibonacciCost.lean'
+    assert explanation['declaration'] == (
+        'MagnetExamples.FibonacciPerformance.recursiveCalls_28_costGap'
+    )
+
+    status, run_dpath = _run('fibonacci_performance', tmp_path / 'runs')
+    assert status == 'VERIFIED'
+    written = json.loads((run_dpath / 'theory.json').read_text())
+    assert written['statement_links'] == report['statement_links']
 
 
 def test_a_card_without_a_theory_block_writes_no_artifact(tmp_path):

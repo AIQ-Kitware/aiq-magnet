@@ -1,0 +1,74 @@
+title: "Two equivalent programs have very different runtime"
+
+description: |
+  Two Python implementations compute the same Fibonacci number. One uses the
+  textbook naive recursion and the other uses a simple loop. The card measures
+  both and observes that the recursive implementation is slower.
+
+  Imagine we did not yet know why. The runtime observation itself motivates an
+  open theoretical question. A small Lean cost model then gives a known
+  structural explanation: naive recursion repeats subproblems and performs far
+  more abstract work, while iteration takes one step per input index.
+
+  The source keeps those claims separate. The benchmark `motivates` the open
+  question, while its wall-clock timing only `approximates` the abstract cost
+  theorem. Lean does not claim to model CPython timing.
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - theory
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+
+# Under the kwdagger work, this remains a single benchmark node. The theory
+# annotations stay in the empirical source either way.
+#
+#   kwdagger:
+#     pipeline:
+#       nodes:
+#         benchmark:
+#           executable: >-
+#             python -m magnet.examples.theory_links.fibonacci_performance.experiment
+#           out_paths: {out_fpath: 'fibonacci_performance.json'}
+#           primary_out_key: out_fpath
+#           algo_params:
+#             repeats: 5
+#     result_node: benchmark
+
+theory:
+  empirical_sources:
+    - experiment.py
+  indexes:
+    - theory.yaml
+
+claim:
+  python: |
+    assert result['same_value'], (
+        "the implementations no longer compute the same function"
+    )
+    assert result['recursive_slower'], (
+        "the empirical phenomenon was not observed on this run"
+    )
+    assert result['abstract_cost_gap'], (
+        "the Python cost model no longer matches the formal n=28 example"
+    )
+
+symbols:
+  result:
+    type: dict
+    python: |
+      from magnet.examples.theory_links.fibonacci_performance.experiment import (
+          benchmark_fibonacci)
+      result = benchmark_fibonacci(repeats=5)

@@ -87,6 +87,17 @@ nothing about `hiid`, so the derived report has one unaccounted premise.
 That omission is part of the example rather than a test fixture: it shows the
 main value of static premise accounting without requiring runtime theory state.
 
+The Fibonacci-performance example demonstrates a different case: an empirical
+phenomenon can motivate a theoretical question before the mechanism is known.
+The example also includes a known Lean explanation in an abstract operation-
+count model. The wall-clock benchmark ``approximates`` that theorem rather than
+``tests`` it, because the formal statement explains a structural work gap but
+does not model Python execution time. This is the intended pattern for teams
+that have a strong empirical observation but little bespoke theory: name the
+question honestly, then connect whatever generic or mechanistic theory is
+actually justified without manufacturing a theorem that merely restates the
+measurement.
+
 ## Deliberately absent
 
 This layer does not record runtime theory state. In particular it does not:

@@ -38,7 +38,12 @@ matches the empirical claim. A finite empirical proposition is often a better
 ``approximates`` that population theorem separately.
 
 ``motivates`` targets a question, conjecture, or other object that the
-observation asks theory to explain. It does not claim logical support.
+observation asks theory to explain. It does not claim logical support. The
+Fibonacci-performance example uses this distinction deliberately: a wall-clock
+benchmark motivates the question of why two equal-result programs have very
+different runtimes, while a separate Lean theorem gives an abstract call-count
+explanation. The benchmark only ``approximates`` that cost theorem because
+wall-clock time is a proxy for abstract work, not the quantity Lean proves.
 
 Use a statement relation as a decorator or context manager:
 
@@ -173,11 +178,11 @@ A card may define a small local object inline when no formal index exists:
       empirical_sources:
         - experiment.py
       entries:
-        - id: Examples.OrderSensitivity.Why
+        - id: Examples.FibonacciPerformance.Why
           kind: question
           statement: >
-            Under what conditions should changing only observation order leave
-            the learned solution unchanged?
+            Why can two programs that compute the same result have very
+            different runtime costs?
 
 Inline entries are useful for questions and local empirical claim shapes. Shared
 or formalized theory should normally live in an index so multiple cards can
