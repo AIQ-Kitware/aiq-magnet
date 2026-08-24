@@ -4,10 +4,12 @@ The replacement evaluation API built around kwdagger experiment execution.
 ``magnet evaluate`` remains an alias of the legacy evaluator. A
 ``NewEvaluationRecipe`` can request a finite kwdagger campaign, but the
 campaign is not the boundary of the evidence set. After scheduling, MAGNET
-uses kwdagger's aggregate loader to discover every available result row for the
-configured ``result_node`` in the shared result store. Each available row is
-checked against the claim and becomes a ``NewEvaluationCellResult``; those
-claim results are reduced into a ``NewEvaluationResultCard``.
+uses kwdagger's aggregate loader to discover available result rows for the
+configured ``result_node`` in the shared result store. ``evidence.scope`` then
+selects either all accumulated rows or only rows corresponding to result-node
+computations requested by this invocation. Each selected row is checked against
+the claim and becomes a ``NewEvaluationCellResult``; those claim results are
+reduced into a ``NewEvaluationResultCard``.
 
 The current request's queued/running/failed state is recorded separately from
 claim evaluation. A failed computation is execution provenance, not evidence
@@ -261,10 +263,13 @@ class NewEvaluationCellResult:
     Result of applying one recipe claim to one available kwdagger result row.
 
     ``evidence_row`` is the complete qualified aggregate row made available to
-    the claim. ``consumed`` records the subset actually accessed. ``artifact``
-    points back to the primary kwdagger result from which the row was loaded.
-    ``cell_key`` is the artifact/computation identity used to keep repeated
-    evaluation of the same available evidence stable across MAGNET runs.
+    the claim. ``consumed`` records the subset actually accessed. ``symbols``
+    is the legacy-compatible dashboard view of the concrete claim inputs: it
+    combines resolved recipe symbols with the qualified evidence leaves the
+    claim consumed. ``artifact`` points back to the primary kwdagger result
+    from which the row was loaded. ``cell_key`` is the artifact/computation
+    identity used to keep repeated evaluation of the same available evidence
+    stable across MAGNET runs.
     """
 
     result_id: str
@@ -290,6 +295,8 @@ class NewEvaluationCellResult:
             record['artifact'] = self.artifact
         if self.consumed:
             record['consumed'] = self.consumed
+        if self.evidence_row:
+            record['evidence'] = self.evidence_row
         return record
 
 
@@ -309,6 +316,8 @@ class NewEvaluationResultCard:
     cell_results: List[NewEvaluationCellResult]
     metrics: Dict[str, Any] = field(default_factory=dict)
     requested_work: Dict[str, Any] = field(default_factory=dict)
+    evidence_scope: str = 'all'
+    evidence_discovered: int = 0
 
     @property
     def cell_result_ids(self) -> List[str]:
@@ -319,7 +328,11 @@ class NewEvaluationResultCard:
             'result': self.result,
             'claim_aggregation_strategy': self.claim_aggregation_strategy,
             'claims': self.cell_result_ids,
-            'evidence': {'available': len(self.cell_results)},
+            'evidence': {
+                'scope': self.evidence_scope,
+                'available': len(self.cell_results),
+                'discovered': self.evidence_discovered,
+            },
         }
         if self.requested_work:
             record['requested_work'] = self.requested_work
@@ -335,8 +348,10 @@ class NewEvaluationRecipe(EvaluationCard):
     The recipe owns MAGNET metadata, the Python claim, declared symbols, and a
     required ``kwdagger:`` execution block. KWDagger owns experiment execution
     and the aggregate result store. ``result_node`` selects which accumulated
-    aggregate rows are evidence for the claim; it does not restrict evidence to
-    the processes scheduled by the current invocation.
+    aggregate rows are candidates for the claim. The optional top-level
+    ``evidence.scope`` chooses whether the claim sees all accumulated rows or
+    only rows corresponding to result-node computations requested by this
+    invocation.
 
     The legacy ``EvaluationCard`` base is reused temporarily for common card
     parsing, claim, symbol, metric, and summary behavior. Legacy pipeline
@@ -381,6 +396,12 @@ class NewEvaluationRecipe(EvaluationCard):
     def kwdagger_dpath(self) -> ub.Path:
         """Shared KWDagger result/artifact root, independent of the MAGNET run."""
         return self.output_path / '_kwdagger'
+
+    @property
+    def evidence_scope(self) -> str:
+        """Which available aggregate rows this evaluation snapshot consumes."""
+        evidence = self.original_card.get('evidence') or {}
+        return evidence.get('scope', 'all')
 
     @property
     def _recipe_hash(self) -> str:
@@ -435,11 +456,22 @@ def _evaluate_claim_cell(
     status, output = claim.evaluate(context)
     execution_hash = _claim_execution_hash(symbols, measured)
     result_id = f'{cell_key}_{execution_hash}'
+
+    # Preserve the old dashboard contract without forcing KWDagger experiment
+    # parameters back into the recipe's legacy ``symbols:`` section. The
+    # dashboard calls this mapping ``symbols``; for the new evaluator it is a
+    # flat view of the concrete values that the claim actually consumed.
+    dashboard_symbols = symbols.simple_view()
+    dashboard_symbols.update({
+        key: evidence_row[key]
+        for key in sorted(namespace.accessed)
+    })
+
     return NewEvaluationCellResult(
         result_id=result_id,
         status=status,
         output=output,
-        symbols=symbols.simple_view(),
+        symbols=dashboard_symbols,
         timestamp=datetime.now().isoformat(),
         cell_key=cell_key,
         artifact=artifact,
@@ -485,6 +517,30 @@ def _fill_declared_symbols(
                     break
         out[name] = spec
     return out, filled
+
+
+def _select_evidence_rows(
+    evidence_rows: List[Dict[str, Any]],
+    requested_runs: List[Dict[str, Any]],
+    *,
+    result_node: str,
+    scope: str,
+) -> List[Dict[str, Any]]:
+    """Apply the recipe's evidence scope after aggregate discovery."""
+    if scope == 'all':
+        return list(evidence_rows)
+    if scope != 'requested':
+        raise ValueError(f'unknown evidence scope: {scope!r}')
+
+    requested_result_ids = {
+        row['process_id']
+        for row in requested_runs
+        if row.get('node') == result_node and row.get('enabled', True)
+    }
+    return [
+        row for row in evidence_rows
+        if row['key'] in requested_result_ids
+    ]
 
 
 def _summarize_requested_runs(
@@ -539,6 +595,12 @@ def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
             'evaluate_new requires `kwdagger.result_node`, naming the node '
             'whose accumulated aggregate rows provide claim evidence.'
         )
+    evidence_scope = recipe.evidence_scope
+    if evidence_scope not in {'all', 'requested'}:
+        raise ValueError(
+            '`evidence.scope` must be either `all` or `requested`; '
+            f'got {evidence_scope!r}'
+        )
     sweep_symbols = sorted(
         name
         for name, spec in recipe.symbols.items()
@@ -571,7 +633,10 @@ def evaluate_new_recipe(
     ) as file:
         yaml.safe_dump(recipe.original_card, file, sort_keys=False)
 
-    cell_results_path = recipe_output_path / 'results'
+    # The visualization dashboard treats this directory as part of MAGNET's
+    # run-bundle contract, including when no evidence rows are currently
+    # available.
+    cell_results_path = (recipe_output_path / 'results').ensuredir()
     raw_symbol_metadata = _parse_symbol_metadata(recipe.symbols)
     if raw_symbol_metadata:
         with safer.open(
@@ -599,10 +664,16 @@ def evaluate_new_recipe(
         json.dump(requested_runs, file, indent=2, ensure_ascii=False)
         file.write('\n')
 
-    # Evidence is discovered independently from the current request. KWDagger's
-    # aggregate loader scans the accumulated result store and reconstructs its
-    # normal qualified namespace, including lineage from predecessor nodes.
-    evidence_rows = processor.load_available_result_rows()
+    # KWDagger aggregate discovers the available result store independently of
+    # this request. The recipe may then use the request as an optional filter;
+    # the compiled schedule is never the result-discovery mechanism.
+    discovered_evidence_rows = processor.load_available_result_rows()
+    evidence_rows = _select_evidence_rows(
+        discovered_evidence_rows,
+        requested_runs,
+        result_node=processor.result_node,
+        scope=recipe.evidence_scope,
+    )
 
     cell_results = []
     for evidence in evidence_rows:
@@ -655,7 +726,11 @@ def evaluate_new_recipe(
     inconclusive_count = statuses.count('INCONCLUSIVE')
 
     logger.info('================================')
-    logger.info(f'Available Evidence Rows: {total}')
+    logger.info(f'Evidence Scope: {recipe.evidence_scope}')
+    logger.info(
+        f'Available Evidence Rows: {total} '
+        f'(discovered: {len(discovered_evidence_rows)})'
+    )
     logger.info(f'  Verified:     {percentage(verified_count):.2f}')
     logger.info(f'  Falsified:    {percentage(falsified_count):.2f}')
     logger.info(f'  Inconclusive: {percentage(inconclusive_count):.2f}')
@@ -672,6 +747,8 @@ def evaluate_new_recipe(
         cell_results=cell_results,
         metrics=calculated_metrics,
         requested_work=requested_work,
+        evidence_scope=recipe.evidence_scope,
+        evidence_discovered=len(discovered_evidence_rows),
     )
 
     with safer.open(

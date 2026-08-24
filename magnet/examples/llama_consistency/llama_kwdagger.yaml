@@ -35,6 +35,11 @@ claim:
     c = metrics.llama_compare
     assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
+# Keep this demo snapshot tied to the matrix requested by this invocation even
+# if the shared KWDagger store contains results from earlier experiments.
+evidence:
+  scope: requested
+
 kwdagger:
   # MAGNET asks KWDagger aggregate for every available result row from this
   # node in the shared result store. Its metrics appear under

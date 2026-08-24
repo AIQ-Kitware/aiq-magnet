@@ -24,6 +24,8 @@ def test_llama_card(run_download, tmp_path, card_relpath, use_new_evaluator):
 
     card_cls = NewEvaluationRecipe if use_new_evaluator else EvaluationCard
     card = card_cls(card_path, results_path)
+    if use_new_evaluator:
+        assert card.evidence_scope == 'requested'
     override_path(card, str(data_path / 'lite' / 'benchmark_output'))
 
     if use_new_evaluator:

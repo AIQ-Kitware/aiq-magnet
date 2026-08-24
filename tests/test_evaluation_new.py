@@ -152,6 +152,12 @@ def _scores(result_card):
     )
 
 
+def _set_evidence_scope(recipe_fpath, scope):
+    data = yaml.safe_load(ub.Path(recipe_fpath).read_text())
+    data['evidence'] = {'scope': scope}
+    ub.Path(recipe_fpath).write_text(yaml.safe_dump(data, sort_keys=False))
+
+
 def test_evidence_accumulates_across_independent_schedule_requests(
         kwdagger_recipe_fpath, tmp_path):
     """The current finite request does not define the available evidence set."""
@@ -172,6 +178,46 @@ def test_evidence_accumulates_across_independent_schedule_requests(
     assert second_result.requested_work['processes'] == 1
 
 
+def test_requested_scope_filters_accumulated_evidence(
+        kwdagger_recipe_fpath, tmp_path):
+    output_path = ub.Path(tmp_path) / 'out'
+
+    first = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    first.apply_params('matrix: {emit.seed: [1]}')
+    first.evaluate(backend='serial')
+
+    _set_evidence_scope(kwdagger_recipe_fpath, 'requested')
+    second = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    second.apply_params('matrix: {emit.seed: [2]}')
+    second_result = second.evaluate(backend='serial')
+
+    assert second_result.evidence_scope == 'requested'
+    assert second_result.evidence_discovered == 2
+    assert _scores(second_result) == [0.2]
+    assert second_result.as_record()['evidence'] == {
+        'scope': 'requested',
+        'available': 1,
+        'discovered': 2,
+    }
+
+
+def test_requested_scope_includes_requested_cached_output(
+        kwdagger_recipe_fpath, tmp_path):
+    output_path = ub.Path(tmp_path) / 'out'
+
+    first = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    first.apply_params('matrix: {emit.seed: [1]}')
+    first.evaluate(backend='serial')
+
+    _set_evidence_scope(kwdagger_recipe_fpath, 'requested')
+    second = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    second.apply_params('matrix: {emit.seed: [1]}')
+    second_result = second.evaluate(backend='serial', skip_existing=True)
+
+    assert _scores(second_result) == [0.1]
+    assert second_result.requested_work['schedule_status']['skipped'] >= 1
+
+
 def test_identical_recipe_invocations_keep_distinct_magnet_run_records(
         kwdagger_recipe_fpath, tmp_path):
     output_path = ub.Path(tmp_path) / 'out'
@@ -189,6 +235,7 @@ def test_failed_current_attempt_does_not_become_claim_evidence(
     class FakeProcessor:
         def __init__(self, spec, root_dpath):
             self.root_dpath = ub.Path(root_dpath).ensuredir()
+            self.result_node = 'emit'
 
         def schedule(self, **schedule_options):
             pass
@@ -223,3 +270,109 @@ def test_failed_current_attempt_does_not_become_claim_evidence(
     assert _scores(result_card) == [0.1]
     assert result_card.requested_work['attempt_status'] == {'failed': 1}
     assert result_card.requested_work['outputs_available'] == 0
+
+
+
+def _parse_with_existing_dashboard_contract(root_path):
+    """Small dependency-free mirror of eval-card-viz's local upload parser."""
+    parsed = []
+    for run_dpath in ub.Path(root_path).iterdir():
+        if not run_dpath.is_dir():
+            continue
+        results_dpath = run_dpath / 'results'
+        if not results_dpath.exists():
+            continue
+
+        runs = []
+        for result_dpath in results_dpath.iterdir():
+            verdict_fpath = result_dpath / 'verdict.json'
+            if verdict_fpath.is_file():
+                record = yaml.safe_load(verdict_fpath.read_text())
+                record['id'] = result_dpath.name
+                runs.append(record)
+
+        card_fpath = run_dpath / 'card.yaml'
+        verdict_fpath = run_dpath / 'verdict.json'
+        if not card_fpath.is_file() or not verdict_fpath.is_file():
+            continue
+        card = yaml.safe_load(card_fpath.read_text())
+        verdict = yaml.safe_load(verdict_fpath.read_text())
+        parsed.append({
+            'card': card,
+            'result': verdict['result'],
+            'claim_aggregation_strategy': (
+                verdict['claim_aggregation_strategy']
+            ),
+            'runs': runs,
+        })
+    return parsed
+
+
+def test_new_run_bundle_matches_dashboard_contract(
+        kwdagger_recipe_fpath, tmp_path):
+    output_path = ub.Path(tmp_path) / 'out'
+    recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    recipe.apply_params('matrix: {emit.seed: [1]}')
+    result_card = recipe.evaluate(backend='serial')
+
+    run_dpath = output_path / recipe._run_hash
+    assert (run_dpath / 'card.yaml').is_file()
+    assert (run_dpath / 'log').is_file()
+    assert (run_dpath / 'results').is_dir()
+    assert (run_dpath / 'verdict.json').is_file()
+
+    aggregate = yaml.safe_load((run_dpath / 'verdict.json').read_text())
+    assert aggregate['result'] == result_card.result
+    assert 'claim_aggregation_strategy' in aggregate
+    assert aggregate['evidence']['scope'] == 'all'
+
+    result_fpaths = list((run_dpath / 'results').glob('*/verdict.json'))
+    assert len(result_fpaths) == 1
+    cell = yaml.safe_load(result_fpaths[0].read_text())
+    # These four fields are the existing dashboard's per-run read contract.
+    assert {'status', 'output', 'symbols', 'timestamp'} <= set(cell)
+    assert cell['symbols'] == {'metrics.emit.score': 0.1}
+    assert cell['evidence']['metrics.emit.score'] == 0.1
+
+    # The dashboard's local upload path receives the output root, skips the
+    # shared _kwdagger directory, and discovers the MAGNET run directory.
+    dashboard_cards = _parse_with_existing_dashboard_contract(output_path)
+    assert len(dashboard_cards) == 1
+    assert dashboard_cards[0]['result'] == result_card.result
+    assert dashboard_cards[0]['runs'][0]['symbols'] == {
+        'metrics.emit.score': 0.1
+    }
+
+
+def test_empty_evidence_still_writes_dashboard_run_bundle(
+        kwdagger_recipe_fpath, tmp_path, monkeypatch):
+    class EmptyProcessor:
+        def __init__(self, spec, root_dpath):
+            self.root_dpath = ub.Path(root_dpath).ensuredir()
+            self.result_node = 'emit'
+
+        def schedule(self, **schedule_options):
+            pass
+
+        def inspect_requested_runs(self):
+            return []
+
+        def load_available_result_rows(self):
+            return []
+
+    monkeypatch.setattr(evaluation_new, 'KWDaggerProcessor', EmptyProcessor)
+
+    output_path = ub.Path(tmp_path) / 'out'
+    recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    result_card = recipe.evaluate(backend='serial')
+    run_dpath = output_path / recipe._run_hash
+
+    assert result_card.result == 'INCONCLUSIVE'
+    assert (run_dpath / 'results').is_dir()
+    aggregate = yaml.safe_load((run_dpath / 'verdict.json').read_text())
+    assert aggregate['result'] == 'INCONCLUSIVE'
+    assert aggregate['evidence'] == {
+        'scope': 'all',
+        'available': 0,
+        'discovered': 0,
+    }

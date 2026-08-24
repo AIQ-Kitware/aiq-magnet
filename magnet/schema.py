@@ -16,6 +16,15 @@ class SubmitterSchema(BaseModel):
 class ClaimSchema(BaseModel):
     python: str
 
+
+class EvidenceSchema(BaseModel):
+    """Selection policy for KWDagger aggregate rows used as evidence."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    scope: Literal['all', 'requested'] = 'all'
+
+
 class KWDaggerSchema(BaseModel):
     """
     A card's kwdagger backend.
@@ -196,6 +205,7 @@ class NewEvaluationRecipeSchema(EvaluationCardSchema):
 
     kwdagger: NewEvaluationKWDaggerSchema
     pipeline: None = None
+    evidence: EvidenceSchema = Field(default_factory=EvidenceSchema)
 
     @model_validator(mode='after')
     def no_legacy_symbol_sweeps(self) -> 'NewEvaluationRecipeSchema':

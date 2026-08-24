@@ -390,11 +390,13 @@ magnet evaluate_new magnet/examples/llama_consistency/llama_kwdagger.yaml \
 ```
 
 `evaluate_new` first submits the finite matrix requested by this invocation, then
-loads every currently available `result_node` row from the shared KWDagger
-result store. Previously computed rows remain usable evidence even when they
-were not part of the current schedule request. The run's `requested_runs.json`
-records queued/running/failed/not-attempted state separately; execution failure
-does not count as a falsified claim.
+uses KWDagger aggregate to discover currently available `result_node` rows from
+the shared result store. A recipe can select `evidence.scope: all` (the default)
+to evaluate all accumulated rows, or `evidence.scope: requested` to evaluate
+only rows corresponding to result-node computations requested by that
+invocation. Cached/skipped requested computations still qualify when their
+output exists. The run's `requested_runs.json` records execution state
+separately; execution failure does not count as a falsified claim.
 
 During the migration, `magnet evaluate_legacy` names the historical evaluator and
 `magnet evaluate` remains its compatibility alias. Both reject recipes with a
@@ -408,12 +410,24 @@ complete setup, recomputation, and materialization commands.
 Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield a `FALSIFIED` aggregate result with output similar to below:
 ```
 ================================
-Available Evidence Rows: 36
+Evidence Scope: requested
+Available Evidence Rows: 36 (discovered: 36)
   Verified:     0.61
   Falsified:    0.39
   Inconclusive: 0.00
 ================================
 ```
+
+`evaluate_new` keeps the existing MAGNET dashboard run-bundle contract:
+`card.yaml`, `log`, `results/*/verdict.json`, and aggregate `verdict.json`.
+Each per-evidence verdict retains the legacy `status`, `output`, `symbols`, and
+`timestamp` fields. For the new evaluator, `symbols` contains resolved recipe
+symbols plus the qualified KWDagger leaves actually consumed by the claim, so
+the existing dashboard can display the concrete experiment inputs without a
+new parser. The complete aggregate row is also recorded under `evidence`, and
+the aggregate verdict records the evidence scope and request summary. The
+`results/` directory is created even when no evidence is available.
+
 ### Downloading HELM results
 
 We provide a utility to download precomputed HELM results. 

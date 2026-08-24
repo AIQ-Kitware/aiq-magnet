@@ -137,11 +137,48 @@ Node-level selection remains part of the KWDagger pipeline configuration
 (e.g. `node.__enabled__` in a matrix/config row); `evaluate_new` does not add a
 second interpretation of it.
 
-These controls limit the work requested by this invocation; they do not filter
-the accumulated evidence store. For example, `--max_configs=1` can schedule one
-new configuration while the claim still sees older compatible `result_node`
-rows under the same `--output_path`. Use a separate output root when an
-isolated evidence store is desired.
+These controls limit the work requested by this invocation. Evidence selection
+is a separate recipe setting. `evidence.scope: all` evaluates every compatible
+row accumulated under the shared output root. `evidence.scope: requested`
+evaluates only result-node computations requested by this invocation, including
+requested computations that KWDagger satisfies from an existing cached output.
+The Llama recipe uses `requested`, so `--max_configs=1` produces a one-cell
+MAGNET result snapshot even when older Llama results already exist in the
+KWDagger store.
+
+### Load the results in the visualization dashboard
+
+The output from `evaluate_new` is directly compatible with the existing MAGNET
+visualization dashboard. After running the recipe, create a dashboard upload ZIP
+whose root contains the MAGNET run directories. The shared `_kwdagger` result
+store is not needed by the dashboard and should be left out of the upload:
+
+```bash
+(
+    cd results_kwdagger
+    zip -ry ../results_kwdagger-dashboard.zip . \
+        -x '_kwdagger' '_kwdagger/*'
+)
+```
+
+If the dashboard is not already checked out, start it with:
+
+```bash
+git clone https://github.com/AIQ-Kitware/eval-card-viz.git ../eval-card-viz
+cd ../eval-card-viz
+uv run visualization.py ./evaluations
+```
+
+Open the dashboard in the browser, click **Upload Local Run (.zip)** in the top
+right, and select `results_kwdagger-dashboard.zip` from the MAGNET checkout.
+There is no additional conversion or copy into the dashboard's `evaluations/`
+tree for this local-upload path.
+
+Each run in the ZIP contains the legacy dashboard contract:
+`card.yaml`, `log`, `results/*/verdict.json`, and `verdict.json`. The per-run
+`symbols` mapping is populated with the qualified KWDagger values consumed by
+the claim, so the existing dashboard can show the model pair, scores, threshold,
+and gap without any dashboard-side changes.
 
 Use `--params` to override the recipe's kwdagger matrix/configuration without
 editing the recipe. For example:
@@ -157,11 +194,11 @@ magnet evaluate_new \
 The matrix in the checked-in recipe has six base models and six comparison
 models, so one full scheduling request asks for 36 comparisons. KWDagger
 artifacts accumulate under `./results_kwdagger/_kwdagger`. After scheduling,
-MAGNET uses KWDagger aggregate to load every currently available
-`llama_compare` result in that shared store, including reusable results from
-prior requests. This distinction lets a sequence of partial campaigns build an
-evidence set over time instead of making one schedule request the evaluation
-universe.
+MAGNET uses KWDagger aggregate to discover all currently available
+`llama_compare` results, then the recipe's `evidence.scope: requested` keeps the
+rows corresponding to this invocation's matrix. Switching the scope to `all`
+lets a sequence of partial campaigns build and reevaluate a growing evidence
+set over time.
 
 Each MAGNET invocation gets its own run directory. `requested_runs.json`
 records the operational state of the processes requested by that invocation,

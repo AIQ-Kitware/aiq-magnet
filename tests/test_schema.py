@@ -193,3 +193,35 @@ def test_kwdagger_param_grid_keys_magnet_does_not_read_are_passed_through(
     card = EvaluationCardSchema.model_validate(
         {**kwdagger_card, 'kwdagger': kwdagger})
     assert card.kwdagger.include == include
+
+
+
+def test_new_recipe_evidence_scope():
+    data = {
+        'title': 'evidence scope',
+        'description': 'evidence scope',
+        'version': '1.0',
+        'organizations': ['Kitware'],
+        'submitter': {'name': 't', 'email': 't@example.com'},
+        'tags': [],
+        'links': [],
+        'claim': {'python': 'assert True'},
+        'kwdagger': {
+            'result_node': 'result',
+            'pipeline': {
+                'nodes': {
+                    'result': {
+                        'executable': 'echo',
+                        'out_paths': {'out': 'out.json'},
+                    }
+                }
+            },
+        },
+        'evidence': {'scope': 'requested'},
+    }
+    recipe = NewEvaluationRecipeSchema.model_validate(data)
+    assert recipe.evidence.scope == 'requested'
+
+    data['evidence']['scope'] = 'current-ish'
+    with pytest.raises(Exception, match='scope'):
+        NewEvaluationRecipeSchema.model_validate(data)

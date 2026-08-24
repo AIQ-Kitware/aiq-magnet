@@ -26,6 +26,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   evidence: new-submission/skipped/disabled state, attempt status, return
   code, expected output, and whether that output is available. Failed or pending
   execution does not itself falsify a claim.
+* New recipes can set `evidence.scope` to `all` (default) or `requested`.
+  `requested` still discovers results through KWDagger aggregate, then keeps
+  only available result-node computations requested by the current invocation;
+  cached/skipped requested outputs are included.
+* `evaluate_new` run bundles retain the visualization dashboard's existing
+  `card.yaml` / `log` / `results/*/verdict.json` / `verdict.json` contract.
+  The legacy `symbols` field in each per-evidence verdict is populated from
+  resolved recipe symbols plus the qualified KWDagger leaves consumed by the
+  claim, while the complete aggregate row remains available under `evidence`.
+  An empty `results/` directory is retained for zero-evidence snapshots.
 * `magnet evaluate_new --params` merges a YAML/JSON blob (or a file of one)
   into a recipe's `kwdagger:` block, in the same language as `kwdagger
   schedule --params`. The merged recipe is written to the run directory.
