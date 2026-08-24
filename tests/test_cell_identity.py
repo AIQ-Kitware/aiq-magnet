@@ -4,8 +4,9 @@ A cell's identity comes from the node that produced it, not from its results.
 
 import pytest
 
-from magnet.evaluation import (
-    Claim, EvaluationTask, Results, Symbols, _fill_declared_symbols)
+from magnet.evaluation import Claim, Symbols
+from magnet.evaluation_new import (
+    NewEvaluationTask as EvaluationTask, Results, _fill_declared_symbols)
 
 
 def _task(symbols, results=None, cell_key=None):

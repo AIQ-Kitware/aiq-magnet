@@ -6,8 +6,8 @@ import pytest
 import ubelt as ub
 import yaml
 
-from magnet.evaluation import EvaluationCard
 from magnet.evaluation_new import (
+    NewEvaluationCard,
     NewEvaluationConfig,
     evaluate_card_new,
     main as new_main,
@@ -60,19 +60,10 @@ def test_new_config_does_not_expose_legacy_execution_options():
 
 def test_new_evaluator_passes_execution_config_directly(
         kwdagger_card_fpath, tmp_path, monkeypatch):
-    # The new path must not consult either historical MAGNET environment
-    # variable. Make the worker lookup fatal so this test catches a regression
-    # even when the selected backend is serial.
-    import magnet._kwdagger as kwdagger_mod
-
+    # Environment variables with the old experimental names must not alter
+    # explicit evaluate_new configuration.
     monkeypatch.setenv('MAGNET_QUEUE_BACKEND', 'definitely-not-a-backend')
     monkeypatch.setenv('MAGNET_TMUX_WORKERS', '999')
-
-    def forbidden_env_worker_lookup():
-        raise AssertionError('evaluate_new consulted MAGNET_TMUX_WORKERS')
-
-    monkeypatch.setattr(
-        kwdagger_mod, '_tmux_workers', forbidden_env_worker_lookup)
 
     output_path = ub.Path(tmp_path) / 'out'
     new_main(argv=[
@@ -96,7 +87,7 @@ def test_new_evaluator_rejects_legacy_symbol_sweeps(
         yaml.safe_dump(data, sort_keys=False)
     )
 
-    card = EvaluationCard(
+    card = NewEvaluationCard(
         kwdagger_card_fpath,
         ub.Path(tmp_path) / 'out',
         validate='off',
@@ -117,7 +108,7 @@ def test_new_evaluator_rejects_legacy_pipeline(tmp_path):
         },
     }, sort_keys=False))
 
-    card = EvaluationCard(
+    card = NewEvaluationCard(
         fpath,
         ub.Path(tmp_path) / 'out',
         validate='off',

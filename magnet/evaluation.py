@@ -20,11 +20,7 @@ from rich import print
 
 from magnet.utils.util_logger import setup_logging
 from magnet.schema import EvaluationCardSchema, MetricObjective
-from magnet._kwdagger import (
-    GenericPipelineProcessor,
-    KWDaggerProcessor,
-    _resolve_pipeline_path,
-)
+from magnet._kwdagger import GenericPipelineProcessor, KWDaggerProcessor
 
 SAFER_USE_TEMPFILE = not ub.WIN32
 
@@ -79,30 +75,6 @@ class EvaluationConfig(kwconf.Config):
         help='Joblib backend used when --jobs is not 1.',
     )
 
-    params: str | None = kwconf.Value(
-        None,
-        parser=str,
-        help=(
-            "YAML/JSON merged into the card's backend block, or a path to a "
-            'file of it. Same language as `kwdagger schedule --params`, so a '
-            "card's grid is a default an evaluator overrides rather than "
-            'something to fork the card over. e.g. --params '
-            '"matrix: {predict.model: [a, b]}"'
-        ),
-    )
-
-    queue_backend: str | None = kwconf.Value(
-        None,
-        parser=str,
-        help=(
-            'cmd_queue backend the card DAG is scheduled onto: tmux, serial, '
-            'slurm, airflow. Defaults to $MAGNET_QUEUE_BACKEND, then tmux, '
-            'falling back to serial when unavailable. Prefer tmux even at '
-            'size 1: same jobs in the same order, but with a live monitor and '
-            'a separate log per job instead of one interleaved stream.'
-        ),
-    )
-
     verbose: bool = kwconf.Value(
         False, isflag=True, help='Verbose log output', group='logging'
     )
@@ -126,7 +98,7 @@ def _run_one(
     evaluation: 'EvaluationTask', claim_results_path: ub.Path
 ) -> Tuple[str, ub.Path, str, Dict[str, Any]]:
     status, _ = evaluation.execute()
-    execution_hash = evaluation.cell_id
+    execution_hash = evaluation._execution_hash
     resolved_symbols = evaluation.log['symbols']
     results_fpath = claim_results_path / execution_hash / 'verdict.json'
     results_fpath.parent.ensuredir()
@@ -209,9 +181,6 @@ class EvaluationCard:
 
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
-        # Paths written inside a card resolve against the card, not the
-        # shell's cwd.
-        self.card_dpath = ub.Path(path).parent
 
         self.title = cfg.get('title', '')
         self.description = cfg.get('description', '')
@@ -225,22 +194,12 @@ class EvaluationCard:
         # explicit kwdagger spec
         self.has_kwdagger = 'kwdagger' in cfg
         self.kwdagger = cfg.get('kwdagger')
-        if self.has_kwdagger:
-            if not self.kwdagger.get('result_node'):
-                raise ValueError(
-                    f'{path}: a kwdagger card must declare '
-                    f'`kwdagger.result_node`, naming the node whose output is '
-                    f'the card result'
-                )
-            self.kwdagger = _resolve_pipeline_path(
-                self.kwdagger, self.card_dpath)
 
         # populate ProcessNode(s) programmatically
         self.has_pipeline = 'pipeline' in cfg
         self.pipeline = cfg.get('pipeline')
 
         self.evaluations = []
-        self._run_hash_cached: str | None = None
 
     def status(self) -> str:
         """
@@ -281,64 +240,6 @@ class EvaluationCard:
                     self.symbols[key]['sweep'] = value
                 else:
                     self.symbols[key]['sweep'] = [value]
-
-    def apply_params(self, params: Any) -> None:
-        """
-        Merge a params blob into the card's backend block.
-
-        A card's matrix is the default grid, not the card's identity: the same
-        card is what runs against models a team has not seen. This is
-        ``kwdagger schedule --params`` addressed at a card, so the two are
-        specified the same way.
-
-        Merged rather than replaced, key by key, so one axis can be swapped
-        without restating the grid. The merged block goes into
-        ``original_card``, so the run directory records the card that ran and
-        a different grid hashes to a different run.
-
-        Example:
-            >>> from magnet.evaluation import EvaluationCard
-            >>> from importlib.resources import files
-            >>> card_path = (
-            ...     files('magnet') / 'examples' / 'llama_consistency' /
-            ...     'llama_kwdagger.yaml'
-            ... )
-            >>> card = EvaluationCard(card_path, './results')
-            >>> card.apply_params('matrix: {llama_predict.base_model: [qwen]}')
-            >>> card.kwdagger['matrix']['llama_predict.base_model']
-            ['qwen']
-            >>> # the axes it did not name are untouched
-            >>> len(card.kwdagger['matrix']['llama_predict.comp_model'])
-            6
-        """
-        params = _plain_data(kwutil.Yaml.coerce(params))
-        if not params:
-            return
-
-        key = 'kwdagger' if self.has_kwdagger else 'pipeline'
-        if not (self.has_kwdagger or self.has_pipeline):
-            raise ValueError('--params needs a card with a pipeline to run')
-
-        merged = _deep_merge(self.original_card[key], params)
-        self.original_card[key] = merged
-        if self.has_kwdagger:
-            self.kwdagger = _resolve_pipeline_path(merged, self.card_dpath)
-        else:
-            self.pipeline = merged
-
-    @property
-    def kwdagger_dpath(self) -> Any:
-        """
-        Where the DAG's node artifacts live: ``<output>/_kwdagger``.
-
-        Shared across card versions, so a node keeps its artifacts when an
-        unrelated part of the card changes. Per-run provenance stays under the
-        card-hash directory.
-        """
-        # Underscore-prefixed so it is not mistaken for a run directory
-        # (those are ``<card hash>_<timestamp>``); the collectors already skip
-        # ``_``-prefixed names.
-        return self.output_path / '_kwdagger'
 
     def evaluate(
         self,
@@ -389,50 +290,24 @@ class EvaluationCard:
                 json.dump(raw_symbol_metadata, f, indent=2, ensure_ascii=False)
 
         if self.has_kwdagger:
-            processor = KWDaggerProcessor(
-                self.kwdagger, root_dpath=self.kwdagger_dpath
-            )
+            # Explicit kwdagger pipeline defined
+            # Claim node handles symbols outside of EvaluationCard
+            kwdagger_results, symbols = KWDaggerProcessor(
+                self.kwdagger, root_dpath=card_output_path / 'kwdagger'
+            ).collect_results()
 
-            # The DAG is authoritative: each instance of the result node is
-            # one cell of the card, evaluated against what it computed.
-            cells = processor.collect_result_cells()
-
-            for cell in cells:
-                cell_symbols, measured = _fill_declared_symbols(
-                    self.symbols, cell['results'])
-                self.evaluations.extend(self.dispatch(
-                    Symbols.decompose_symbol_defs(cell_symbols),
-                    results=cell['results'],
-                    cell_key=cell['key'],
-                    measured=measured,
-                ))
-
-            with safer.open(
-                card_output_path / 'result_cells.json',
-                'w',
-                temp_file=SAFER_USE_TEMPFILE,
-            ) as f:
-                json.dump(cells, f, indent=2, ensure_ascii=False)
-                f.write('\n')
-
-            if processor.incomplete:
-                with safer.open(
-                    card_output_path / 'incomplete_cells.json',
-                    'w',
-                    temp_file=SAFER_USE_TEMPFILE,
-                ) as f:
-                    json.dump(
-                        processor.incomplete, f, indent=2, ensure_ascii=False)
-                    f.write('\n')
-
-            _link_dag_root(card_output_path, self.kwdagger_dpath)
+            for sweep in symbols:
+                symbol_with_value = {s: {'value': v} for s, v in sweep.items()}
+                self.symbols.update(symbol_with_value)
+                self.evaluations.extend(
+                    self.dispatch(Symbols.decompose_symbol_defs(self.symbols))
+                )
 
         elif self.has_pipeline:
+            # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
-                self.pipeline, root_dpath=self.kwdagger_dpath
+                self.pipeline, root_dpath=card_output_path / 'kwdagger'
             ).collect_symbols()
-
-            _link_dag_root(card_output_path, self.kwdagger_dpath)
 
             for run in pipeline_runs:
                 run_symbols = pipeline_runs[run]
@@ -468,7 +343,7 @@ class EvaluationCard:
 
         calculated_metrics = {}
 
-        if raw_symbol_metadata and resolved_symbols:
+        if raw_symbol_metadata:
             metric_definitions = Metric.build_metrics_from_symbol_metadata(
                 raw_symbol_metadata
             )
@@ -522,17 +397,10 @@ class EvaluationCard:
         self.claim.status = card_result
         return card_result
     def dispatch(
-        self,
-        flattened_sweep: List['Symbols'],
-        results: Dict[str, Any] | None = None,
-        cell_key: str | None = None,
-        measured: set | None = None,
+        self, flattened_sweep: List['Symbols']
     ) -> List['EvaluationTask']:
         return [
-            EvaluationTask(
-                Claim({'python': self.claim.claim}), symbols,
-                results=results, cell_key=cell_key, measured=measured,
-            )
+            EvaluationTask(Claim({'python': self.claim.claim}), symbols)
             for symbols in flattened_sweep
         ]
 
@@ -565,32 +433,11 @@ class EvaluationCard:
         logger.info(f'[bold]CARD STATUS:[/bold] {status}')
 
     @property
-    def _card_hash(self) -> str:
-        """The card's content; the same card is the same id on any day."""
-        return ub.hash_data(self.original_card)[:8]
-
-    @property
     def _run_hash(self) -> str:
-        """
-        This card's directory: ``<card id>_<when it first ran>``.
+        card_hash = ub.hash_data(self.original_card)[:8]
+        timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
 
-        Holds the per-run record; node artifacts live under
-        :attr:`kwdagger_dpath`. An unchanged card reuses the directory it
-        already has. Computed once per instance, since the timestamp would
-        otherwise differ per read.
-        """
-        if self._run_hash_cached is None:
-            existing = [
-                p for p in sorted(self.output_path.glob(f'{self._card_hash}_*'))
-                if p.is_dir()
-            ]
-            if existing:
-                newest = max(existing, key=lambda p: p.stat().st_mtime)
-                self._run_hash_cached = newest.name
-            else:
-                timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
-                self._run_hash_cached = f'{self._card_hash}_{timestamp}'
-        return self._run_hash_cached
+        return f'{card_hash}_{timestamp}'
 
 
 class EvaluationTask:
@@ -598,19 +445,9 @@ class EvaluationTask:
     Singular submission from an Evaluation Card
     """
 
-    def __init__(
-        self,
-        claim: 'Claim',
-        symbols: 'Symbols',
-        results: Dict[str, Any] | None = None,
-        cell_key: str | None = None,
-        measured: set | None = None,
-    ) -> None:
+    def __init__(self, claim: 'Claim', symbols: 'Symbols') -> None:
         self.claim = claim
         self.symbols = symbols
-        self.results = Results(results or {})
-        self.cell_key = cell_key
-        self.measured = measured or set()
         self.output_msg = ''
         self.log: Dict[str, Any] = {}
 
@@ -620,16 +457,7 @@ class EvaluationTask:
         #           ...
         #           zn -> an -> resn
         # make sure x,y are done once / before sweep
-        context = self.symbols()
-        for name, value in self.results.bind().items():
-            if name in context:
-                raise ValueError(
-                    f'symbol {name!r} collides with a pipeline result of the '
-                    f'same name; rename the symbol'
-                )
-            context[name] = value
-
-        self.result, self.output_msg = self.claim.evaluate(context)
+        self.result, self.output_msg = self.claim.evaluate(self.symbols())
         self.record_run()
         return self.result, self.output_msg
 
@@ -641,216 +469,18 @@ class EvaluationTask:
             'symbols': self.symbols.simple_view(),
             'timestamp': completion_time,
         }
-        if self.cell_key:
-            self.log['cell'] = self.cell_key
-        if self.results.accessed:
-            self.log['consumed'] = sorted(self.results.accessed)
-
-    @property
-    def cell_id(self) -> str:
-        """
-        Directory name for this cell's verdict.
-
-        Only has to be unique and stable; nothing reads it back by name.
-        """
-        if self.cell_key is None:
-            return self._execution_hash
-        return f'{self.cell_key}_{self._execution_hash}'
 
     @property
     def _execution_hash(self) -> str:
-        view = self.symbols.simple_view()
-        # What the card fixed, not what the run measured: a cell that reports a
-        # different number is the same cell, and replaces its own verdict.
-        view = {k: v for k, v in view.items() if k not in self.measured}
-        return ub.hash_data(view)[:12]
-
-
-class Results:
-    """
-    Pipeline results addressed by their qualified names.
-
-    kwdagger's convention is a flat dict of ``metrics.<node>.<name>`` keys.
-    Those are not Python identifiers, so a claim cannot name them directly;
-    this exposes each dotted level as an attribute instead. Reads are
-    recorded, so a verdict can say which values its claim consumed.
-
-    Example:
-        >>> from magnet.evaluation import Results
-        >>> results = Results({'metrics.compare.gap': 0.04,
-        ...                    'metrics.compare.threshold': 0.1})
-        >>> bound = results.bind()
-        >>> bound['metrics'].compare.gap
-        0.04
-        >>> sorted(results.accessed)
-        ['metrics.compare.gap']
-        >>> bound['metrics'].compare.missing
-        Traceback (most recent call last):
-            ...
-        AttributeError: no 'missing' under 'metrics.compare'; available: ...
-    """
-
-    def __init__(
-        self,
-        flat: Dict[str, Any],
-        prefix: str = '',
-        accessed: set | None = None,
-    ) -> None:
-        self._flat = dict(flat)
-        self._prefix = prefix
-        self._accessed = set() if accessed is None else accessed
-
-    @property
-    def accessed(self) -> set:
-        return self._accessed
-
-    def bind(self) -> Dict[str, Any]:
-        """Top-level names to inject into a claim's namespace."""
-        bound = {}
-        for key in self._flat:
-            root = key.split('.', 1)[0]
-            if root in self._flat:
-                bound[root] = self._flat[root]
-            else:
-                bound[root] = Results(self._flat, f'{root}.', self._accessed)
-        return bound
-
-    def as_dict(self) -> Dict[str, Any]:
-        """
-        The leaf values at this level, unqualified.
-
-        For a claim that would rather work in bare names::
-
-            globals().update(metrics.compare.as_dict())
-        """
-        depth = self._prefix.count('.') + 1
-        return {
-            key.split('.')[depth]: value
-            for key, value in self._flat.items()
-            if key.startswith(self._prefix) and key.count('.') == depth
-        }
-
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith('_'):
-            # Pickle probes __getstate__ and friends before __init__ has run,
-            # so answering them from self._flat would recurse.
-            raise AttributeError(name)
-        key = f'{self._prefix}{name}'
-        if key in self._flat:
-            self._accessed.add(key)
-            return self._flat[key]
-        deeper = f'{key}.'
-        if any(k.startswith(deeper) for k in self._flat):
-            return Results(self._flat, deeper, self._accessed)
-        available = sorted(
-            k[len(self._prefix):].split('.')[0]
-            for k in self._flat
-            if k.startswith(self._prefix)
-        )
-        raise AttributeError(
-            f'no {name!r} under {self._prefix.rstrip(".")!r}; '
-            f'available: {available}'
-        )
-
-    def __repr__(self) -> str:
-        return f'<Results {self._prefix or "/"}>'
-
-
-def _deep_merge(base: Any, update: Any) -> Any:
-    """
-    Merge nested mappings, with ``update`` winning at the leaves.
-
-    A list replaces a list: an axis of a grid is stated whole, so appending
-    would make ``--params`` unable to narrow one.
-
-    Example:
-        >>> from magnet.evaluation import _deep_merge
-        >>> base = {'matrix': {'a': [1, 2], 'b': [3]}, 'result_node': 'n'}
-        >>> _deep_merge(base, {'matrix': {'a': [9]}})
-        {'matrix': {'a': [9], 'b': [3]}, 'result_node': 'n'}
-    """
-    if not isinstance(base, dict) or not isinstance(update, dict):
-        return update
-    merged = dict(base)
-    for key, value in update.items():
-        merged[key] = _deep_merge(base[key], value) if key in base else value
-    return merged
-
-
-def _fill_declared_symbols(
-    symbols: Dict[str, Any], results: Dict[str, Any]
-) -> Tuple[Dict[str, Any], set]:
-    """
-    Give a declared-but-unresolved symbol the result of the same name.
-
-    A card that defines a metric declares the symbol and leaves it to the
-    pipeline to supply. Naming it is how the card opts in; everything else the
-    node produced stays behind ``metrics.``.
-
-    Returns:
-        Tuple[Dict[str, Any], set]: the symbols, and the names filled in.
-    """
-    filled = set()
-    out = {}
-    for name, spec in symbols.items():
-        spec = dict(spec)
-        if not {'value', 'sweep', 'python'} & set(spec):
-            for key, value in results.items():
-                if key.rsplit('.', 1)[-1] == name:
-                    spec['value'] = value
-                    filled.add(name)
-                    break
-        out[name] = spec
-    return out, filled
-
-
-def _link_dag_root(card_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
-    """
-    Point ``<run>/kwdagger`` at the shared DAG root.
-
-    The root moved out of the run directory so nodes survive a card edit, but
-    downstream tools glob ``<run>/kwdagger`` for a run's artifacts and figures
-    and would silently find none. This is a compatibility shim, not the fix:
-    those tools should read the shared root and select the run's own cells,
-    which ``result_cells.json`` records. Remove it once they do.
-    """
-    link = card_output_path / 'kwdagger'
-    try:
-        ub.symlink(kwdagger_dpath, link, overwrite=True)
-    except OSError as ex:
-        logger.warning(f'could not link {link} to the DAG root: {ex}')
+        return ub.hash_data(self.symbols.simple_view())[:12]
 
 
 def _plain_data(data: Any) -> Any:
-    """
-    Rebuild YAML data out of plain dicts, lists and scalars.
-
-    The loader returns round-trip types that carry formatting. Those reach
-    ``original_card`` through an override and then fail in ``yaml.safe_dump``
-    when the run directory's copy of the card is written, with
-    ``RepresenterError: cannot represent an object``. Any list-valued override
-    hit this, so ``--override 'seed: [1, 2]'`` could not run at all.
-
-    Example:
-        >>> import kwutil
-        >>> from magnet.evaluation import _plain_data
-        >>> data = _plain_data(kwutil.Yaml.coerce('seed: [1, 2]'))
-        >>> type(data).__name__, type(data['seed']).__name__
-        ('dict', 'list')
-        >>> import yaml
-        >>> yaml.safe_dump(data)
-        'seed:\\n- 1\\n- 2\\n'
-        >>> quoted = kwutil.Yaml.coerce("cfg: ['a:b=c']")
-        >>> yaml.safe_dump(_plain_data(quoted))
-        'cfg:\\n- a:b=c\\n'
-    """
+    """Convert YAML round-trip container/scalar subclasses to plain data."""
     if isinstance(data, dict):
-        return {_plain_data(key): _plain_data(value)
-                for key, value in data.items()}
+        return {_plain_data(k): _plain_data(v) for k, v in data.items()}
     if isinstance(data, (list, tuple)):
-        return [_plain_data(value) for value in data]
-    # Scalars need this too: a quoted string loads as a str subclass that
-    # remembers its quoting style, which safe_dump also refuses.
+        return [_plain_data(v) for v in data]
     if isinstance(data, str):
         return str(data)
     if isinstance(data, bool):
@@ -1330,14 +960,6 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
     card = EvaluationCard(args.path, args.output_path, validate=validate)
     if args.override is not None:
         card.replace(args.override)
-    if args.params is not None:
-        card.apply_params(args.params)
-
-    if args.queue_backend:
-        # One source of truth: the resolver reads this, and so does any nested
-        # dispatch. Threading a parameter through evaluate() would miss the
-        # dispatch calls that run from collect_result_cells().
-        os.environ['MAGNET_QUEUE_BACKEND'] = args.queue_backend
 
     card.evaluate(
         jobs=args.jobs,

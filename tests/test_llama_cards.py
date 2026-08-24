@@ -6,25 +6,31 @@ from importlib.resources import files
 
 from magnet.backends.helm.cli import download_helm_results
 from magnet.evaluation import EvaluationCard
+from magnet.evaluation_new import NewEvaluationCard
 
 
 @pytest.mark.parametrize(
-    'card_relpath',
+    'card_relpath,use_new_evaluator',
     [
-        'cards/llama.yaml',
-        'cards/llama_pipeline.yaml',
-        'examples/llama_consistency/llama_kwdagger.yaml',
+        ('cards/llama.yaml', False),
+        ('cards/llama_pipeline.yaml', False),
+        ('examples/llama_consistency/llama_kwdagger.yaml', True),
     ],
 )
-def test_llama_card(run_download, tmp_path, card_relpath):
+def test_llama_card(run_download, tmp_path, card_relpath, use_new_evaluator):
     data_path = run_download
     results_path = f'{tmp_path}/results'
     card_path = files('magnet').joinpath(*card_relpath.split('/'))
 
-    card = EvaluationCard(card_path, results_path)
+    card_cls = NewEvaluationCard if use_new_evaluator else EvaluationCard
+    card = card_cls(card_path, results_path)
     override_path(card, str(data_path / 'lite' / 'benchmark_output'))
 
-    assert card.evaluate() == 'FALSIFIED'
+    if use_new_evaluator:
+        result = card.evaluate(backend='serial')
+    else:
+        result = card.evaluate()
+    assert result == 'FALSIFIED'
     assert len(card.evaluations) == 36
 
 

@@ -9,7 +9,7 @@ directory it came from.
 import ubelt as ub
 import yaml
 
-from magnet.evaluation import EvaluationCard
+from magnet.evaluation_new import NewEvaluationCard as EvaluationCard
 
 
 def _write_card(dpath, pipeline):

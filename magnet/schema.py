@@ -27,7 +27,7 @@ class KWDaggerSchema(BaseModel):
 
     #: The node whose output is the card's result. Each configured instance of
     #: it is one cell.
-    result_node: str
+    result_node: str | None = None
 
     #: A Pipeline callable, a path to a declarative pipeline, or the pipeline
     #: inline as a mapping.

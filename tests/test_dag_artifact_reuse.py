@@ -16,7 +16,7 @@ import pytest
 import ubelt as ub
 import yaml
 
-from magnet.evaluation import EvaluationCard
+from magnet.evaluation_new import NewEvaluationCard as EvaluationCard
 
 # The whole pipeline: one node whose output depends only on its own parameters.
 #
@@ -36,16 +36,13 @@ _NODE_SOURCE = ub.codeblock(
 
 
 @pytest.fixture
-def card_factory(tmp_path, monkeypatch):
+def card_factory(tmp_path):
     """
     Build cards that differ only in which seeds they sweep.
 
     Returns:
         Callable[[list], EvaluationCard]
     """
-    # A test must not queue jobs into tmux, which is the default backend.
-    monkeypatch.setenv('MAGNET_QUEUE_BACKEND', 'serial')
-
     dpath = ub.Path(tmp_path)
     node_fpath = dpath / 'demo_node.py'
     node_fpath.write_text(_NODE_SOURCE)
@@ -111,7 +108,7 @@ def test_adding_a_cell_reuses_the_cells_that_did_not_change(
     output_dpath = ub.Path(tmp_path) / 'runs'
 
     card = card_factory([1, 2])
-    assert card.evaluate() == 'VERIFIED'
+    assert card.evaluate(backend='serial') == 'VERIFIED'
 
     before = _artifacts(output_dpath)
     assert len(before) == 2, 'the first run should have computed two cells'
@@ -119,7 +116,7 @@ def test_adding_a_cell_reuses_the_cells_that_did_not_change(
     # The same two cells, plus a third. Seeds 1 and 2 are configured as
     # before, so their node ids do not move.
     card2 = card_factory([1, 2, 3])
-    assert card2.evaluate() == 'VERIFIED'
+    assert card2.evaluate(backend='serial') == 'VERIFIED'
 
     after = _artifacts(output_dpath)
 
@@ -150,12 +147,12 @@ def test_a_changed_cell_is_not_reused(card_factory, tmp_path):
     """A changed seed is a different node id, so its cell is not reused."""
     output_dpath = ub.Path(tmp_path) / 'runs'
 
-    assert card_factory([1]).evaluate() == 'VERIFIED'
+    assert card_factory([1]).evaluate(backend='serial') == 'VERIFIED'
     before = _artifacts(output_dpath)
     assert len(before) == 1
 
     # The shared root must not hand back the cell computed for seed 1.
-    assert card_factory([7]).evaluate() == 'VERIFIED'
+    assert card_factory([7]).evaluate(backend='serial') == 'VERIFIED'
     after = _artifacts(output_dpath)
 
     new_ids = set(after) - set(before)

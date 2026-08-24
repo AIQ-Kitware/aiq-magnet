@@ -5,7 +5,6 @@ Everything that knows about DAGs, schedules and queues lives here, so
 :mod:`magnet.evaluation` deals in cards, symbols and claims.
 """
 import json
-import os
 import warnings
 from typing import Any, Dict, List, Tuple
 
@@ -26,8 +25,7 @@ def resolve_queue_backend(requested: str | None = None) -> str:
     Choose the cmd_queue backend a card's DAG is scheduled onto.
 
     Args:
-        requested (str | None): an explicit choice. ``None`` reads
-            ``MAGNET_QUEUE_BACKEND``, then falls back to ``'tmux'``.
+        requested (str | None): an explicit choice. ``None`` means ``tmux``.
 
     Returns:
         str: a backend cmd_queue reports as available.
@@ -45,7 +43,7 @@ def resolve_queue_backend(requested: str | None = None) -> str:
     import cmd_queue
 
     if requested is None:
-        requested = os.environ.get('MAGNET_QUEUE_BACKEND') or 'tmux'
+        requested = 'tmux'
     requested = requested.strip()
 
     try:
@@ -63,26 +61,6 @@ def resolve_queue_backend(requested: str | None = None) -> str:
         )
     return 'serial'
 
-def _tmux_workers() -> int | None:
-    """How many queue workers may run at once, or None for the default.
-
-    This bounds GPU contention. A LeasedProcessNode holds its answerer while it
-    waits for the extractor it also needs, so if enough shards start at once to
-    claim every GPU, none can ever get the extractor and none will release.
-    Observed on a 4-GPU host: four answerers on GPUs 0-3, the shared extractor
-    unplaceable, eight leases queued behind it, zero rows produced in an hour.
-
-    Concurrency must stay at or below (GPUs - 1) for a cohort with a shared
-    single-GPU extractor. MAGNET cannot know the GPU count, so the runner sets
-    this.
-    """
-    raw = os.environ.get('MAGNET_TMUX_WORKERS', '').strip()
-    if not raw:
-        return None
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        return None
 
 def _queue_name_for(root_dpath) -> str:
     """A tmux queue name that says which run these sessions belong to.
@@ -195,7 +173,7 @@ class GenericPipelineProcessor:
         self.dag.build_nx_graphs()
 
     def dispatch(
-        self, backend: str | None = None, skip_existing: bool = True,
+        self, backend: str = 'serial', skip_existing: bool = True,
         **kwargs: Any
     ) -> None:
         self.define_kwdagger()
@@ -207,8 +185,6 @@ class GenericPipelineProcessor:
             params=kwdagger_params,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
             queue_name=_queue_name_for(self.root_dpath),
-            **({'tmux_workers': _tmux_workers()}
-               if _tmux_workers() is not None else {}),
             backend=backend,
             skip_existing=skip_existing,
             run=True,
@@ -324,17 +300,10 @@ class KWDaggerProcessor:
         backend: str | None = None,
         skip_existing: bool = True,
         workers: int | None = None,
-        use_environment_defaults: bool = True,
         **kwargs: Any,
     ) -> None:
         backend = resolve_queue_backend(backend)
 
-        # ``magnet evaluate`` is the compatibility path and keeps honoring the
-        # historical MAGNET_TMUX_WORKERS environment setting. The new
-        # evaluator passes ``use_environment_defaults=False`` and threads its
-        # CLI values directly into kwdagger instead.
-        if workers is None and use_environment_defaults:
-            workers = _tmux_workers()
         if workers is not None and workers < 1:
             raise ValueError('workers must be >= 1')
 
@@ -358,7 +327,6 @@ class KWDaggerProcessor:
         self,
         backend: str | None = None,
         workers: int | None = None,
-        use_environment_defaults: bool = True,
     ) -> List[Dict[str, Any]]:
         """
         Read the result node's output for each of its configured instances.
@@ -391,7 +359,6 @@ class KWDaggerProcessor:
             self.dispatch(
                 backend=backend,
                 workers=workers,
-                use_environment_defaults=use_environment_defaults,
             )
 
         # build_schedule returns configured instances keyed by process id;
@@ -441,6 +408,27 @@ class KWDaggerProcessor:
                 f'First: {missing[0]["key"]} ({missing[0]["status"]})'
             )
         return cells
+
+    def collect_results(self) -> Tuple[List[str], List[Any]]:
+        """Legacy result collector used by ``magnet evaluate``.
+
+        The legacy evaluator historically expected kwdagger pipelines to emit
+        ``verdict.json`` files containing ``result.status`` and
+        ``result.symbols``. Keep that behavior isolated here while
+        ``evaluate_new`` uses :meth:`collect_result_cells`.
+        """
+        if not self.results:
+            self.dispatch(backend='serial')
+
+        paths = self.root_dpath.glob('**/verdict.json')
+        for claim_json in paths:
+            claim_result = json.load(open(claim_json, 'r'))
+            if 'result' in claim_result and 'status' in claim_result['result']:
+                self.results.append(claim_result['result']['status'])
+            if 'result' in claim_result and 'symbols' in claim_result['result']:
+                self.symbols.append(claim_result['result']['symbols'])
+
+        return self.results, self.symbols
 
     def _instance_status(self, node: Any, expected: Any) -> Dict[str, Any]:
         """

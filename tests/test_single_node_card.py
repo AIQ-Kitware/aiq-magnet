@@ -8,7 +8,7 @@ import pytest
 import ubelt as ub
 import yaml
 
-from magnet.evaluation import EvaluationCard
+from magnet.evaluation_new import NewEvaluationCard as EvaluationCard
 
 SCRIPT = """
 import json, sys, pathlib
@@ -48,8 +48,7 @@ def _card_data(script, seeds, result_node='emit'):
 
 
 @pytest.fixture
-def write_card(tmp_path, monkeypatch):
-    monkeypatch.setenv('MAGNET_QUEUE_BACKEND', 'serial')
+def write_card(tmp_path):
     dpath = ub.Path(tmp_path)
     script = dpath / 'emit.py'
     script.write_text(textwrap.dedent(SCRIPT))
@@ -67,7 +66,7 @@ def test_a_one_node_pipeline_needs_no_python(write_card, tmp_path):
     # An inline `nodes:` mapping, a matrix, and the node's name. No module
     # path, no pipeline function, no claim node.
     card = EvaluationCard(write_card([1, 2]), ub.Path(tmp_path) / 'out')
-    assert card.evaluate() == 'VERIFIED'
+    assert card.evaluate(backend='serial') == 'VERIFIED'
     assert len(card.evaluations) == 2
     assert {e.cell_key for e in card.evaluations} != {None}
 

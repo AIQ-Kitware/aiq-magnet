@@ -127,5 +127,5 @@ def test_legacy_evaluator_surface_is_still_present():
     keys = set(EvaluationConfig().keys())
     assert {
         'path', 'output_path', 'override', 'jobs', 'parallel_backend',
-        'params', 'queue_backend',
     } <= keys
+    assert not {'params', 'queue_backend'} & keys

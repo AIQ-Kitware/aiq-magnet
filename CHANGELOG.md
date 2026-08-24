@@ -9,10 +9,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ### Added
 
 * Added `magnet evaluate_new`, a kwdagger-only migration path with direct `--params`, `--backend`, and `--workers` configuration. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
-* Added `magnet evaluate_legacy` as the explicit name for the unchanged historical evaluator; `magnet evaluate` remains its compatibility alias.
-* Cards declare `kwdagger.result_node`: the node whose output is the card's
-  result. Every configured instance of it is one cell, identified by that
-  instance's kwdagger `process_id` and evaluated separately.
+* Added `magnet evaluate_legacy` as the explicit name for the historical evaluator; `magnet evaluate` remains its compatibility alias.
+* New-style cards declare `kwdagger.result_node`: the node whose output is
+  the card's result. `evaluate_new` requires it; the shared schema leaves it
+  optional so historical kwdagger cards remain valid under `evaluate_legacy`.
+  Every configured instance of the result node is one cell, identified by its
+  kwdagger `process_id` and evaluated separately.
 * A result node's values reach a claim as `metrics.<node>.<name>`. A card that
   declares a symbol of the same name still gets it unqualified, which is how a
   `define_metric` symbol is supplied.
@@ -21,36 +23,27 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   produced nothing is skipped rather than failing the card, and recorded in
   `incomplete_cells.json` as `failed` (with its exit code), `pending`, or
   `empty`.
-* `--params` merges a YAML/JSON blob (or a file of one) into a card's
-  backend block, in the same language as `kwdagger schedule --params`. A
-  card's matrix is a default grid an evaluator overrides, so running a card
-  against models it does not name no longer means forking the card. The
-  merged card is written to the run directory.
-* The queue backend is selectable via `--queue_backend` and defaults to tmux.
+* `magnet evaluate_new --params` merges a YAML/JSON blob (or a file of one)
+  into a card's `kwdagger:` block, in the same language as `kwdagger schedule
+  --params`. The merged card is written to the run directory.
 
 ### Deprecated
 
 * A card's `pipeline:` block. Prefer `kwdagger:` with a `result_node`. Its
   semantics are unchanged and still supported; it now warns.
 
-### Removed
-
-* A `kwdagger` card must declare `result_node`; the schema requires it and
-  a card without one is rejected as it loads.
-  The path that rediscovered verdicts by globbing the run tree is gone, along
-  with the node a pipeline had to carry to write them.
-
 ### Changed
 
 * Requires `kwdagger>=0.4.0`.
 * A cell's identity no longer depends on the values it measured, so a metric
   that moves replaces its verdict instead of writing a second one beside it.
-* Node artifacts live in `<output>/_kwdagger`, shared across card versions, so
-  editing a card no longer recomputes the nodes it did not change. Both routes
-  ask each configured instance for its own artifact rather than globbing that
-  root. `<run>/kwdagger` links there for consumers that read a run.
-* An unchanged card reuses its run directory instead of stamping a new one.
-* A relative pipeline path in a card resolves against the card.
+* Under `evaluate_new`, node artifacts live in `<output>/_kwdagger`, shared
+  across card versions, so editing a card does not recompute unchanged nodes.
+  `<run>/kwdagger` links there for consumers that read a run. The legacy
+  evaluator keeps its historical per-run DAG layout.
+* Under `evaluate_new`, an unchanged card reuses its run directory instead of
+  stamping a new one.
+* `evaluate_new` resolves a relative kwdagger pipeline path against the card.
 * The Llama kwdagger example embeds its declarative `nodes` / `edges`
   pipeline directly in the card; the separate Python pipeline definition is
   removed.

@@ -144,14 +144,15 @@ def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
     assert 'metrics.llama_compare' in kwdagger_card['claim']['python']
 
 
-def test_a_kwdagger_card_must_declare_its_result_node(kwdagger_card):
+def test_shared_schema_allows_legacy_kwdagger_without_result_node(kwdagger_card):
     kwdagger = {
         k: v for k, v in kwdagger_card['kwdagger'].items()
         if k != 'result_node'
     }
-    card = {**kwdagger_card, 'kwdagger': kwdagger}
-    with pytest.raises(ValidationError, match='result_node'):
-        EvaluationCardSchema.model_validate(card)
+    card = EvaluationCardSchema.model_validate(
+        {**kwdagger_card, 'kwdagger': kwdagger}
+    )
+    assert card.kwdagger.result_node is None
 
 
 def test_kwdagger_keys_magnet_does_not_read_are_passed_through(kwdagger_card):
