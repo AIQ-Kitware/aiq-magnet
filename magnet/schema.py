@@ -93,7 +93,12 @@ class SymbolSchema(BaseModel):
 
     @model_validator(mode='after')
     def has_resolution(self) -> 'SymbolSchema':
-        if self.value is None and self.sweep is None and self.python is None:
+        if (
+            self.type is None
+            and self.value is None
+            and self.sweep is None
+            and self.python is None
+        ):
             if self.metadata is not None and self.metadata.define_metric is not None:
                 # Handle metric definitions in kwdagger/pipeline cards
                 # (i.e. ignore test for symbols defined/calculated in user script)
