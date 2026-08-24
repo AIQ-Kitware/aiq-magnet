@@ -156,15 +156,12 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
 
         dst_fpath = ub.Path(config.results_fpath)
         dst_fpath.parent.ensuredir()
+        # TODO: use safer for writing result files.
         dst_fpath.write_text(json.dumps(run_data, indent=2))
         print(f'Wrote results to: {dst_fpath=}')
 
 
-__cli__ = ExampleLlamaEndpointCLI
-
 if __name__ == '__main__':
-    __cli__.main()
-
     r"""
     CommandLine:
         python ./magnet/examples/llama_consistency/llama_predict.py \
@@ -173,3 +170,4 @@ if __name__ == '__main__':
             --helm_runs_path ./data/crfm-helm-public/lite/benchmark_output \
             --results_fpath ./results.json
     """
+    ExampleLlamaEndpointCLI.main()

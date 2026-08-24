@@ -37,7 +37,7 @@ claim:
 
 kwdagger:
   pipeline: 'magnet.examples.llama_consistency.pipelines.llama_pipeline()'
-  result_node: compare
+  result_node: llama_compare
   matrix:
       llama_predict.helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'
       llama_predict.base_model:

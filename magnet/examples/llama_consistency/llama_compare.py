@@ -7,7 +7,7 @@ import kwconf
 import ubelt as ub
 
 
-class ConsistencyCompareCLI(kwconf.Config):
+class ExampleLlamaConsistencyCompareCLI(kwconf.Config):
     """
     Turn a pair of HELM scores into their gap.
 
@@ -42,8 +42,9 @@ class ConsistencyCompareCLI(kwconf.Config):
 
         dst_fpath = ub.Path(config['out_fpath'])
         dst_fpath.parent.ensuredir()
+        # TODO: use safer for writing result files.
         dst_fpath.write_text(json.dumps(comparison, indent=2))
 
 
 if __name__ == '__main__':
-    ConsistencyCompareCLI.main()
+    ExampleLlamaConsistencyCompareCLI.main()
