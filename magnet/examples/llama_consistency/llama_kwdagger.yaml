@@ -36,30 +36,55 @@ claim:
     assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
 kwdagger:
+  # MAGNET consumes the primary output of this node as the result for each
+  # configured pipeline cell. Its fields become metrics.llama_compare.<field>
+  # in the transitional Python claim above.
   result_node: llama_compare
+
+  # This is a native declarative KWDagger pipeline. The node interfaces are
+  # intentionally written out here so the complete example is visible in one
+  # file. A separate example can demonstrate ProcessNode / kwconf-derived
+  # interfaces later.
   pipeline:
     nodes:
+      # Read cached HELM-Lite results for one base/comparison model pair and
+      # materialize the two scores as a JSON artifact.
       llama_predict:
+        # KWDagger formats the declared parameters onto this executable's CLI.
         executable: "python -m magnet.examples.llama_consistency.llama_predict"
+        # Algorithm parameters are ordinary configurable values. Matrix keys
+        # below address them as <node>.<parameter>.
         algo_params:
           base_model: null
           comp_model: null
           threshold: 0.1
           helm_runs_path: "./data/crfm-helm-public/lite/benchmark_output"
+        # Output paths are artifacts produced by this node.
         out_paths:
           results_fpath: results.json
+        # Marks the output that represents this node's primary result artifact.
         primary_out_key: results_fpath
 
+      # Reduce the score artifact to the gap consumed by the card claim. This
+      # second stage is pedagogical: this particular calculation could live in
+      # llama_predict, but keeping it separate demonstrates a real artifact
+      # edge and explicit result-node handoff.
       llama_compare:
         executable: "python -m magnet.examples.llama_consistency.llama_compare"
+        # This input path is supplied by the edge below rather than the matrix.
         in_paths: [scores_fpath]
         out_paths:
           out_fpath: comparison.json
+        # Because llama_compare is result_node, MAGNET reads this artifact.
         primary_out_key: out_fpath
 
+    # Connecting an output port to an input port both supplies the artifact
+    # path and establishes the execution dependency.
     edges:
       - llama_predict.results_fpath -> llama_compare.scores_fpath
 
+  # KWDagger expands this matrix into concrete pipeline configurations. The
+  # two six-element axes below form the 36 model-pair cells for this card.
   matrix:
     llama_predict.helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'
     llama_predict.base_model:

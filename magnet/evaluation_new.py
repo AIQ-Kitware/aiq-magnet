@@ -69,6 +69,8 @@ class NewEvaluationConfig(kwconf.Config):
         ),
     )
 
+    # Keep these names and defaults aligned with ``kwdagger schedule``.
+    # evaluate_new forwards them without adding MAGNET scheduling semantics.
     backend: str = kwconf.Value(
         'tmux',
         parser=str,
@@ -78,12 +80,34 @@ class NewEvaluationConfig(kwconf.Config):
         ),
     )
 
-    workers: int | None = kwconf.Value(
+    tmux_workers: int = kwconf.Value(
+        8,
+        parser=int,
+        help='Number of tmux workers. Passed directly to kwdagger.',
+    )
+
+    skip_existing = kwconf.Value(
+        False,
+        help=(
+            'KWDagger schedule option: do not submit nodes whose expected '
+            'products already exist.'
+        ),
+    )
+
+    cache = kwconf.Flag(
+        True,
+        help=(
+            'KWDagger schedule option: guard each submitted node so it skips '
+            'its command when its outputs already exist.'
+        ),
+    )
+
+    max_configs: int | None = kwconf.Value(
         None,
         parser=int,
         help=(
-            'Maximum tmux workers. Passed directly to kwdagger as '
-            '`tmux_workers`; omitted means kwdagger uses its own default.'
+            'KWDagger schedule option: expand at most this many matrix '
+            'configurations.'
         ),
     )
 
@@ -292,12 +316,11 @@ class NewEvaluationCard(EvaluationCard):
 
     def evaluate(
         self,
-        backend: str = 'tmux',
-        workers: int | None = None,
         verbose: bool = False,
+        **schedule_options: Any,
     ) -> str:
         return evaluate_card_new(
-            self, backend=backend, workers=workers, verbose=verbose
+            self, verbose=verbose, **schedule_options
         )
 
 
@@ -387,9 +410,8 @@ def _check_new_evaluation_card(card: NewEvaluationCard) -> None:
 def evaluate_card_new(
     card: NewEvaluationCard,
     *,
-    backend: str = 'tmux',
-    workers: int | None = None,
     verbose: bool = False,
+    **schedule_options: Any,
 ) -> str:
     """Evaluate a card with kwdagger as the sole computation engine."""
     _check_new_evaluation_card(card)
@@ -417,7 +439,8 @@ def evaluate_card_new(
     processor = KWDaggerProcessor(
         card.kwdagger, root_dpath=card.kwdagger_dpath
     )
-    cells = processor.collect_result_cells(backend=backend, workers=workers)
+    processor.dispatch(**schedule_options)
+    cells = processor.collect_result_cells()
 
     for cell in cells:
         cell_symbols, measured = _fill_declared_symbols(
@@ -545,10 +568,19 @@ def main(argv: list[str] | None = None, **kwargs: Any) -> None:
     if args.params is not None:
         card.apply_params(args.params)
 
+    schedule_options = {
+        key: args[key]
+        for key in [
+            'backend',
+            'tmux_workers',
+            'skip_existing',
+            'cache',
+            'max_configs',
+        ]
+    }
     card.evaluate(
-        backend=args.backend,
-        workers=args.workers,
         verbose=bool(args.verbose),
+        **schedule_options,
     )
     card.summarize()
 

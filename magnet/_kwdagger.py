@@ -16,69 +16,8 @@ from loguru import logger
 __all__ = [
     'GenericPipelineProcessor',
     'KWDaggerProcessor',
-    'resolve_queue_backend',
 ]
 
-
-def resolve_queue_backend(requested: str | None = None) -> str:
-    """
-    Choose the cmd_queue backend a card's DAG is scheduled onto.
-
-    Args:
-        requested (str | None): an explicit choice. ``None`` means ``tmux``.
-
-    Returns:
-        str: a backend cmd_queue reports as available.
-
-    Defaults to ``tmux`` even at size 1: the same jobs run in the same order as
-    ``serial``, but with a live monitor and a separate log per job rather than
-    one interleaved stream. ``serial`` is right for CI and pytest, so an
-    unavailable backend degrades to it with a notice rather than raising.
-
-    Example:
-        >>> from magnet._kwdagger import resolve_queue_backend
-        >>> resolve_queue_backend('serial')
-        'serial'
-    """
-    import cmd_queue
-
-    if requested is None:
-        requested = 'tmux'
-    requested = requested.strip()
-
-    try:
-        available = set(cmd_queue.Queue.available_backends())
-    except Exception:
-        return requested
-
-    if requested in available:
-        return requested
-    if requested != 'serial':
-        logger.warning(
-            f'queue backend {requested!r} is not available '
-            f'(have: {sorted(available)}); falling back to serial. '
-            'Install tmux for a live monitor and per-job logs.'
-        )
-    return 'serial'
-
-
-def _queue_name_for(root_dpath) -> str:
-    """A tmux queue name that says which run these sessions belong to.
-
-    cmd_queue matches sessions on this name to decide what counts as a
-    conflict, and every card otherwise falls back to the same literal. Two
-    runs of the same card still share a name, which is a real conflict.
-    """
-    import re
-
-    try:
-        parts = ub.Path(root_dpath).absolute().parts
-        idx = len(parts) - 1 - parts[::-1].index('evaluation_runs')
-        name = parts[idx - 1]
-    except (ValueError, IndexError, TypeError):
-        return 'schedule-eval'
-    name = re.sub(r'[^A-Za-z0-9_.-]', '_', str(name))
-    return f'schedule-{name}' if name else 'schedule-eval'
 
 class GenericPipelineProcessor:
     """
@@ -177,20 +116,19 @@ class GenericPipelineProcessor:
         **kwargs: Any
     ) -> None:
         self.define_kwdagger()
-        backend = resolve_queue_backend(backend)
 
         kwdagger_params = {'pipeline': self.dag, 'matrix': self.matrix}
 
         kwd_config = ScheduleEvaluationConfig(
             params=kwdagger_params,  # includes pipeline and additional params
             root_dpath=self.root_dpath,
-            queue_name=_queue_name_for(self.root_dpath),
             backend=backend,
             skip_existing=skip_existing,
             run=True,
+            **kwargs,
         )
 
-        self.compiled_dag, queue = build_schedule(kwd_config)
+        self.compiled_dag, self.queue = build_schedule(kwd_config)
 
     def collect_symbols(self) -> Dict[str, Any]:
         """
@@ -295,39 +233,21 @@ class KWDaggerProcessor:
         self.queue = None
         self.incomplete = []
 
-    def dispatch(
-        self,
-        backend: str | None = None,
-        skip_existing: bool = True,
-        workers: int | None = None,
-        **kwargs: Any,
-    ) -> None:
-        backend = resolve_queue_backend(backend)
+    def dispatch(self, **schedule_options: Any) -> None:
+        """Run this card through :class:`ScheduleEvaluationConfig`.
 
-        if workers is not None and workers < 1:
-            raise ValueError('workers must be >= 1')
-
-        worker_config = (
-            {'tmux_workers': workers} if workers is not None else {}
-        )
+        ``schedule_options`` uses kwdagger's own option names and semantics.
+        MAGNET supplies only the pipeline spec, artifact root, and ``run=True``.
+        """
         kwd_config = ScheduleEvaluationConfig(
-            params=self.spec,  # includes pipeline and additional params
+            params=self.spec,  # includes pipeline and matrix
             root_dpath=self.root_dpath,
-            queue_name=_queue_name_for(self.root_dpath),
-            **worker_config,
-            backend=backend,
-            skip_existing=skip_existing,
             run=True,
-            **kwargs,
+            **schedule_options,
         )
-
         self.dag, self.queue = build_schedule(kwd_config)
 
-    def collect_result_cells(
-        self,
-        backend: str | None = None,
-        workers: int | None = None,
-    ) -> List[Dict[str, Any]]:
+    def collect_result_cells(self) -> List[Dict[str, Any]]:
         """
         Read the result node's output for each of its configured instances.
 
@@ -356,10 +276,7 @@ class KWDaggerProcessor:
             raise ValueError('card must declare kwdagger.result_node')
 
         if not getattr(self, 'dag', None):
-            self.dispatch(
-                backend=backend,
-                workers=workers,
-            )
+            self.dispatch()
 
         # build_schedule returns configured instances keyed by process id;
         # node.name is the template name the card refers to.
@@ -418,7 +335,7 @@ class KWDaggerProcessor:
         ``evaluate_new`` uses :meth:`collect_result_cells`.
         """
         if not self.results:
-            self.dispatch(backend='serial')
+            self.dispatch(backend='serial', skip_existing=True)
 
         paths = self.root_dpath.glob('**/verdict.json')
         for claim_json in paths:

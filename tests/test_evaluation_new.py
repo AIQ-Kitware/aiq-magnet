@@ -54,8 +54,11 @@ def kwdagger_card_fpath(tmp_path):
 
 def test_new_config_does_not_expose_legacy_execution_options():
     keys = set(NewEvaluationConfig().keys())
+    assert {
+        'backend', 'tmux_workers', 'skip_existing', 'cache', 'max_configs'
+    } <= keys
     assert not {
-        'override', 'jobs', 'parallel_backend', 'queue_backend'
+        'override', 'jobs', 'parallel_backend', 'queue_backend', 'workers'
     } & keys
 
 
@@ -72,6 +75,9 @@ def test_new_evaluator_passes_execution_config_directly(
         '--output_path', str(output_path),
         '--params', 'matrix: {emit.seed: [7]}',
         '--backend', 'serial',
+        '--skip_existing=0',
+        '--cache=1',
+        '--max_configs=1',
     ])
 
     artifacts = sorted(

@@ -82,8 +82,12 @@ where each missing `(model, dataset)` run is represented by a kwdagger node.
 
 ## Run the card with the new evaluator
 
-The kwdagger-native evaluator has a deliberately small CLI. For a local
-foreground run:
+`evaluate_new` forwards the KWDagger schedule controls it exposes using the
+same names and semantics as `kwdagger schedule`. MAGNET does not resolve
+backends, synthesize queue settings, or use environment variables as an
+internal parameter transport.
+
+For a local foreground run:
 
 ```bash
 magnet evaluate_new \
@@ -92,18 +96,44 @@ magnet evaluate_new \
     --backend serial
 ```
 
-`--backend` is passed directly to kwdagger. The new evaluator does not use
-`MAGNET_QUEUE_BACKEND` or `MAGNET_TMUX_WORKERS` as an internal parameter
-transport. For tmux execution, an explicit worker limit can be given with
-`--workers`:
+For tmux execution, `--tmux_workers` is the native KWDagger worker control:
 
 ```bash
 magnet evaluate_new \
     magnet/examples/llama_consistency/llama_kwdagger.yaml \
     --output_path ./results_kwdagger \
     --backend tmux \
-    --workers 4
+    --tmux_workers 4
 ```
+
+The cache/reuse controls are also KWDagger's own options. `--skip_existing=1`
+avoids submitting nodes whose expected products already exist. `--cache=1`
+(the default) lets submitted node commands guard themselves against existing
+outputs. To request recomputation using KWDagger's native semantics, disable
+both mechanisms:
+
+```bash
+magnet evaluate_new \
+    magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --output_path ./results_kwdagger \
+    --backend serial \
+    --skip_existing=0 \
+    --cache=0
+```
+
+`--max_configs` is useful for a matrix smoke test without changing the card:
+
+```bash
+magnet evaluate_new \
+    magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --output_path ./results_kwdagger \
+    --backend serial \
+    --max_configs=1
+```
+
+Node-level selection remains part of the KWDagger pipeline configuration
+(e.g. `node.__enabled__` in a matrix/config row); `evaluate_new` does not add a
+second interpretation of it.
 
 Use `--params` to override the card's kwdagger matrix/configuration without
 editing the card. For example:

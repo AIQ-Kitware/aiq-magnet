@@ -8,7 +8,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
-* Added `magnet evaluate_new`, a kwdagger-only migration path with direct `--params`, `--backend`, and `--workers` configuration. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
+* Added `magnet evaluate_new`, a kwdagger-only migration path that forwards selected `kwdagger schedule` controls directly: `--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and `--max_configs`. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
 * Added `magnet evaluate_legacy` as the explicit name for the historical evaluator; `magnet evaluate` remains its compatibility alias.
 * New-style cards declare `kwdagger.result_node`: the node whose output is
   the card's result. `evaluate_new` requires it; the shared schema leaves it
@@ -45,10 +45,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 * Under `evaluate_new`, an unchanged card reuses its run directory instead of
   stamping a new one.
 * `evaluate_new` resolves a relative kwdagger pipeline path against the card.
+* `evaluate_new` passes scheduling options directly to KWDagger; MAGNET no longer resolves queue backends, synthesizes queue names, or translates worker settings in `_kwdagger.py`.
 * The Llama kwdagger example embeds its declarative `nodes` / `edges`
   pipeline directly in the card; the separate Python pipeline definition is
   removed.
-* The tmux queue is named after the run directory rather than `schedule-eval`.
 
 ### Fixed
 

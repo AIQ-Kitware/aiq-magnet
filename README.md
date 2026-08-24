@@ -395,9 +395,10 @@ During the migration, `magnet evaluate_legacy` names the historical evaluator an
 `magnet evaluate` remains its compatibility alias. Both reject cards with a
 `kwdagger:` block and point to `magnet evaluate_new`. `magnet evaluate_new` is
 the cleaner kwdagger-only path: execution parameters are passed directly with
-`--params`, `--backend`, and `--workers`, and legacy `pipeline:` computation or
-symbol sweeps are rejected. See the example README for the complete setup and
-materialization commands.
+`--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and
+`--max_configs` using KWDagger schedule semantics. Legacy `pipeline:`
+computation or symbol sweeps are rejected. See the example README for the
+complete setup, recomputation, and materialization commands.
 
 Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield `FALSIFIED` cards with output similar to below: 
 ```

@@ -117,10 +117,24 @@ def test_no_config_option_shadows_a_config_method():
 
 def test_new_evaluator_has_only_kwdagger_execution_controls():
     keys = set(NewEvaluationConfig().keys())
-    assert {'path', 'output_path', 'params', 'backend', 'workers'} <= keys
+    assert {
+        'path', 'output_path', 'params', 'backend', 'tmux_workers',
+        'skip_existing', 'cache', 'max_configs',
+    } <= keys
     assert not {
-        'override', 'jobs', 'parallel_backend', 'queue_backend'
+        'override', 'jobs', 'parallel_backend', 'queue_backend', 'workers'
     } & keys
+
+
+def test_new_evaluator_schedule_defaults_match_kwdagger():
+    from kwdagger.schedule import ScheduleEvaluationConfig
+
+    magnet_cfg = NewEvaluationConfig()
+    kwdagger_cfg = ScheduleEvaluationConfig()
+    for key in [
+        'backend', 'tmux_workers', 'skip_existing', 'cache', 'max_configs'
+    ]:
+        assert magnet_cfg[key] == kwdagger_cfg[key]
 
 
 def test_legacy_evaluator_surface_is_still_present():
