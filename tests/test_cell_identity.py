@@ -1,6 +1,6 @@
 """
-A new-evaluator cell's identity comes from the kwdagger node that produced it,
-plus non-measured recipe symbols consumed by the claim environment.
+A new-evaluator cell identifies one available kwdagger result row, plus
+non-measured recipe symbols consumed by the claim environment.
 """
 
 import pytest
@@ -15,7 +15,7 @@ from magnet.evaluation_new import (
 
 def _cell_result(
     symbols,
-    result_values=None,
+    evidence_row=None,
     cell_key='n_id_abc',
     measured=None,
     claim='assert True',
@@ -23,7 +23,7 @@ def _cell_result(
     return _evaluate_claim_cell(
         claim,
         Symbols.decompose_symbol_defs(symbols)[0],
-        result_values or {},
+        evidence_row or {},
         cell_key,
         measured or set(),
     )

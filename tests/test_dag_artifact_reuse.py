@@ -31,7 +31,7 @@ _NODE_SOURCE = ub.codeblock(
     args = dict(arg.lstrip('-').split('=', 1) for arg in sys.argv[1:])
     seed = int(args['seed'])
     with open(args['results_fpath'], 'w') as file:
-        json.dump({'result': {'seed': seed, 'doubled': seed * 2}}, file)
+        json.dump({'result': {'metrics': {'seed': seed, 'doubled': seed * 2}}}, file)
     ''')
 
 
@@ -72,6 +72,7 @@ def card_factory(tmp_path):
                             'executable': f'{sys.executable} {node_fpath}',
                             'algo_params': {'seed': 1},
                             'out_paths': {'results_fpath': 'results.json'},
+                            'primary_out_key': 'results_fpath',
                         },
                     },
                 },
@@ -158,5 +159,5 @@ def test_a_changed_cell_is_not_reused(card_factory, tmp_path):
     new_ids = set(after) - set(before)
     assert len(new_ids) == 1, 'seed 7 should have computed its own cell'
     new_fpath, = after[new_ids.pop()]
-    assert json.loads(new_fpath.read_text())['result'] == {
+    assert json.loads(new_fpath.read_text())['result']['metrics'] == {
         'seed': 7, 'doubled': 14}

@@ -146,6 +146,12 @@ def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
     dag = coerce_pipeline(pipeline)
     assert sorted(dag.node_dict) == ['llama_compare', 'llama_predict']
     assert dag.node_dict['llama_compare'].inputs['scores_fpath'].pred
+    assert pipeline['nodes']['llama_predict']['load_result'].endswith(
+        'llama_predict.load_kwdagger_result'
+    )
+    assert pipeline['nodes']['llama_compare']['load_result'].endswith(
+        'llama_compare.load_kwdagger_result'
+    )
     assert 'metrics.llama_compare' in kwdagger_card['claim']['python']
 
 
@@ -180,8 +186,10 @@ def test_new_recipe_schema_rejects_legacy_symbol_sweeps(kwdagger_card):
         NewEvaluationRecipeSchema.model_validate(data)
 
 
-def test_kwdagger_keys_magnet_does_not_read_are_passed_through(kwdagger_card):
-    kwdagger = {**kwdagger_card['kwdagger'], 'skip_existing': False}
+def test_kwdagger_param_grid_keys_magnet_does_not_read_are_passed_through(
+        kwdagger_card):
+    include = [{'llama_predict.threshold': 0.2}]
+    kwdagger = {**kwdagger_card['kwdagger'], 'include': include}
     card = EvaluationCardSchema.model_validate(
         {**kwdagger_card, 'kwdagger': kwdagger})
-    assert card.kwdagger.skip_existing is False
+    assert card.kwdagger.include == include

@@ -20,13 +20,13 @@ class KWDaggerSchema(BaseModel):
     """
     A card's kwdagger backend.
 
-    Everything but ``result_node`` is passed to kwdagger's schedule config, so
-    unknown keys are allowed: this validates what MAGNET itself reads.
+    Everything but ``result_node`` is passed as the ``params`` payload to
+    ``kwdagger schedule``. Unknown keys are allowed so KWDagger can own its
+    matrix/configuration language while MAGNET validates only what it reads.
     """
     model_config = ConfigDict(extra='allow')
 
-    #: The node whose output is the card's result. Each configured instance of
-    #: it is one cell.
+    #: The node whose accumulated aggregate rows provide claim evidence.
     result_node: str | None = None
 
     #: A Pipeline callable, a path to a declarative pipeline, or the pipeline

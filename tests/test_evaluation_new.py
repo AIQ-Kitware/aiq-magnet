@@ -20,7 +20,7 @@ import json, pathlib, sys
 args = dict(a.lstrip('-').split('=', 1) for a in sys.argv[1:])
 out = pathlib.Path(args['results_fpath'])
 out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text(json.dumps({'score': float(args['seed']) / 10}))
+out.write_text(json.dumps({'result': {'metrics': {'score': float(args['seed']) / 10}}}))
 """
 
 
@@ -45,6 +45,7 @@ def kwdagger_recipe_fpath(tmp_path):
                 'executable': f'{sys.executable} {script}',
                 'algo_params': {'seed': 1},
                 'out_paths': {'results_fpath': 'results.json'},
+                'primary_out_key': 'results_fpath',
             }}},
             'matrix': {'emit.seed': [1, 2]},
         },
@@ -117,6 +118,7 @@ def test_new_recipe_rejects_legacy_pipeline(tmp_path):
             'old_node': {
                 'executable': 'echo',
                 'out_paths': {'results_fpath': 'results.json'},
+                'primary_out_key': 'results_fpath',
             },
         },
     }, sort_keys=False))
@@ -141,3 +143,83 @@ def test_legacy_evaluator_points_kwdagger_cards_to_evaluate_new(
     assert 'declares a `kwdagger:` pipeline' in message
     assert '`magnet evaluate`' in message
     assert 'magnet evaluate_new' in message
+
+
+def _scores(result_card):
+    return sorted(
+        cell.evidence_row['metrics.emit.score']
+        for cell in result_card.cell_results
+    )
+
+
+def test_evidence_accumulates_across_independent_schedule_requests(
+        kwdagger_recipe_fpath, tmp_path):
+    """The current finite request does not define the available evidence set."""
+    output_path = ub.Path(tmp_path) / 'out'
+
+    first = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    first.apply_params('matrix: {emit.seed: [1]}')
+    first_result = first.evaluate(backend='serial')
+    assert _scores(first_result) == [0.1]
+
+    second = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    second.apply_params('matrix: {emit.seed: [2]}')
+    second_result = second.evaluate(backend='serial')
+
+    # Only seed 2 was requested by the second schedule, but seed 1 remains
+    # available evidence in the shared KWDagger result store.
+    assert _scores(second_result) == [0.1, 0.2]
+    assert second_result.requested_work['processes'] == 1
+
+
+def test_identical_recipe_invocations_keep_distinct_magnet_run_records(
+        kwdagger_recipe_fpath, tmp_path):
+    output_path = ub.Path(tmp_path) / 'out'
+    first = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    second = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+
+    assert first._recipe_hash == second._recipe_hash
+    assert first._run_hash != second._run_hash
+
+
+def test_failed_current_attempt_does_not_become_claim_evidence(
+        kwdagger_recipe_fpath, tmp_path, monkeypatch):
+    """Execution failure is reported separately from claim truth."""
+
+    class FakeProcessor:
+        def __init__(self, spec, root_dpath):
+            self.root_dpath = ub.Path(root_dpath).ensuredir()
+
+        def schedule(self, **schedule_options):
+            pass
+
+        def inspect_requested_runs(self):
+            return [{
+                'process_id': 'new-failed-process',
+                'node': 'emit',
+                'schedule_status': 'new_submission',
+                'attempt_status': 'failed',
+                'returncode': 3,
+                'output_available': False,
+                'enabled': True,
+            }]
+
+        def load_available_result_rows(self):
+            artifact = self.root_dpath / 'emit' / 'old-process' / 'results.json'
+            return [{
+                'key': 'old-process',
+                'artifact': str(artifact),
+                'row': {'metrics.emit.score': 0.1},
+            }]
+
+    monkeypatch.setattr(evaluation_new, 'KWDaggerProcessor', FakeProcessor)
+
+    recipe = NewEvaluationRecipe(
+        kwdagger_recipe_fpath, ub.Path(tmp_path) / 'out'
+    )
+    result_card = recipe.evaluate(backend='serial')
+
+    assert result_card.result == 'VERIFIED'
+    assert _scores(result_card) == [0.1]
+    assert result_card.requested_work['attempt_status'] == {'failed': 1}
+    assert result_card.requested_work['outputs_available'] == 0

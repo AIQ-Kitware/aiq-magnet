@@ -1,14 +1,17 @@
 """
-The replacement evaluation API built around kwdagger execution.
+The replacement evaluation API built around kwdagger experiment execution.
 
-``magnet evaluate`` remains an alias of the legacy evaluator. This module owns
-new evaluation terminology and execution semantics: a ``NewEvaluationRecipe``
-describes what to run, kwdagger owns computation and cardinality, and MAGNET
-turns each configured result-node cell into a ``NewEvaluationCellResult``.
-Those cell results are then reduced into a ``NewEvaluationResultCard``.
+``magnet evaluate`` remains an alias of the legacy evaluator. A
+``NewEvaluationRecipe`` can request a finite kwdagger campaign, but the
+campaign is not the boundary of the evidence set. After scheduling, MAGNET
+uses kwdagger's aggregate loader to discover every available result row for the
+configured ``result_node`` in the shared result store. Each available row is
+checked against the claim and becomes a ``NewEvaluationCellResult``; those
+claim results are reduced into a ``NewEvaluationResultCard``.
 
-The existing Python claim and verdict vocabulary is retained only as a
-transitional result-consumption layer while the replacement API takes shape.
+The current request's queued/running/failed state is recorded separately from
+claim evaluation. A failed computation is execution provenance, not evidence
+that a claim is false.
 """
 from __future__ import annotations
 
@@ -188,20 +191,17 @@ class NewEvaluationCLI(kwconf.Config):
 
 class ClaimResultNamespace:
     """
-    Attribute-access view of kwdagger result values used by Python claims.
+    Attribute-access view of one kwdagger aggregate row for a Python claim.
 
-    KWDagger result leaves are collected under qualified names such as
-    ``metrics.llama_compare.gap``. A Python claim consumes those values through
-    the matching attribute expression, for example
-    ``metrics.llama_compare.gap < threshold``.
+    KWDagger aggregate rows use qualified columns such as
+    ``metrics.llama_compare.gap``, ``params.llama_predict.base_model``, and
+    ``resolved_params.llama_predict.base_model``. This proxy exposes the flat
+    row through the corresponding nested attribute expressions while recording
+    which leaves the claim actually accessed.
 
-    This proxy presents the flat result mapping as nested attributes and
-    records which leaf values were accessed. The access log is stored with the
-    per-cell claim result so the run record shows which kwdagger outputs the
-    claim actually consumed.
-
-    This object is claim-evaluation plumbing. It is neither an evaluation
-    result nor the aggregate ``NewEvaluationResultCard``.
+    The object is only an access adapter over evidence already loaded by
+    kwdagger. It does not discover results, represent an execution attempt, or
+    define the aggregate ``NewEvaluationResultCard``.
     """
 
     def __init__(
@@ -258,13 +258,13 @@ class ClaimResultNamespace:
 @dataclass
 class NewEvaluationCellResult:
     """
-    Result of applying one recipe claim to one kwdagger result-node cell.
+    Result of applying one recipe claim to one available kwdagger result row.
 
-    ``result_values`` contains the qualified kwdagger outputs made available to
-    the claim. ``consumed`` records the subset the claim actually accessed.
-    ``result_id`` is stable for the kwdagger cell and the non-measured recipe
-    symbols, so changing a measured output does not create a second identity
-    for the same configured cell.
+    ``evidence_row`` is the complete qualified aggregate row made available to
+    the claim. ``consumed`` records the subset actually accessed. ``artifact``
+    points back to the primary kwdagger result from which the row was loaded.
+    ``cell_key`` is the artifact/computation identity used to keep repeated
+    evaluation of the same available evidence stable across MAGNET runs.
     """
 
     result_id: str
@@ -273,11 +273,12 @@ class NewEvaluationCellResult:
     symbols: Dict[str, Any]
     timestamp: str
     cell_key: str
+    artifact: str | None = None
     consumed: List[str] = field(default_factory=list)
-    result_values: Dict[str, Any] = field(default_factory=dict, repr=False)
+    evidence_row: Dict[str, Any] = field(default_factory=dict, repr=False)
 
     def as_record(self) -> Dict[str, Any]:
-        """Return the persisted per-cell verdict record."""
+        """Return the persisted per-evidence-row claim record."""
         record = {
             'status': self.status,
             'output': self.output,
@@ -285,6 +286,8 @@ class NewEvaluationCellResult:
             'timestamp': self.timestamp,
             'cell': self.cell_key,
         }
+        if self.artifact is not None:
+            record['artifact'] = self.artifact
         if self.consumed:
             record['consumed'] = self.consumed
         return record
@@ -293,18 +296,19 @@ class NewEvaluationCellResult:
 @dataclass
 class NewEvaluationResultCard:
     """
-    Aggregate result produced by evaluating one ``NewEvaluationRecipe``.
+    Snapshot of a recipe evaluated against the evidence currently available.
 
-    The card contains the final reduced result, all per-cell claim results, and
-    any derived metrics. ``as_record`` preserves the current ``verdict.json``
-    representation while the replacement Python API gets distinct recipe and
-    result types.
+    ``cell_results`` contains claim evaluations for available kwdagger result
+    rows. ``requested_work`` summarizes only the finite campaign requested by
+    this invocation; failed or unfinished attempts are reported there and do
+    not directly alter the claim result.
     """
 
     result: str
     claim_aggregation_strategy: Dict[str, Any]
     cell_results: List[NewEvaluationCellResult]
     metrics: Dict[str, Any] = field(default_factory=dict)
+    requested_work: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def cell_result_ids(self) -> List[str]:
@@ -315,7 +319,10 @@ class NewEvaluationResultCard:
             'result': self.result,
             'claim_aggregation_strategy': self.claim_aggregation_strategy,
             'claims': self.cell_result_ids,
+            'evidence': {'available': len(self.cell_results)},
         }
+        if self.requested_work:
+            record['requested_work'] = self.requested_work
         if self.metrics:
             record['metrics'] = self.metrics
         return record
@@ -326,9 +333,10 @@ class NewEvaluationRecipe(EvaluationCard):
     Input recipe for the replacement kwdagger-native evaluation API.
 
     The recipe owns MAGNET metadata, the Python claim, declared symbols, and a
-    required ``kwdagger:`` execution block. KWDagger owns computation and
-    matrix expansion. MAGNET consumes the configured ``result_node`` cells and
-    returns a ``NewEvaluationResultCard``.
+    required ``kwdagger:`` execution block. KWDagger owns experiment execution
+    and the aggregate result store. ``result_node`` selects which accumulated
+    aggregate rows are evidence for the claim; it does not restrict evidence to
+    the processes scheduled by the current invocation.
 
     The legacy ``EvaluationCard`` base is reused temporarily for common card
     parsing, claim, symbol, metric, and summary behavior. Legacy pipeline
@@ -371,7 +379,7 @@ class NewEvaluationRecipe(EvaluationCard):
 
     @property
     def kwdagger_dpath(self) -> ub.Path:
-        """Shared DAG artifact root, independent of the recipe run directory."""
+        """Shared KWDagger result/artifact root, independent of the MAGNET run."""
         return self.output_path / '_kwdagger'
 
     @property
@@ -381,17 +389,10 @@ class NewEvaluationRecipe(EvaluationCard):
     @property
     def _run_hash(self) -> str:
         if self._run_hash_cached is None:
-            existing = [
-                p
-                for p in sorted(self.output_path.glob(f'{self._recipe_hash}_*'))
-                if p.is_dir()
-            ]
-            if existing:
-                newest = max(existing, key=lambda p: p.stat().st_mtime)
-                self._run_hash_cached = newest.name
-            else:
-                timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S')
-                self._run_hash_cached = f'{self._recipe_hash}_{timestamp}'
+            # A MAGNET result card is a snapshot of one invocation. Keep these
+            # records distinct even when kwdagger reuses the same computations.
+            timestamp = datetime.now().strftime('%Y-%m-%d__%H-%M-%S-%f')
+            self._run_hash_cached = f'{self._recipe_hash}_{timestamp}'
         return self._run_hash_cached
 
     def evaluate(
@@ -413,13 +414,14 @@ def _claim_execution_hash(symbols: Symbols, measured: set[str]) -> str:
 def _evaluate_claim_cell(
     claim_text: str,
     symbols: Symbols,
-    result_values: Dict[str, Any],
+    evidence_row: Dict[str, Any],
     cell_key: str,
     measured: set[str],
+    artifact: str | None = None,
 ) -> NewEvaluationCellResult:
-    """Evaluate the recipe claim for one kwdagger result-node cell."""
+    """Evaluate the recipe claim for one available kwdagger aggregate row."""
     symbols.resolve()
-    namespace = ClaimResultNamespace(result_values)
+    namespace = ClaimResultNamespace(evidence_row)
     context = symbols()
     for name, value in namespace.bind().items():
         if name in context:
@@ -440,8 +442,9 @@ def _evaluate_claim_cell(
         symbols=symbols.simple_view(),
         timestamp=datetime.now().isoformat(),
         cell_key=cell_key,
+        artifact=artifact,
         consumed=sorted(namespace.accessed),
-        result_values=dict(result_values),
+        evidence_row=dict(evidence_row),
     )
 
 
@@ -484,7 +487,27 @@ def _fill_declared_symbols(
     return out, filled
 
 
-def _link_dag_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
+def _summarize_requested_runs(
+    requested_runs: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Summarize this invocation's operational request without affecting claims."""
+    if not requested_runs:
+        return {'processes': 0}
+    return {
+        'processes': len(requested_runs),
+        'schedule_status': dict(ub.dict_hist(
+            row['schedule_status'] for row in requested_runs
+        )),
+        'attempt_status': dict(ub.dict_hist(
+            row['attempt_status'] for row in requested_runs
+        )),
+        'outputs_available': sum(
+            bool(row['output_available']) for row in requested_runs
+        ),
+    }
+
+
+def _link_kwdagger_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
     """Keep the historical ``<run>/kwdagger`` artifact location visible."""
     link = recipe_output_path / 'kwdagger'
     try:
@@ -514,7 +537,7 @@ def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
     if not recipe.kwdagger.get('result_node'):
         raise ValueError(
             'evaluate_new requires `kwdagger.result_node`, naming the node '
-            'whose configured instances become evaluation cells.'
+            'whose accumulated aggregate rows provide claim evidence.'
         )
     sweep_symbols = sorted(
         name
@@ -536,7 +559,7 @@ def evaluate_new_recipe(
     verbose: bool = False,
     **schedule_options: Any,
 ) -> NewEvaluationResultCard:
-    """Evaluate a recipe with kwdagger as the sole computation engine."""
+    """Schedule requested work, then evaluate the claim over available evidence."""
     _check_new_evaluation_recipe(recipe)
 
     recipe_output_path = recipe.output_path / recipe._run_hash
@@ -561,43 +584,45 @@ def evaluate_new_recipe(
     processor = KWDaggerProcessor(
         recipe.kwdagger, root_dpath=recipe.kwdagger_dpath
     )
-    processor.dispatch(**schedule_options)
-    cells = processor.collect_result_cells()
+
+    # Scheduling is one finite operational request. It may add new results to
+    # the shared kwdagger store, reuse results that already exist, or leave
+    # some requested work failed / pending.
+    processor.schedule(**schedule_options)
+    requested_runs = processor.inspect_requested_runs()
+    requested_work = _summarize_requested_runs(requested_runs)
+    with safer.open(
+        recipe_output_path / 'requested_runs.json',
+        'w',
+        temp_file=SAFER_USE_TEMPFILE,
+    ) as file:
+        json.dump(requested_runs, file, indent=2, ensure_ascii=False)
+        file.write('\n')
+
+    # Evidence is discovered independently from the current request. KWDagger's
+    # aggregate loader scans the accumulated result store and reconstructs its
+    # normal qualified namespace, including lineage from predecessor nodes.
+    evidence_rows = processor.load_available_result_rows()
 
     cell_results = []
-    for cell in cells:
+    for evidence in evidence_rows:
+        evidence_row = evidence['row']
         cell_symbols, measured = _fill_declared_symbols(
-            recipe.symbols, cell['results']
+            recipe.symbols, evidence_row
         )
         cell_result = _evaluate_claim_cell(
             recipe.claim.claim,
             Symbols(cell_symbols),
-            cell['results'],
-            cell['key'],
+            evidence_row,
+            evidence['key'],
             measured,
+            artifact=evidence['artifact'],
         )
         cell_results.append(cell_result)
         results_fpath = _write_cell_result(cell_result, cell_results_path)
         logger.info(f'Wrote cell result to {results_fpath}')
 
-    with safer.open(
-        recipe_output_path / 'result_cells.json',
-        'w',
-        temp_file=SAFER_USE_TEMPFILE,
-    ) as file:
-        json.dump(cells, file, indent=2, ensure_ascii=False)
-        file.write('\n')
-
-    if processor.incomplete:
-        with safer.open(
-            recipe_output_path / 'incomplete_cells.json',
-            'w',
-            temp_file=SAFER_USE_TEMPFILE,
-        ) as file:
-            json.dump(processor.incomplete, file, indent=2, ensure_ascii=False)
-            file.write('\n')
-
-    _link_dag_root(recipe_output_path, recipe.kwdagger_dpath)
+    _link_kwdagger_root(recipe_output_path, recipe.kwdagger_dpath)
 
     statuses = [cell.status for cell in cell_results]
     resolved_symbols = [cell.symbols for cell in cell_results]
@@ -613,7 +638,9 @@ def evaluate_new_recipe(
             raw_symbol_metadata,
         )
         if calculated_metrics:
-            metric_statement = '================================\n Evaluation Metrics:\n'
+            metric_statement = (
+                '================================\n Evaluation Metrics:\n'
+            )
             for metric, value in calculated_metrics.items():
                 metric_statement += f'  {metric}: {value: .3f}\n'
             logger.info(metric_statement[:-1])
@@ -628,10 +655,11 @@ def evaluate_new_recipe(
     inconclusive_count = statuses.count('INCONCLUSIVE')
 
     logger.info('================================')
-    logger.info(f'Settings Evaluated: {total}')
+    logger.info(f'Available Evidence Rows: {total}')
     logger.info(f'  Verified:     {percentage(verified_count):.2f}')
     logger.info(f'  Falsified:    {percentage(falsified_count):.2f}')
     logger.info(f'  Inconclusive: {percentage(inconclusive_count):.2f}')
+    logger.info(f'Requested Work: {requested_work}')
     logger.info('================================')
     logger.info('\n')
 
@@ -643,6 +671,7 @@ def evaluate_new_recipe(
         claim_aggregation_strategy=recipe.claim_aggregation_strategy,
         cell_results=cell_results,
         metrics=calculated_metrics,
+        requested_work=requested_work,
     )
 
     with safer.open(

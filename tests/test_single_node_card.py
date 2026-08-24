@@ -15,7 +15,7 @@ import json, sys, pathlib
 args = dict(a.lstrip('-').split('=', 1) for a in sys.argv[1:])
 out = pathlib.Path(args['results_fpath'])
 out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text(json.dumps({'score': float(args['seed']) / 10}))
+out.write_text(json.dumps({'result': {'metrics': {'score': float(args['seed']) / 10}}}))
 """
 
 
@@ -36,6 +36,7 @@ def _card_data(script, seeds, result_node='emit'):
                         'executable': f'python {script}',
                         'algo_params': {'seed': 1},
                         'out_paths': {'results_fpath': 'results.json'},
+                        'primary_out_key': 'results_fpath',
                     },
                 },
             },

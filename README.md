@@ -341,9 +341,10 @@ example: `llama_predict` writes model scores and `llama_compare` consumes that
 artifact and writes the comparison used by the card.
 
 The pipeline is the standard kwdagger YAML `nodes` / `edges` form. MAGNET adds
-`result_node` to say which node produces each card result. Fields written by
-that node are available to the legacy claim under
-`metrics.<result_node>.<field>`.
+`result_node` to select the KWDagger aggregate rows used as claim evidence.
+KWDagger owns result loading and qualified namespaces such as
+`metrics.<result_node>.<field>`, `params.<node>.<field>`, and
+`resolved_params.<node>.<field>`.
 
 ```yaml
 claim:
@@ -388,8 +389,12 @@ magnet evaluate_new magnet/examples/llama_consistency/llama_kwdagger.yaml \
     --backend serial
 ```
 
-Each configured instance of `result_node` becomes one recipe result cell. Its kwdagger
-`process_id` is used as the stable cell identity.
+`evaluate_new` first submits the finite matrix requested by this invocation, then
+loads every currently available `result_node` row from the shared KWDagger
+result store. Previously computed rows remain usable evidence even when they
+were not part of the current schedule request. The run's `requested_runs.json`
+records queued/running/failed/not-attempted state separately; execution failure
+does not count as a falsified claim.
 
 During the migration, `magnet evaluate_legacy` names the historical evaluator and
 `magnet evaluate` remains its compatibility alias. Both reject recipes with a
@@ -403,7 +408,7 @@ complete setup, recomputation, and materialization commands.
 Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield a `FALSIFIED` aggregate result with output similar to below:
 ```
 ================================
-Settings Evaluated: 36
+Available Evidence Rows: 36
   Verified:     0.61
   Falsified:    0.39
   Inconclusive: 0.00

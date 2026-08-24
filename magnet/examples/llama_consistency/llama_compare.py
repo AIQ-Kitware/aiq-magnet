@@ -7,6 +7,20 @@ import kwconf
 import ubelt as ub
 
 
+def load_kwdagger_result(node, node_dpath):
+    """Load the existing flat comparison JSON into kwdagger's result namespace."""
+    from kwdagger.utils import util_dotdict
+
+    node_dpath = ub.Path(node_dpath)
+    output_fpath = node_dpath / node.out_paths[node.primary_out_key]
+    payload = json.loads(output_fpath.read_text())
+    metrics = {
+        key: value for key, value in payload.items() if not key.startswith('_')
+    }
+    flat = util_dotdict.DotDict.from_nested({'metrics': metrics})
+    return flat.insert_prefix(node.name, index=1)
+
+
 class ExampleLlamaConsistencyCompareCLI(kwconf.Config):
     """
     Turn a pair of HELM scores into their gap.

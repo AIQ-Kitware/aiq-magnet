@@ -10,22 +10,22 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 * Added `magnet evaluate_new`, a kwdagger-only migration path that forwards selected `kwdagger schedule` controls directly: `--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and `--max_configs`. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
 * Added `magnet evaluate_legacy` as the explicit name for the historical evaluator; `magnet evaluate` remains its compatibility alias.
-* New evaluation recipes declare `kwdagger.result_node`: the node whose output
-  supplies the recipe's result cells. `evaluate_new` requires it; the shared
-  legacy schema leaves it
-  optional for compatibility with card parsing. `evaluate` /
-  `evaluate_legacy` reject kwdagger execution with a pointer to `evaluate_new`.
-  Every configured instance of the result node is one cell, identified by its
-  kwdagger `process_id` and evaluated separately.
-* A result node's values reach a claim as `metrics.<node>.<name>`. A card that
-  declares a symbol of the same name still gets it unqualified, which is how a
-  `define_metric` symbol is supplied.
-* A verdict records the `cell` it belongs to and the results it `consumed`.
-* A new evaluation result reports the cells its run computed. A result node
-  instance that produced nothing is skipped rather than failing the recipe,
-  and recorded in
-  `incomplete_cells.json` as `failed` (with its exit code), `pending`, or
-  `empty`.
+* New evaluation recipes declare `kwdagger.result_node`: the node whose
+  accumulated KWDagger aggregate rows provide claim evidence. `evaluate_new`
+  requires it; the shared legacy schema leaves it optional for compatibility
+  with card parsing. `evaluate` / `evaluate_legacy` reject kwdagger execution
+  with a pointer to `evaluate_new`.
+* KWDagger aggregate rows reach claims with their native qualified namespace,
+  including `metrics.<node>.*`, `params.<node>.*`,
+  `resolved_params.<node>.*`, and available lineage/context fields. A card
+  symbol of the same leaf name can still be filled unqualified for the
+  transitional `define_metric` behavior.
+* A per-evidence claim record stores the source artifact, stable computation
+  cell, and qualified fields the claim consumed.
+* `requested_runs.json` records the current scheduling request separately from
+  evidence: new-submission/skipped/disabled state, attempt status, return
+  code, expected output, and whether that output is available. Failed or pending
+  execution does not itself falsify a claim.
 * `magnet evaluate_new --params` merges a YAML/JSON blob (or a file of one)
   into a recipe's `kwdagger:` block, in the same language as `kwdagger
   schedule --params`. The merged recipe is written to the run directory.
@@ -39,18 +39,23 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 * Requires `kwdagger>=0.4.0`.
 * The replacement Python API now uses `NewEvaluationRecipe` for input,
-  `NewEvaluationCellResult` for one kwdagger result-node cell, and
-  `NewEvaluationResultCard` for the aggregate output. `NewEvaluationTask` is
-  removed; per-cell claim evaluation is a direct transformation from a recipe
-  and kwdagger result values into a cell result.
+  `NewEvaluationCellResult` for a claim evaluated against one available
+  KWDagger aggregate row, and `NewEvaluationResultCard` for the aggregate
+  output. `NewEvaluationTask` is removed; claim evaluation is a direct
+  transformation from a recipe and available evidence into a cell result.
 * A cell's identity no longer depends on the values it measured, so a metric
   that moves replaces its verdict instead of writing a second one beside it.
 * Under `evaluate_new`, node artifacts live in `<output>/_kwdagger`, shared
   across card versions, so editing a card does not recompute unchanged nodes.
   `<run>/kwdagger` links there for consumers that read a run. The legacy
   evaluator keeps its historical per-run DAG layout.
-* Under `evaluate_new`, an unchanged card reuses its run directory instead of
-  stamping a new one.
+* Each `evaluate_new` invocation gets a distinct MAGNET run directory so its
+  requested-work snapshot is preserved. KWDagger computation artifacts remain
+  shared and reusable under `<output>/_kwdagger`.
+* `evaluate_new` discovers evidence with KWDagger's aggregate loader after
+  scheduling. The finite campaign requested by one invocation therefore does
+  not bound the result rows available to the claim; prior successful campaigns
+  remain visible in the shared result store.
 * `evaluate_new` resolves a relative kwdagger pipeline path against the card.
 * `evaluate_new` passes scheduling options directly to KWDagger; MAGNET no longer resolves queue backends, synthesizes queue names, or translates worker settings in `_kwdagger.py`.
 * The Llama kwdagger example embeds its declarative `nodes` / `edges`

@@ -36,9 +36,9 @@ claim:
     assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
 kwdagger:
-  # MAGNET consumes the primary output of this node as the result for each
-  # configured pipeline cell. Its fields become metrics.llama_compare.<field>
-  # in the transitional Python claim above.
+  # MAGNET asks KWDagger aggregate for every available result row from this
+  # node in the shared result store. Its metrics appear under
+  # metrics.llama_compare.<field> in the transitional Python claim above.
   result_node: llama_compare
 
   # This is a native declarative KWDagger pipeline. The node interfaces are
@@ -64,6 +64,10 @@ kwdagger:
           results_fpath: results.json
         # Marks the output that represents this node's primary result artifact.
         primary_out_key: results_fpath
+        # This example predates KWDagger's generic result envelope, so its
+        # loader maps the existing flat JSON + ProcessContext into the normal
+        # aggregate namespaces without changing the artifact format.
+        load_result: "magnet.examples.llama_consistency.llama_predict.load_kwdagger_result"
 
       # Reduce the score artifact to the gap consumed by the card claim. This
       # second stage is pedagogical: this particular calculation could live in
@@ -75,8 +79,10 @@ kwdagger:
         in_paths: [scores_fpath]
         out_paths:
           out_fpath: comparison.json
-        # Because llama_compare is result_node, MAGNET reads this artifact.
+        # KWDagger aggregate discovers this primary artifact. The custom
+        # loader maps its existing flat JSON into metrics.llama_compare.*.
         primary_out_key: out_fpath
+        load_result: "magnet.examples.llama_consistency.llama_compare.load_kwdagger_result"
 
     # Connecting an output port to an input port both supplies the artifact
     # path and establishes the execution dependency.

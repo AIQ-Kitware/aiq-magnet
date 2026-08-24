@@ -8,6 +8,25 @@ from magnet.backends.helm.helm_outputs import HelmOutputs
 from magnet.backends.helm.helm_outputs import HelmSuiteRuns
 
 
+def load_kwdagger_result(node, node_dpath):
+    """Load this node's flat JSON plus ProcessContext for kwdagger aggregate."""
+    from kwdagger.aggregate_loader import new_process_context_parser
+    from kwdagger.utils import util_dotdict
+
+    node_dpath = ub.Path(node_dpath)
+    output_fpath = node_dpath / node.out_paths[node.primary_out_key]
+    payload = json.loads(output_fpath.read_text())
+    nested = {}
+    process_info = payload.get('_process')
+    if process_info:
+        nested.update(new_process_context_parser(process_info))
+    nested['metrics'] = {
+        key: value for key, value in payload.items() if not key.startswith('_')
+    }
+    flat = util_dotdict.DotDict.from_nested(nested)
+    return flat.insert_prefix(node.name, index=1)
+
+
 class ExampleLlamaEndpointCLI(kwconf.Config):
     """
     Stub for a prediction algorithm that grabs relevant scores from HELM precomputed results

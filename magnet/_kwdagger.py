@@ -113,7 +113,8 @@ class GenericPipelineProcessor:
         self.dag.build_nx_graphs()
 
     def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
+        self, backend: str = 'serial', skip_existing: bool = True,
+        **kwargs: Any
     ) -> None:
         self.define_kwdagger()
 
@@ -181,10 +182,16 @@ class GenericPipelineProcessor:
 
 class KWDaggerProcessor:
     """
-    Handler for a full kwdagger pipeline specification.
+    Adapter between a MAGNET recipe and kwdagger's experiment-runner APIs.
+
+    Scheduling and evidence discovery are deliberately separate. ``schedule``
+    submits the finite experiment campaign requested by this invocation.
+    ``load_available_result_rows`` scans the shared kwdagger result store using
+    kwdagger's aggregate loader, so evidence is not limited to the processes
+    that happened to be scheduled by the current invocation.
 
     The pipeline may be an importable Python pipeline, a YAML file path, or a
-    declarative ``nodes`` / ``edges`` mapping embedded directly in the card.
+    declarative ``nodes`` / ``edges`` mapping embedded directly in the recipe.
 
     Example:
         >>> from magnet._kwdagger import KWDaggerProcessor
@@ -212,130 +219,207 @@ class KWDaggerProcessor:
         >>> processor = KWDaggerProcessor(example_cfg['kwdagger'], '.')
         >>> processor.result_node
         'compare'
-        >>> sorted(processor.spec['pipeline']['nodes'])
+        >>> sorted(processor.params['pipeline']['nodes'])
         ['compare', 'predict']
-        >>> processor.spec['pipeline']['edges']
+        >>> processor.params['pipeline']['edges']
         ['predict.result_fpath -> compare.result_fpath']
     """
 
     def __init__(
-        self, pipeline_def: Dict[str, Any], root_dpath: ub.Path
+        self, kwdagger_config: Dict[str, Any], root_dpath: ub.Path
     ) -> None:
-        # ``result_node`` is a MAGNET-level declaration, not something
-        # kwdagger understands, so keep it out of the scheduled spec.
-        self.spec = {
-            k: v for k, v in pipeline_def.items() if k != 'result_node'
+        # ``result_node`` is a MAGNET-level declaration, not part of the
+        # ``kwdagger schedule --params`` payload.
+        self.params = {
+            k: v for k, v in kwdagger_config.items() if k != 'result_node'
         }
-        self.result_node = pipeline_def.get('result_node')
-        self.root_dpath = root_dpath
+        self.result_node = kwdagger_config.get('result_node')
+        self.root_dpath = ub.Path(root_dpath)
         self.results = []
         self.symbols = []
+        self.request_dag = None
         self.queue = None
-        self.incomplete = []
 
-    def dispatch(self, **schedule_options: Any) -> None:
-        """Run this card through :class:`ScheduleEvaluationConfig`.
+    def schedule(self, **schedule_options: Any) -> None:
+        """Submit this invocation's requested experiment campaign.
 
         ``schedule_options`` uses kwdagger's own option names and semantics.
         MAGNET supplies only the pipeline spec, artifact root, and ``run=True``.
+        The returned compiled graph is retained only to report the operational
+        state of this request; it is not used to decide what evidence exists.
         """
         kwd_config = ScheduleEvaluationConfig(
-            params=self.spec,  # includes pipeline and matrix
+            params=self.params,  # includes pipeline and matrix/grid controls
             root_dpath=self.root_dpath,
             run=True,
             **schedule_options,
         )
-        self.dag, self.queue = build_schedule(kwd_config)
+        self.request_dag, self.queue = build_schedule(kwd_config)
 
-    def collect_result_cells(self) -> List[Dict[str, Any]]:
-        """
-        Read the result node's output for each of its configured instances.
+    def _coerce_aggregate_pipeline(self) -> Any:
+        """Configure the logical pipeline used by kwdagger aggregate loading."""
+        from kwdagger.pipeline import coerce_pipeline
 
-        One instance is one cell, identified by its kwdagger ``process_id``:
-        a property of the computation, so it is stable across runs and does
-        not depend on what else was scheduled alongside it. Each instance is
-        asked where its own artifact is, since the shared DAG root means
-        globbing the node directory can return an older card version's.
-
-        Results are qualified as ``metrics.<node>.<name>`` -- kwdagger's
-        convention -- so a pipeline value cannot collide with a card symbol.
-
-        Returns:
-            List[Dict[str, Any]]: per instance, its ``key``, the node's own
-                resolved ``params``, its ``results``, and the ``artifact``
-                they were read from.
-
-        An instance that produced nothing is skipped, not fatal: a card
-        reports what its run managed to compute.
-
-        Raises:
-            ValueError: if no ``result_node`` was declared, or it does not name
-                a node in the pipeline.
-        """
         if not self.result_node:
-            raise ValueError('card must declare kwdagger.result_node')
+            raise ValueError('recipe must declare kwdagger.result_node')
 
-        if not getattr(self, 'dag', None):
-            self.dispatch()
-
-        # build_schedule returns configured instances keyed by process id;
-        # node.name is the template name the card refers to.
-        instances = [
-            node
-            for node in self.dag.nodes.values()
-            if node.name == self.result_node
-        ]
-        if not instances:
-            available = sorted({node.name for node in self.dag.nodes.values()})
+        pipeline = coerce_pipeline(self.params['pipeline'])
+        pipeline.configure(config=None, root_dpath=self.root_dpath)
+        if self.result_node not in pipeline.node_dict:
+            available = sorted(pipeline.node_dict)
             raise ValueError(
                 f'result_node {self.result_node!r} is not a node in the '
                 f'pipeline; available: {available}'
             )
+        return pipeline
 
-        cells = []
-        missing = []
-        for node in instances:
-            fpath = (
-                node.final_node_dpath / node.out_paths[node.primary_out_key]
-            )
-            if not fpath.exists():
-                missing.append(self._instance_status(node, fpath))
+    def load_available_result_rows(
+        self,
+        *,
+        io_workers: Any = 'avail',
+        cache_resolved_results: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Load all currently available evidence for ``result_node``.
+
+        This uses kwdagger's aggregate loader, which scans the shared result
+        root from the logical pipeline's output templates and reconstructs the
+        qualified result namespace (``metrics.*``, ``params.*``,
+        ``resolved_params.*``, ``context.*``, ``resources.*``, etc.). The
+        current request graph is intentionally irrelevant here: results from
+        prior campaigns remain evidence, while a currently pending or failed
+        request contributes no result row until it produces an artifact.
+
+        Returns:
+            A list of mappings with ``key`` (the computation/artifact identity),
+            ``artifact`` (the primary result path), and ``row`` (the complete
+            kwdagger aggregate row made available to a MAGNET claim).
+        """
+        import pandas as pd
+        from kwdagger.aggregate_loader import build_tables
+
+        pipeline = self._coerce_aggregate_pipeline()
+        tables_by_node = build_tables(
+            self.root_dpath,
+            pipeline,
+            io_workers,
+            [self.result_node],
+            cache_resolved_results=cache_resolved_results,
+        )
+        parts = tables_by_node.get(self.result_node)
+        if not parts:
+            return []
+
+        table = pd.concat(list(parts.values()), axis=1)
+        evidence = []
+        for raw_row in table.to_dict(orient='records'):
+            row = {}
+            for key, value in raw_row.items():
+                if _is_missing_aggregate_value(value):
+                    continue
+                if isinstance(value, os.PathLike):
+                    value = os.fspath(value)
+                elif type(value).__module__.startswith('numpy') and hasattr(
+                    value, 'item'
+                ):
+                    value = value.item()
+                row[key] = value
+
+            artifact = row.get('fpath')
+            if artifact is None:
                 continue
-            payload = json.loads(fpath.read_text())
-            # A node writes its values at the top level; `result` is the older
-            # nesting, still read so existing nodes keep working.
-            values = payload.get('result', payload)
-            cells.append({
-                'key': node.process_id,
-                'params': dict(node.config),
-                'results': {
-                    f'metrics.{self.result_node}.{name}': value
-                    for name, value in values.items()
-                    if not name.startswith('_')
-                },
-                'artifact': str(fpath),
+            artifact = os.fspath(artifact)
+            row['fpath'] = artifact
+            evidence.append({
+                'key': ub.Path(artifact).parent.name,
+                'artifact': artifact,
+                'row': row,
             })
+        evidence.sort(key=lambda item: item['artifact'])
+        return evidence
 
-        self.incomplete = missing
-        if missing:
-            counts = ub.dict_hist(entry['status'] for entry in missing)
-            logger.warning(
-                f'{len(cells)} of {len(instances)} {self.result_node!r} '
-                f'instances have a result; the rest: {counts}. '
-                f'First: {missing[0]["key"]} ({missing[0]["status"]})'
-            )
-        return cells
+    def inspect_requested_runs(self) -> List[Dict[str, Any]]:
+        """Describe execution state for this invocation's finite request.
+
+        These records are operational provenance only. They are kept separate
+        from aggregate evidence because a failed, disabled, skipped, queued, or
+        not-yet-started request says nothing by itself about the truth of a
+        MAGNET claim, and an older successful result may already exist for the
+        same computation.
+        """
+        if self.request_dag is None:
+            return []
+
+        named_jobs = getattr(self.queue, 'named_jobs', None) or {}
+        if not named_jobs:
+            named_jobs = {
+                getattr(job, 'name', None): job
+                for job in (getattr(self.queue, 'jobs', None) or [])
+                if getattr(job, 'name', None) is not None
+            }
+
+        records = []
+        for process_id, node in self.request_dag.nodes.items():
+            job = named_jobs.get(process_id)
+            expected = _primary_result_path(node)
+            output_available = bool(expected and expected.exists())
+
+            # Mirror kwdagger.pipeline.submit_jobs node-status vocabulary.
+            # build_schedule creates a fresh queue for this request, so a
+            # concrete process present in that queue is a new submission;
+            # enabled processes absent from it were skipped by KWDagger.
+            if not getattr(node, 'enabled', True):
+                schedule_status = 'disabled'
+            elif job is not None:
+                schedule_status = 'new_submission'
+            else:
+                schedule_status = 'skipped'
+
+            returncode = None
+            stat_fpath = getattr(job, 'stat_fpath', None) if job else None
+            if job is None:
+                attempt_status = 'not_attempted'
+            elif stat_fpath is None or not ub.Path(stat_fpath).exists():
+                attempt_status = 'not_started'
+            else:
+                stat = json.loads(ub.Path(stat_fpath).read_text())
+                returncode = stat.get('ret')
+                if returncode is None:
+                    attempt_status = 'running'
+                elif returncode == 0:
+                    attempt_status = 'passed'
+                elif returncode == 126:
+                    attempt_status = 'skipped'
+                else:
+                    attempt_status = 'failed'
+
+            record = {
+                'process_id': process_id,
+                'node': node.name,
+                'schedule_status': schedule_status,
+                'attempt_status': attempt_status,
+                'returncode': returncode,
+                'output_available': output_available,
+                'enabled': getattr(node, 'enabled', True),
+            }
+            if expected is not None:
+                record['expected_output'] = os.fspath(expected)
+            if stat_fpath is not None:
+                record['stat_fpath'] = os.fspath(stat_fpath)
+            log_fpath = getattr(job, 'log_fpath', None) if job else None
+            if log_fpath is not None:
+                record['log_fpath'] = os.fspath(log_fpath)
+            records.append(record)
+        return records
 
     def collect_results(self) -> Tuple[List[str], List[Any]]:
         """Legacy result collector used by ``magnet evaluate``.
 
         The legacy evaluator historically expected kwdagger pipelines to emit
         ``verdict.json`` files containing ``result.status`` and
-        ``result.symbols``. Keep that behavior isolated here while
-        ``evaluate_new`` uses :meth:`collect_result_cells`.
+        ``result.symbols``. Keep that behavior isolated here.
         """
         if not self.results:
-            self.dispatch(backend='serial', skip_existing=True)
+            self.schedule(backend='serial', skip_existing=True)
 
         paths = self.root_dpath.glob('**/verdict.json')
         for claim_json in paths:
@@ -347,34 +431,36 @@ class KWDaggerProcessor:
 
         return self.results, self.symbols
 
-    def _instance_status(self, node: Any, expected: Any) -> Dict[str, Any]:
-        """
-        Why an instance has no result: it failed, or it has not run.
 
-        Returns:
-            Dict[str, Any]: its ``key``, a ``status`` of ``failed``,
-                ``pending`` or ``empty``, the exit code if it has one, and the
-                ``expected`` path.
-        """
-        entry = {
-            'key': node.process_id,
-            'status': 'pending',
-            'returncode': None,
-            'expected': str(expected),
-        }
-        for job in getattr(self.queue, 'jobs', None) or []:
-            if getattr(job, 'name', None) != node.process_id:
-                continue
-            stat_fpath = getattr(job, 'stat_fpath', None)
-            if stat_fpath is None or not ub.Path(stat_fpath).exists():
-                break
-            returncode = json.loads(ub.Path(stat_fpath).read_text()).get('ret')
-            entry['returncode'] = returncode
-            # Ran and exited clean, but wrote nothing where the card looks.
-            entry['status'] = 'failed' if returncode else 'empty'
-            break
-        return entry
+def _is_missing_aggregate_value(value: Any) -> bool:
+    """Return True for dataframe missing-value sentinels, but not real None."""
+    if value is None:
+        return False
+    try:
+        import pandas as pd
 
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    if isinstance(missing, bool):
+        return missing
+    if type(missing).__module__.startswith('numpy') and hasattr(missing, 'item'):
+        return bool(missing.item())
+    return False
+
+
+def _primary_result_path(node: Any) -> ub.Path | None:
+    """Return a concrete process's primary result path, when it has one."""
+    primary_out_key = getattr(node, 'primary_out_key', None)
+    if primary_out_key is None:
+        return None
+    final_out_paths = getattr(node, 'final_out_paths', None)
+    if final_out_paths is not None and primary_out_key in final_out_paths:
+        return ub.Path(final_out_paths[primary_out_key])
+    out_paths = getattr(node, 'out_paths', None) or {}
+    if primary_out_key not in out_paths:
+        return None
+    return ub.Path(node.final_node_dpath) / out_paths[primary_out_key]
 
 def _resolve_pipeline_path(
     kwdagger_spec: Dict[str, Any], card_dpath: ub.Path

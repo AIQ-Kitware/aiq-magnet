@@ -19,7 +19,7 @@ import json, sys, pathlib
 args = dict(a.lstrip('-').split('=', 1) for a in sys.argv[1:])
 out = pathlib.Path(args['results_fpath'])
 out.parent.mkdir(parents=True, exist_ok=True)
-out.write_text(json.dumps({'score': float(args['seed']) / 10}))
+out.write_text(json.dumps({'result': {'metrics': {'score': float(args['seed']) / 10}}}))
 """
 
 
@@ -44,6 +44,7 @@ def recipe_fpath(tmp_path):
                 'executable': f'python {script}',
                 'algo_params': {'seed': 1},
                 'out_paths': {'results_fpath': 'results.json'},
+                'primary_out_key': 'results_fpath',
             }}},
             'matrix': {'emit.seed': [1, 2]},
         },
@@ -53,7 +54,7 @@ def recipe_fpath(tmp_path):
 
 def _scores(result_card):
     return sorted(
-        cell.result_values['metrics.emit.score']
+        cell.evidence_row['metrics.emit.score']
         for cell in result_card.cell_results
     )
 

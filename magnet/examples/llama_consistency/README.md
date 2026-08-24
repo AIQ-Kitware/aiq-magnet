@@ -10,8 +10,10 @@ llama_predict -> llama_compare
 `llama_predict.py` reads precomputed HELM-Lite MMLU results and writes the two
 model scores for one matrix cell. `llama_compare.py` reads that artifact and
 writes the score gap. The card declares `llama_compare` as its `result_node`, so
-its fields are exposed to the transitional Python claim as
-`metrics.llama_compare.<field>`.
+KWDagger aggregate loads its available results and exposes them to the
+transitional Python claim as `metrics.llama_compare.<field>`. The YAML keeps
+explicit node parameters, while each node's `load_result` hook maps the
+example's existing flat JSON artifacts into KWDagger's aggregate namespace.
 
 ## Why this example has two nodes
 
@@ -135,6 +137,12 @@ Node-level selection remains part of the KWDagger pipeline configuration
 (e.g. `node.__enabled__` in a matrix/config row); `evaluate_new` does not add a
 second interpretation of it.
 
+These controls limit the work requested by this invocation; they do not filter
+the accumulated evidence store. For example, `--max_configs=1` can schedule one
+new configuration while the claim still sees older compatible `result_node`
+rows under the same `--output_path`. Use a separate output root when an
+isolated evidence store is desired.
+
 Use `--params` to override the recipe's kwdagger matrix/configuration without
 editing the recipe. For example:
 
@@ -146,13 +154,24 @@ magnet evaluate_new \
     --params='matrix: {llama_predict.base_model: [meta/llama-2-13b]}'
 ```
 
-The matrix in the checked-in recipe has six base models and six comparison models,
-so `llama_compare` normally produces 36 result cells. KWDagger artifacts are
-shared under `./results_kwdagger/_kwdagger`; the MAGNET run directory records
-the recipe provenance and links to those artifacts.
+The matrix in the checked-in recipe has six base models and six comparison
+models, so one full scheduling request asks for 36 comparisons. KWDagger
+artifacts accumulate under `./results_kwdagger/_kwdagger`. After scheduling,
+MAGNET uses KWDagger aggregate to load every currently available
+`llama_compare` result in that shared store, including reusable results from
+prior requests. This distinction lets a sequence of partial campaigns build an
+evidence set over time instead of making one schedule request the evaluation
+universe.
 
-The current claim/verdict layer is transitional. `evaluate_new` lets result-node
-values and non-sweep recipe symbols feed that existing claim machinery, but it
+Each MAGNET invocation gets its own run directory. `requested_runs.json`
+records the operational state of the processes requested by that invocation,
+while `verdict.json` is computed only from available aggregate rows. A failed or
+not-yet-started job is therefore visible as execution provenance without being
+interpreted as evidence that the claim is false.
+
+The current claim/verdict layer is transitional. `evaluate_new` lets KWDagger
+aggregate values and non-sweep recipe symbols feed that existing claim
+machinery, but it
 does not run legacy `pipeline:` computation or legacy symbol sweeps. Those
 remain available through `magnet evaluate_legacy` and its
 `magnet evaluate` compatibility alias until the old evaluator can be retired.
@@ -178,5 +197,7 @@ kwdagger:
     # ...
 ```
 
-There is no separate Python pipeline definition. The card owns the DAG
-declaration; the Python files implement only the node executables.
+There is no separate Python pipeline definition. The recipe owns the DAG
+declaration; the Python files implement the node executables and, for these
+legacy flat JSON artifacts, small KWDagger result loaders. New node formats can
+use KWDagger's generic result envelope instead.
