@@ -5,6 +5,7 @@ Everything that knows about DAGs, schedules and queues lives here, so
 :mod:`magnet.evaluation` deals in cards, symbols and claims.
 """
 import json
+import os
 import warnings
 from typing import Any, Dict, List, Tuple
 
@@ -112,8 +113,7 @@ class GenericPipelineProcessor:
         self.dag.build_nx_graphs()
 
     def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True,
-        **kwargs: Any
+        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
     ) -> None:
         self.define_kwdagger()
 

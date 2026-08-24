@@ -1,7 +1,6 @@
 from enum import StrEnum
 from typing import Any, Literal, Optional
-from pydantic import (
-    AliasChoices, BaseModel, ConfigDict, Field, model_validator)
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 class LinkSchema(BaseModel):
     title: str

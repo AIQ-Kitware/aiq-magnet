@@ -226,7 +226,7 @@ class EvaluationCard:
         """
         Handle overrides in symbol field by replacing 'value' entries and appending to sweeps
         """
-        override = _plain_data(kwutil.Yaml.coerce(override_str))
+        override = kwutil.Yaml.coerce(override_str, backend='pyyaml')
 
         for key, value in override.items():
             if key not in self.symbols:
@@ -474,23 +474,6 @@ class EvaluationTask:
     @property
     def _execution_hash(self) -> str:
         return ub.hash_data(self.symbols.simple_view())[:12]
-
-
-def _plain_data(data: Any) -> Any:
-    """Convert YAML round-trip container/scalar subclasses to plain data."""
-    if isinstance(data, dict):
-        return {_plain_data(k): _plain_data(v) for k, v in data.items()}
-    if isinstance(data, (list, tuple)):
-        return [_plain_data(v) for v in data]
-    if isinstance(data, str):
-        return str(data)
-    if isinstance(data, bool):
-        return bool(data)
-    if isinstance(data, int):
-        return int(data)
-    if isinstance(data, float):
-        return float(data)
-    return data
 
 
 def _parse_symbol_metadata(symbols_spec: Dict[str, Any]) -> Dict[str, Any]:

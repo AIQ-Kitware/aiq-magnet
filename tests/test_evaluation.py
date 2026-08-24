@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import yaml
 
 from magnet.evaluation import EvaluationCard, Symbol, Symbols
 
@@ -127,3 +128,25 @@ def test_symbol_dependency_aliases_must_agree():
         match='`depends_on` and `depends` disagree',
     ):
         Symbol('y', {'depends_on': ['x'], 'depends': ['z']})
+
+
+def test_symbol_override_uses_plain_yaml_data(tmp_path):
+    card_fpath = tmp_path / 'card.yaml'
+    card_fpath.write_text("""
+claim:
+  python: assert True
+symbols:
+  models:
+    sweep: [old]
+  label:
+    value: old
+""")
+    card = EvaluationCard(card_fpath, tmp_path / 'results', validate='off')
+
+    card.replace("models: [alpha, beta]\nlabel: 'a:b=c'")
+
+    assert type(card.symbols['models']['sweep']) is list
+    assert type(card.symbols['label']['value']) is str
+    assert card.symbols['models']['sweep'] == ['alpha', 'beta']
+    assert card.symbols['label']['value'] == 'a:b=c'
+    yaml.safe_dump(card.original_card)

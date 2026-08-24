@@ -33,7 +33,6 @@ from magnet.evaluation import (
     Symbols,
     _calculate_metrics,
     _parse_symbol_metadata,
-    _plain_data,
     _reduce_results,
 )
 from magnet.schema import EvaluationCardSchema
@@ -262,7 +261,7 @@ class NewEvaluationCard(EvaluationCard):
 
     def apply_params(self, params: Any) -> None:
         """Merge kwdagger-style params into this card's execution block."""
-        params = _plain_data(kwutil.Yaml.coerce(params))
+        params = kwutil.Yaml.coerce(params, backend='pyyaml')
         if not params:
             return
         if not self.has_kwdagger:
