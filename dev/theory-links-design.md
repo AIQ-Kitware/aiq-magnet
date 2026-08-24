@@ -75,6 +75,18 @@ is required to answer the basic reporting question:
     Which premises does this empirical argument satisfy, approximate,
     substitute, assume, ignore, violate, check, or leave unaccounted?
 
+## The worked example proves the richer shape
+
+The Monte Carlo example is the premise-aware demonstration. Its Lean file
+contains an exact geometric theorem and a stronger sampling theorem with named
+`hindicator`, `hmeas`, `hiid`, and `huniform` premises. The Python source
+`satisfies` the indicator contract, `assumes` the measurability bridge, and
+`substitutes` a deterministic LCG for uniform draws. It intentionally says
+nothing about `hiid`, so the derived report has one unaccounted premise.
+
+That omission is part of the example rather than a test fixture: it shows the
+main value of static premise accounting without requiring runtime theory state.
+
 ## Deliberately absent
 
 This layer does not record runtime theory state. In particular it does not:

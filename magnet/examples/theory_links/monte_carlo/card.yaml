@@ -1,15 +1,18 @@
 title: "Monte Carlo estimate of a known area ratio"
 
 description: |
-  Theory defines something exact, and the experiment estimates it.
+  Theory defines an exact area and an asymptotic sampling theorem. The
+  experiment estimates the area with a deterministic seeded LCG.
 
-  A quarter disc occupies pi/4 of the unit square. Sampling points and counting
-  how many land inside estimates that ratio. The estimate is deterministic here
-  because the sampler is seeded, and it is wrong by a small amount that the
-  closed form is not.
+  The source therefore makes two statement-level approximation links and also
+  accounts for the sampling theorem's named premises. It marks the geometric
+  hit predicate as matching the formal region, explicitly assumes the
+  measurability bridge, records that the LCG substitutes for uniform random
+  draws, and leaves the IID-independence premise unaccounted.
 
-  This is what `theory.approximates` means: the theoretical object is exact,
-  and the code produces a finite-sample version of it.
+  That missing premise is intentional: the generated `theory.json` demonstrates
+  how MAGNET reports a static theory/practice gap without recording runtime
+  values or claiming the Python implementation has been formally verified.
 
 version: 1.0
 
@@ -56,9 +59,9 @@ links:
 #
 # The theory block below does not change.
 
-# The statement is in Circle.lean beside this file. The unit-disc area is
-# proved from Mathlib's `Complex.volume_closedBall`; the quarter disc this
-# card samples is stated and unproved.
+# Circle.lean contains both the exact area theorem and the asymptotic sampling
+# theorem. The latter exposes named premises that experiment.py accounts for
+# statically. Independence is deliberately left unaccounted.
 theory:
   empirical_sources:
     - experiment.py

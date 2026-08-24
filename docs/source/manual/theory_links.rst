@@ -74,21 +74,33 @@ how it treats each premise using an ``EntryId::binder`` reference:
 ``checks``       the code contains a runtime check for the premise
 ===============  ============================================================
 
-For example:
+The shipped Monte Carlo example uses these relations against named binders
+of a Lean sampling theorem:
 
 .. code:: python
 
     import magnet.theory as theory
 
-    @theory.tests('Examples.Stability.Theorem')
     @theory.satisfies(
-        'Examples.Stability.Theorem::hbounded',
-        note='input validation establishes the bounded domain')
-    def evaluate(...):
-        with theory.assumes(
-                'Examples.Stability.Theorem::hiid',
-                note='the sampler is treated as IID'):
+        'Examples.Circle.MonteCarloConsistency::hindicator',
+        note='the predicate exactly matches the formal quarter-disc region')
+    def _inside_quarter_disc(x, y):
+        ...
+
+    @theory.approximates(
+        'Examples.Circle.MonteCarloConsistency',
+        note='a finite seeded LCG run stands in for the asymptotic IID model')
+    @theory.assumes(
+        'Examples.Circle.MonteCarloConsistency::hmeas',
+        note='the measurable seed-state bridge is not formalized here')
+    def estimate_area_ratio(...):
+        with theory.substitutes(
+                'Examples.Circle.MonteCarloConsistency::huniform',
+                note='deterministic LCG outputs stand in for uniform draws'):
             ...
+
+The theorem also has a named ``hiid`` premise. The example deliberately leaves
+that premise unannotated so the report demonstrates an unaccounted obligation.
 
 These annotations are authored scientific claims. ``satisfies`` does not mean
 MAGNET has proved Python establishes the premise. It records a precise proof
@@ -209,8 +221,9 @@ Premise coverage
 Coverage is computed from the theory index and annotations; authors do not
 maintain a coverage status manually.
 
-If ``Examples.Stability.Theorem`` exports three premises and empirical source
-accounts for two, ``theory.json`` records the remaining premise as unaccounted:
+The Monte Carlo example exports four named premises from
+``MagnetExamples.Circle.monteCarloEstimator_consistent``. Static source
+annotations account for three, so ``theory.json`` records ``hiid`` as the gap:
 
 .. code:: json
 
@@ -218,34 +231,33 @@ accounts for two, ``theory.json`` records the remaining premise as unaccounted:
       "schema_version": 1,
       "statement_links": [
         {
-          "relation": "tests",
-          "ref": "Examples.Stability.Theorem",
-          "file": "evaluation.py",
-          "line": 20,
-          "qualname": "evaluate"
+          "relation": "approximates",
+          "ref": "Examples.Circle.MonteCarloConsistency",
+          "file": "experiment.py",
+          "qualname": "estimate_area_ratio"
         }
       ],
       "premise_links": [
         {
           "relation": "satisfies",
-          "ref": "Examples.Stability.Theorem::hbounded",
-          "file": "evaluation.py",
-          "line": 21
+          "ref": "Examples.Circle.MonteCarloConsistency::hindicator"
         },
         {
           "relation": "assumes",
-          "ref": "Examples.Stability.Theorem::hiid",
-          "file": "evaluation.py",
-          "line": 25
+          "ref": "Examples.Circle.MonteCarloConsistency::hmeas"
+        },
+        {
+          "relation": "substitutes",
+          "ref": "Examples.Circle.MonteCarloConsistency::huniform"
         }
       ],
       "premise_coverage": [
         {
-          "ref": "Examples.Stability.Theorem",
-          "premise_count": 3,
-          "accounted_count": 2,
+          "ref": "Examples.Circle.MonteCarloConsistency",
+          "premise_count": 4,
+          "accounted_count": 3,
           "complete": false,
-          "unaccounted": ["hunique"]
+          "unaccounted": ["hiid"]
         }
       ]
     }

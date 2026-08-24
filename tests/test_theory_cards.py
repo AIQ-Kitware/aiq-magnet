@@ -5,13 +5,13 @@ from importlib.resources import files
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
 from magnet.schema import TheorySchema
 
-CARDS = [
+SIMPLE_CARDS = [
     ('coin_flip', 'tests', 'Examples.CoinFlip.Binomial'),
-    ('monte_carlo', 'approximates', 'Examples.Circle.AreaRatio'),
     ('training_order', 'motivates', 'Examples.TrainingOrder.Why'),
 ]
 
@@ -31,7 +31,7 @@ def _run(example, output_path):
     return status, run_dpath
 
 
-@pytest.mark.parametrize('example,relation,ref', CARDS)
+@pytest.mark.parametrize('example,relation,ref', SIMPLE_CARDS)
 def test_demo_cards_write_versioned_statement_links(example, relation, ref, tmp_path):
     status, run_dpath = _run(example, tmp_path / 'runs')
     assert status == 'VERIFIED'
@@ -45,6 +45,51 @@ def test_demo_cards_write_versioned_statement_links(example, relation, ref, tmp_
     assert [entry['id'] for entry in report['entries']] == [ref]
     assert report['entries'][0]['statement']
     assert 'unresolved' not in report
+
+
+def test_monte_carlo_example_demonstrates_static_premise_accounting():
+    from magnet.theory.cards import report_from_card
+
+    root = EXAMPLES / 'monte_carlo'
+    card = yaml.safe_load((root / 'card.yaml').read_text())
+    report = report_from_card(card, root).to_dict()
+    assert report['schema_version'] == 1
+    assert [
+        (link['relation'], link['ref']) for link in report['statement_links']
+    ] == [
+        ('approximates', 'Examples.Circle.MonteCarloConsistency'),
+        ('approximates', 'Examples.Circle.AreaRatio'),
+    ]
+
+    premise_links = {
+        link['ref']: link for link in report['premise_links']
+    }
+    assert premise_links[
+        'Examples.Circle.MonteCarloConsistency::hindicator'
+    ]['relation'] == 'satisfies'
+    assert premise_links[
+        'Examples.Circle.MonteCarloConsistency::hmeas'
+    ]['relation'] == 'assumes'
+    assert premise_links[
+        'Examples.Circle.MonteCarloConsistency::huniform'
+    ]['relation'] == 'substitutes'
+
+    assert len(report['premise_coverage']) == 1
+    coverage = report['premise_coverage'][0]
+    assert coverage['ref'] == 'Examples.Circle.MonteCarloConsistency'
+    assert coverage['premise_count'] == 4
+    assert coverage['accounted_count'] == 3
+    assert coverage['complete'] is False
+    assert coverage['unaccounted'] == ['hiid']
+
+    entries = {entry['id']: entry for entry in report['entries']}
+    sampling = entries['Examples.Circle.MonteCarloConsistency']
+    assert sampling['declaration'] == (
+        'MagnetExamples.Circle.monteCarloEstimator_consistent'
+    )
+    assert [premise['id'] for premise in sampling['premises']] == [
+        'hindicator', 'hmeas', 'hiid', 'huniform'
+    ]
 
 
 def test_source_paths_are_portable_and_formalization_is_structured(tmp_path):

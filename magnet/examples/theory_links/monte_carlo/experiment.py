@@ -65,6 +65,22 @@ def _unit_interval(seed: int, count: int):
         yield state / _LCG_MODULUS
 
 
+@theory.satisfies(
+    'Examples.Circle.MonteCarloConsistency::hindicator',
+    note=(
+        'the predicate is exactly first-quadrant unit-disc membership, '
+        "matching the theorem's quarterDisc set"
+    ),
+)
+def _inside_quarter_disc(x: float, y: float) -> bool:
+    """Whether ``(x, y)`` belongs to the formal quarter-disc region."""
+    return (
+        0.0 <= x <= 1.0
+        and 0.0 <= y <= 1.0
+        and x * x + y * y <= 1.0
+    )
+
+
 def exact_area_ratio() -> float:
     """
     What the theorem states: the quarter disc is pi/4 of the unit square.
@@ -77,6 +93,20 @@ def exact_area_ratio() -> float:
     return pi / 4
 
 
+@theory.approximates(
+    'Examples.Circle.MonteCarloConsistency',
+    note=(
+        'a finite seeded LCG run stands in for the asymptotic IID sampling '
+        'model'
+    ),
+)
+@theory.assumes(
+    'Examples.Circle.MonteCarloConsistency::hmeas',
+    note=(
+        'the example treats the seed-state construction as a measurable '
+        'random-variable model without formalizing that bridge'
+    ),
+)
 def estimate_area_ratio(seed: int = 1, samples: int = 20000) -> float:
     """
     Estimate the same ratio by sampling points in the unit square.
@@ -95,10 +125,19 @@ def estimate_area_ratio(seed: int = 1, samples: int = 20000) -> float:
     """
     with theory.approximates(
             'Examples.Circle.AreaRatio',
-            note='finite uniform samples estimate the exact area ratio'):
-        stream = _unit_interval(seed, samples * 2)
-        inside = sum(1 for x, y in zip(stream, stream) if x * x + y * y <= 1.0)
-        return inside / samples
+            note='finite samples estimate the exact geometric area ratio'):
+        with theory.substitutes(
+                'Examples.Circle.MonteCarloConsistency::huniform',
+                note=(
+                    'scaled outputs of a deterministic LCG stand in for '
+                    'uniform unit-square draws'
+                )):
+            stream = _unit_interval(seed, samples * 2)
+            inside = sum(
+                1 for x, y in zip(stream, stream)
+                if _inside_quarter_disc(x, y)
+            )
+            return inside / samples
 
 
 def estimate_pi(seed: int = 1, samples: int = 20000) -> float:
