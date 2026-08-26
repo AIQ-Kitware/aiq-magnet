@@ -278,9 +278,43 @@ class NewEvaluationKWDaggerSchema(KWDaggerSchema):
     result_node: str
 
 
-class NewEvaluationRecipeSchema(EvaluationCardSchema):
-    """Schema for a recipe consumed by ``magnet evaluate_new``."""
+#: A recipe `name` identifies the card to machinery, so it has to survive being
+#: used as one: a tmux session name, a path component, a log prefix. Letters,
+#: digits, underscore and hyphen only, which is the intersection of what those
+#: accept. `title` remains the human sentence and carries no such restriction.
+RECIPE_NAME_PATTERN = r'^[A-Za-z0-9_-]+$'
 
+
+class NewEvaluationRecipeSchema(EvaluationCardSchema):
+    """
+    Schema for a recipe consumed by ``magnet evaluate_new``.
+
+    Beyond the card fields, a recipe must declare a ``name``: a short machine
+    identifier for the card itself, distinct from its prose ``title``.
+
+    Example:
+        >>> import pytest
+        >>> from magnet.schema import NewEvaluationRecipeSchema
+        >>> raw = {
+        ...     'title': 'Held-out model consistency',
+        ...     'description': 'd',
+        ...     'version': 1.0,
+        ...     'organizations': ['Kitware'],
+        ...     'submitter': {'name': 'K', 'email': 'k@example.com'},
+        ...     'tags': [],
+        ...     'links': [],
+        ...     'claim': {'python': 'assert True'},
+        ...     'kwdagger': {'pipeline': {}, 'result_node': 'score'},
+        ... }
+        >>> with pytest.raises(Exception):
+        ...     NewEvaluationRecipeSchema.model_validate(raw)
+        >>> recipe = NewEvaluationRecipeSchema.model_validate(
+        ...     dict(raw, name='held_out_model'))
+        >>> recipe.name
+        'held_out_model'
+    """
+
+    name: str = Field(pattern=RECIPE_NAME_PATTERN)
     kwdagger: NewEvaluationKWDaggerSchema
     pipeline: None = None
     evidence: EvidenceSchema = Field(default_factory=EvidenceSchema)

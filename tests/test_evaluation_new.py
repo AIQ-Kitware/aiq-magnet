@@ -31,6 +31,7 @@ def kwdagger_recipe_fpath(tmp_path):
     script.write_text(textwrap.dedent(SCRIPT))
     fpath = dpath / 'recipe.yaml'
     fpath.write_text(yaml.safe_dump({
+        'name': 'probe',
         'title': 'new evaluator probe',
         'description': 'new evaluator probe',
         'version': '1.0',

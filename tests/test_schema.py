@@ -198,6 +198,7 @@ def test_kwdagger_param_grid_keys_magnet_does_not_read_are_passed_through(
 
 def test_new_recipe_evidence_scope():
     data = {
+        'name': 'evidence_scope',
         'title': 'evidence scope',
         'description': 'evidence scope',
         'version': '1.0',

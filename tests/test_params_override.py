@@ -30,6 +30,7 @@ def recipe_fpath(tmp_path):
     script.write_text(textwrap.dedent(SCRIPT))
     fpath = dpath / 'recipe.yaml'
     fpath.write_text(yaml.safe_dump({
+        'name': 'probe',
         'title': 'probe',
         'description': 'probe',
         'version': '1.0',

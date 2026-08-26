@@ -18,6 +18,7 @@ that a claim is false.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
@@ -42,7 +43,7 @@ from magnet.evaluation import (
     _parse_symbol_metadata,
     _reduce_results,
 )
-from magnet.schema import NewEvaluationRecipeSchema
+from magnet.schema import RECIPE_NAME_PATTERN, NewEvaluationRecipeSchema
 from magnet.utils.util_logger import setup_logging
 
 __all__ = [
@@ -362,6 +363,8 @@ class NewEvaluationRecipe(EvaluationCard):
         self, path, output_path: str | ub.Path, validate: str = 'error'
     ) -> None:
         super().__init__(path, output_path, validate='off')
+        #: Short machine identifier for this card, distinct from ``title``.
+        self.name = self.original_card.get('name', '')
         _check_new_evaluation_recipe(self)
 
         if validate in ('error', 'warning'):
@@ -589,6 +592,20 @@ def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
             'evaluate_new does not combine `kwdagger:` with the legacy '
             '`pipeline:` executor. Remove the legacy block or use '
             '`magnet evaluate_legacy`.'
+        )
+    if not recipe.name:
+        raise ValueError(
+            'evaluate_new requires a top-level `name`: a short machine '
+            'identifier for this card, distinct from its prose `title`. It '
+            'names the card wherever machinery has to refer to it, such as '
+            'the execution queue.'
+        )
+    if not re.match(RECIPE_NAME_PATTERN, recipe.name):
+        raise ValueError(
+            f'recipe `name` {recipe.name!r} must match '
+            f'{RECIPE_NAME_PATTERN} -- it is used as a tmux session name and '
+            'a path component, so it is restricted to letters, digits, '
+            'underscore and hyphen. Put the readable version in `title`.'
         )
     if not recipe.kwdagger.get('result_node'):
         raise ValueError(
