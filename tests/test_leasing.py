@@ -8,9 +8,9 @@ DAG, not a wrapper script, decides which model is held while which job runs.
 import kwdagger
 import pytest
 
+from magnet import containers, leasing
 from magnet.leasing import (
     INSIDE_LEASE_ENVVAR,
-    LEASING_ENVVAR,
     LeasedProcessNode,
     leasing_is_enabled,
 )
@@ -34,7 +34,13 @@ class Analyse(LeasedProcessNode):
 @pytest.fixture(autouse=True)
 def _leasing_on(monkeypatch):
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    monkeypatch.setenv(LEASING_ENVVAR, '1')
+    # Both settings are process-wide, so unlike a monkeypatched environment
+    # variable they persist across tests unless put back deliberately.
+    containers.configure()
+    leasing.configure(True)
+    yield
+    containers.configure()
+    leasing.configure(False)
 
 
 def _node(cls, config):
@@ -101,7 +107,7 @@ def test_the_lease_waits_rather_than_failing_when_busy():
 
 
 def test_leasing_is_off_inside_an_outer_lease(monkeypatch):
-    monkeypatch.delenv(LEASING_ENVVAR, raising=False)
+    leasing.configure(True)
     monkeypatch.setenv(INSIDE_LEASE_ENVVAR, 'lease-abc123')
     assert not leasing_is_enabled()
     node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None})
@@ -111,14 +117,14 @@ def test_leasing_is_off_inside_an_outer_lease(monkeypatch):
 def test_explicit_opt_out(monkeypatch):
     # e.g. a run against OpenRouter, which infer-stack does not manage.
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    monkeypatch.setenv(LEASING_ENVVAR, '0')
+    leasing.configure(False)
     assert not leasing_is_enabled()
 
 
 def test_leasing_is_off_unless_asked_for(monkeypatch):
     """A card pointed at an unmanaged server must keep working untouched."""
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    monkeypatch.delenv(LEASING_ENVVAR, raising=False)
+    leasing.configure(False)
     assert not leasing_is_enabled()
     node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None})
     assert node.command.startswith('python -m pkg.infer')
