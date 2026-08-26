@@ -8,14 +8,13 @@ compiles the DAG on the host, each node's command runs in an image.
 import kwdagger
 import pytest
 
+from magnet import containers
 from magnet.containers import (
-    FORWARD_ENV_ENVVAR,
-    IMAGE_ENVVAR,
-    MOUNTS_ENVVAR,
     ContainerProcessNode,
     containerization_is_enabled,
 )
-from magnet.leasing import INSIDE_LEASE_ENVVAR, LEASING_ENVVAR, LeasedProcessNode
+from magnet import leasing
+from magnet.leasing import INSIDE_LEASE_ENVVAR, LeasedProcessNode
 
 IMAGE = 'aiq-eval-node:latest'
 
@@ -36,10 +35,11 @@ class Infer(LeasedProcessNode):
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    monkeypatch.delenv(LEASING_ENVVAR, raising=False)
-    monkeypatch.delenv(IMAGE_ENVVAR, raising=False)
-    monkeypatch.delenv(MOUNTS_ENVVAR, raising=False)
-    monkeypatch.delenv(FORWARD_ENV_ENVVAR, raising=False)
+    containers.configure()
+    leasing.configure(False)
+    yield
+    containers.configure()
+    leasing.configure(False)
 
 
 def _node(cls, config):
@@ -49,8 +49,13 @@ def _node(cls, config):
 
 
 def _on(monkeypatch, *, image=IMAGE, mounts='/repo'):
-    monkeypatch.setenv(IMAGE_ENVVAR, image)
-    monkeypatch.setenv(MOUNTS_ENVVAR, mounts)
+    settings = containers.current_settings()
+    containers.configure(
+        image=image,
+        mounts=mounts,
+        docker_args=settings.docker_args,
+        forward_env=settings.forward_env,
+    )
 
 
 def test_nodes_run_on_the_host_unless_an_image_is_named():
@@ -97,7 +102,11 @@ def test_the_endpoint_env_is_forwarded_by_name(monkeypatch):
 def test_a_pipelines_own_variables_are_forwarded_on_request(monkeypatch):
     """MAGNET must not need to know what an evaluation calls its settings."""
     _on(monkeypatch)
-    monkeypatch.setenv(FORWARD_ENV_ENVVAR, 'SOME_BACKEND_FACTORY,SOME_URL')
+    containers.configure(
+        image=containers.current_settings().image,
+        mounts=containers.current_settings().mounts,
+        forward_env='SOME_BACKEND_FACTORY,SOME_URL',
+    )
     command = _node(Work, {'task': 't'}).command
     assert '-e SOME_BACKEND_FACTORY' in command
     assert '-e SOME_URL' in command
@@ -125,18 +134,18 @@ def test_the_lease_wraps_the_container_not_the_other_way_round(monkeypatch):
     being inside is what lets the container inherit the endpoint env.
     """
     _on(monkeypatch)
-    monkeypatch.setenv(LEASING_ENVVAR, '1')
+    leasing.configure(True)
     command = _node(Infer, {'model_id': 'qwen'}).command
     assert command.index('infer-stack run') < command.index('docker run')
 
 
 def test_either_layer_works_alone(monkeypatch):
-    monkeypatch.setenv(LEASING_ENVVAR, '1')
+    leasing.configure(True)
     leased_only = _node(Infer, {'model_id': 'qwen'}).command
     assert leased_only.startswith('infer-stack run')
     assert 'docker run' not in leased_only
 
-    monkeypatch.delenv(LEASING_ENVVAR)
+    leasing.configure(False)
     _on(monkeypatch)
     boxed_only = _node(Infer, {'model_id': 'qwen'}).command
     assert boxed_only.startswith('docker run')
@@ -161,7 +170,11 @@ def test_a_declared_variables_value_is_captured_not_forwarded(monkeypatch):
     default.
     """
     _on(monkeypatch)
-    monkeypatch.setenv(FORWARD_ENV_ENVVAR, 'SOME_BACKEND_FACTORY')
+    containers.configure(
+        image=containers.current_settings().image,
+        mounts=containers.current_settings().mounts,
+        forward_env='SOME_BACKEND_FACTORY',
+    )
     monkeypatch.setenv('SOME_BACKEND_FACTORY', 'pkg.mod:factory')
     command = _node(Work, {'task': 't'}).command
     assert '-e SOME_BACKEND_FACTORY=pkg.mod:factory' in command

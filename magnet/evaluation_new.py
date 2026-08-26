@@ -32,6 +32,7 @@ from loguru import logger
 from pydantic import ValidationError
 from rich import print
 
+from magnet import containers, leasing
 from magnet._kwdagger import KWDaggerProcessor, _resolve_pipeline_path
 from magnet.evaluation import (
     SAFER_USE_TEMPFILE,
@@ -100,6 +101,59 @@ class NewEvaluationCLI(kwconf.Config):
         8,
         parser=int,
         help='Number of tmux workers. Passed directly to kwdagger.',
+    )
+
+    container_image: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Run each node command in this image. Empty (the default) runs '
+            'them on the host. A node that declares its own image wins.'
+        ),
+        group='containers',
+    )
+
+    container_mounts: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Colon- or comma-separated host paths to bind-mount at their own '
+            'absolute paths. Normally the repository root.'
+        ),
+        group='containers',
+    )
+
+    container_docker_args: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Extra `docker run` arguments, for what varies by host: GPU '
+            'reservations, an alternate network, a registry credential mount.'
+        ),
+        group='containers',
+    )
+
+    container_forward_env: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Extra environment variable names to forward into the container, '
+            "on top of the defaults. This is how a pipeline's own "
+            'configuration reaches its nodes.'
+        ),
+        group='containers',
+    )
+
+    per_node_leasing: bool = kwconf.Value(
+        False,
+        isflag=True,
+        help=(
+            'Let each node acquire its own inference endpoints for the '
+            'duration of its own job, instead of holding every model in the '
+            'cohort for the whole run. Off by default: a run pointing at a '
+            'server infer-stack does not manage has no catalog to look up.'
+        ),
+        group='containers',
     )
 
     skip_existing = kwconf.Value(
@@ -173,6 +227,17 @@ class NewEvaluationCLI(kwconf.Config):
         )
         if args.params is not None:
             recipe.apply_params(args.params)
+
+        # Execution environment. Passed configuration, so it comes from these
+        # arguments rather than from the ambient environment -- which also
+        # means the record of an invocation says what it ran in.
+        containers.configure(
+            image=args['container_image'],
+            mounts=args['container_mounts'],
+            docker_args=args['container_docker_args'],
+            forward_env=args['container_forward_env'],
+        )
+        leasing.configure(enabled=bool(args['per_node_leasing']))
 
         schedule_options = {
             key: args[key]

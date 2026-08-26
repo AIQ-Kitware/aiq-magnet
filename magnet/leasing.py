@@ -17,7 +17,7 @@ The cost: with ``reclaim: stop`` a cohort with more models than GPUs reloads
 weights repeatedly. Use ``reclaim: keep-warm``, where the lease bounds
 entitlement rather than container lifetime.
 
-Opt-in via ``MAGNET_PER_NODE_LEASING=1``. Off by default because plenty of
+Opt-in via ``--per_node_leasing``. Off by default because plenty of
 legitimate runs point at a server infer-stack does not manage.
 """
 
@@ -28,23 +28,48 @@ import shlex
 
 from magnet.containers import ContainerProcessNode
 
-__all__ = ['LeasedProcessNode', 'leasing_is_enabled', 'LEASING_ENVVAR']
+__all__ = [
+    'LeasedProcessNode',
+    'configure',
+    'leasing_is_enabled',
+    'INSIDE_LEASE_ENVVAR',
+]
 
-#: Set truthy to render each node's command inside its own lease. **Opt-in.**
-#: Off by default because plenty of legitimate runs point at a server
-#: infer-stack does not manage -- OpenRouter, a hand-started mock, a
-#: colleague's shared vLLM -- and for those, rendering an ``infer-stack run``
-#: prefix would turn a working card into one that fails looking up an
-#: endpoint that was never in a catalog.
-LEASING_ENVVAR = 'MAGNET_PER_NODE_LEASING'
+#: Whether each node's command renders inside its own lease. **Opt-in**, set
+#: from a CLI argument by :func:`configure`. Off by default because plenty of
+#: legitimate runs point at a server infer-stack does not manage -- OpenRouter,
+#: a hand-started mock, a colleague's shared vLLM -- and for those, rendering
+#: an ``infer-stack run`` prefix would turn a working card into one that fails
+#: looking up an endpoint that was never in a catalog.
+_ENABLED = False
+
+
+def configure(enabled: bool = False) -> bool:
+    """
+    Set whether nodes lease their own endpoints, and return the setting.
+
+    Called from the CLI before scheduling. This is passed configuration, so it
+    arrives as an argument rather than from the environment; contrast
+    :data:`INSIDE_LEASE_ENVVAR`, which is a fact about the surrounding process
+    that only infer-stack can state.
+
+    Example:
+        >>> from magnet.leasing import configure, leasing_is_enabled
+        >>> configure(True)
+        True
+        >>> leasing_is_enabled()
+        True
+        >>> configure(False)
+        False
+    """
+    global _ENABLED
+    _ENABLED = bool(enabled)
+    return _ENABLED
 
 #: Exported by ``infer-stack run``. Its presence means we are already inside
 #: someone else's lease, which already holds every endpoint it named, so
 #: acquiring again per node is pure overhead.
 INSIDE_LEASE_ENVVAR = 'INFER_STACK_LEASE_ID'
-
-_FALSEY = {'0', 'false', 'no', 'off', ''}
-
 
 def leasing_is_enabled() -> bool:
     """
@@ -56,8 +81,7 @@ def leasing_is_enabled() -> bool:
     Returns:
         bool
     """
-    explicit = os.environ.get(LEASING_ENVVAR, '')
-    if explicit.strip().lower() in _FALSEY:
+    if not _ENABLED:
         return False
     return not os.environ.get(INSIDE_LEASE_ENVVAR)
 

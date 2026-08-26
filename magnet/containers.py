@@ -37,37 +37,106 @@ import os
 from typing import Any
 import shlex
 
+import dataclasses
+
 import kwdagger
 
 __all__ = [
     'ContainerProcessNode',
+    'ContainerSettings',
+    'configure',
+    'current_settings',
     'containerization_is_enabled',
     'container_prefix',
     'forwarded_env',
-    'IMAGE_ENVVAR',
-    'MOUNTS_ENVVAR',
-    'FORWARD_ENV_ENVVAR',
     'LEASE_ENV',
     'DEFAULT_CAPTURED_ENV',
 ]
 
-#: Image to run node commands in. Unset => run on the host, as before.
-IMAGE_ENVVAR = 'MAGNET_NODE_IMAGE'
+#: Process-wide container settings. Empty by default, which is what makes an
+#: uncontainerized run the same path with nothing prepended rather than a
+#: fallback. Populated from CLI arguments by :func:`configure`; a node that
+#: declares its own image, mounts or environment still wins over it.
+#:
+#: This is configuration a caller passes in, so it arrives as a CLI argument.
+#: It used to be read from MAGNET_NODE_* environment variables, which hid where
+#: a value came from and could not be seen in the record of an invocation.
 
-#: Colon-separated host paths to bind-mount at their own absolute paths.
-#: Normally one entry: the repository root.
-MOUNTS_ENVVAR = 'MAGNET_NODE_MOUNTS'
 
-#: Extra ``docker run`` arguments, split with shell quoting. An escape hatch
-#: for the things that vary by host and should not be guessed here -- GPU
-#: reservations, an alternate network, a registry credential mount.
-DOCKER_ARGS_ENVVAR = 'MAGNET_NODE_DOCKER_ARGS'
+@dataclasses.dataclass(frozen=True)
+class ContainerSettings:
+    """What to run node commands in, when the node does not say."""
 
-#: Colon- or comma-separated extra variable names to forward, on top of
-#: :data:`DEFAULT_FORWARDED_ENV`. This is how a pipeline's own configuration
-#: reaches its nodes: MAGNET has no business knowing what those variables are
-#: called, so it does not enumerate them.
-FORWARD_ENV_ENVVAR = 'MAGNET_NODE_FORWARD_ENV'
+    #: Image to run node commands in. Empty => run on the host.
+    image: str = ''
+
+    #: Host paths to bind-mount at their own absolute paths. Normally one
+    #: entry: the repository root.
+    mounts: tuple[str, ...] = ()
+
+    #: Extra ``docker run`` arguments. An escape hatch for the things that vary
+    #: by host and should not be guessed here -- GPU reservations, an alternate
+    #: network, a registry credential mount.
+    docker_args: str = ''
+
+    #: Extra variable names to forward, on top of :data:`DEFAULT_FORWARDED_ENV`.
+    #: This is how a pipeline's own configuration reaches its nodes: MAGNET has
+    #: no business knowing what those variables are called.
+    forward_env: tuple[str, ...] = ()
+
+
+_SETTINGS = ContainerSettings()
+
+
+def configure(
+    image: str = '',
+    mounts: Any = (),
+    docker_args: str = '',
+    forward_env: Any = (),
+) -> ContainerSettings:
+    """
+    Set the process-wide container settings, and return them.
+
+    Called once from the CLI before a pipeline is scheduled. Node commands are
+    rendered in this process, so a process-wide value is enough to reach them;
+    what matters is that it came from an argument rather than the ambient
+    environment.
+
+    Example:
+        >>> from magnet.containers import configure, current_settings
+        >>> before = current_settings()
+        >>> configure(image='magnet:latest', mounts='/repo')
+        ContainerSettings(image='magnet:latest', mounts=('/repo',), ...)
+        >>> current_settings().image
+        'magnet:latest'
+        >>> _ = configure(**{f.name: getattr(before, f.name)
+        ...                  for f in dataclasses.fields(before)})
+    """
+    global _SETTINGS
+    _SETTINGS = ContainerSettings(
+        image=str(image or '').strip(),
+        mounts=tuple(_coerce_name_list(mounts)),
+        docker_args=str(docker_args or ''),
+        forward_env=tuple(_coerce_name_list(forward_env)),
+    )
+    return _SETTINGS
+
+
+def current_settings() -> ContainerSettings:
+    """The container settings in effect for this process."""
+    return _SETTINGS
+
+
+def _coerce_name_list(raw: Any) -> list[str]:
+    """Accept a list, or one colon/comma separated string."""
+    if raw is None:
+        return []
+    if isinstance(raw, (list, tuple)):
+        items = raw
+    else:
+        items = str(raw).replace(',', ':').split(':')
+    return [str(item).strip() for item in items if str(item).strip()]
+
 
 #: Variables a surrounding lease supplies at job time: ``infer-stack run``
 #: writes them into the environment of the command it wraps, long after this
@@ -101,18 +170,18 @@ def forwarded_env() -> list[str]:
 
     Returns:
         list[str]: :data:`DEFAULT_FORWARDED_ENV` followed by whatever
-            :data:`FORWARD_ENV_ENVVAR` adds, deduplicated.
+            :attr:`ContainerSettings.forward_env` adds, deduplicated.
 
     Example:
-        >>> import os
-        >>> from unittest import mock
-        >>> with mock.patch.dict(os.environ, {'MAGNET_NODE_FORWARD_ENV': 'MY_FACTORY,MY_URL'}):
-        ...     names = forwarded_env()
+        >>> from magnet.containers import configure, forwarded_env
+        >>> before = configure(forward_env='MY_FACTORY,MY_URL')
+        >>> names = forwarded_env()
         >>> names[0], names[-2:]
         ('OPENAI_BASE_URL', ['MY_FACTORY', 'MY_URL'])
+        >>> _ = configure()
     """
     names = list(DEFAULT_FORWARDED_ENV)
-    for chunk in _env_name_list(os.environ.get(FORWARD_ENV_ENVVAR, '')):
+    for chunk in current_settings().forward_env:
         if chunk not in names:
             names.append(chunk)
     return names
@@ -123,17 +192,15 @@ def node_image(node: Any = None) -> str:
     declared = getattr(node, 'container_image', None)
     if declared:
         return str(declared).strip()
-    return os.environ.get(IMAGE_ENVVAR, '').strip()
+    return current_settings().image
 
 
 def node_mounts(node: Any = None) -> list[str]:
     """Host paths to bind-mount at their own absolute paths."""
     declared = getattr(node, 'container_mounts', None)
     if declared:
-        raw = declared if isinstance(declared, (list, tuple)) else [declared]
-    else:
-        raw = os.environ.get(MOUNTS_ENVVAR, '').split(':')
-    return [str(m).strip() for m in raw if str(m).strip()]
+        return _coerce_name_list(declared)
+    return list(current_settings().mounts)
 
 
 def declared_env(node: Any = None) -> dict:
@@ -149,7 +216,7 @@ def declared_env(node: Any = None) -> dict:
     """
     names: list[str] = list(DEFAULT_CAPTURED_ENV)
     for source in (getattr(node, 'container_forward_env', None) or (),
-                   _env_name_list(os.environ.get(FORWARD_ENV_ENVVAR, ''))):
+                   current_settings().forward_env):
         for name in source:
             name = str(name).strip()
             if name and name not in names and name not in LEASE_ENV:
@@ -163,16 +230,12 @@ def declared_env(node: Any = None) -> dict:
     return resolved
 
 
-def _env_name_list(raw: str) -> list[str]:
-    return [c.strip() for c in str(raw).replace(',', ':').split(':') if c.strip()]
-
-
 def containerization_is_enabled(node: Any = None) -> bool:
     """
     Whether node commands should be wrapped in ``docker run``.
 
     Returns:
-        bool: true when :data:`IMAGE_ENVVAR` names an image.
+        bool: true when the node or the process settings name an image.
     """
     return bool(node_image(node))
 
@@ -183,8 +246,8 @@ def container_prefix(node: Any = None) -> str:
 
     Args:
         node: the node being rendered, when it declares its own image, mounts
-            or environment. Falls back to the process-wide MAGNET_NODE_*
-            variables.
+            or environment. Falls back to the process-wide
+            :class:`ContainerSettings`.
 
     Returns:
         str: everything up to and including the image name.
@@ -238,7 +301,7 @@ def container_prefix(node: Any = None) -> str:
             parts += ['-e', name]
         else:
             parts += ['-e', shlex.quote(f'{name}={value}')]
-    parts += shlex.split(os.environ.get(DOCKER_ARGS_ENVVAR, ''))
+    parts += shlex.split(current_settings().docker_args)
     parts.append(image)
     return ' '.join(parts)
 
@@ -247,7 +310,7 @@ class ContainerProcessNode(kwdagger.ProcessNode):
     """
     A :class:`kwdagger.ProcessNode` whose command runs in a container.
 
-    Inert unless an image is named, by the node or by :data:`IMAGE_ENVVAR`, so
+    Inert unless an image is named, by the node or by :func:`configure`, so
     the same pipeline runs on the host during development and in a pinned image
     for a real run.
 
