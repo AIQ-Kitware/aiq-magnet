@@ -171,6 +171,19 @@ class NewEvaluationCLI(kwconf.Config):
         group='containers',
     )
 
+    lease_allowed_gpus: bool = kwconf.Value(
+        True,
+        isflag=True,
+        help=(
+            'Confine a leased node to the GPUs its Slurm job was allocated. '
+            'On by default: off Slurm it renders to nothing, and under Slurm '
+            'its absence lets two nodes place servers on the same card. Turn '
+            'it off only where Slurm reports indices the container runtime '
+            'does not use.'
+        ),
+        group='containers',
+    )
+
     skip_existing = kwconf.Value(
         False,
         help=(
@@ -283,7 +296,10 @@ class NewEvaluationCLI(kwconf.Config):
             docker_args=args['container_docker_args'],
             forward_env=args['container_forward_env'],
         )
-        leasing.configure(enabled=bool(args['per_node_leasing']))
+        leasing.configure(
+            enabled=bool(args['per_node_leasing']),
+            allowed_gpus=bool(args['lease_allowed_gpus']),
+        )
 
         schedule_options = {
             key: args[key]
