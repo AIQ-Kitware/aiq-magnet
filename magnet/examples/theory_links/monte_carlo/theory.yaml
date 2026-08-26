@@ -1,0 +1,37 @@
+schema_version: 1
+formalization:
+  system: lean4
+entries:
+  - id: Examples.Circle.AreaRatio
+    kind: theorem
+    declaration: MagnetExamples.Circle.volume_quarterDisc
+    source_path: Circle.lean
+    statement: >
+      The quarter disc of radius 1 has area pi/4 inside the unit square.
+
+  - id: Examples.Circle.MonteCarloConsistency
+    kind: theorem
+    declaration: MagnetExamples.Circle.monteCarloEstimator_consistent
+    source_path: Circle.lean
+    statement: >
+      For a measurable independent sequence of uniformly distributed points in
+      the unit square, the empirical quarter-disc hit rate converges almost
+      surely to pi/4.
+    premises:
+      - id: hindicator
+        type: "∀ z, hit z = decide (z ∈ quarterDisc)"
+        statement: >
+          The empirical hit predicate recognizes exactly the formal
+          quarter-disc region.
+      - id: hmeas
+        type: "∀ i, Measurable (X i)"
+        statement: >
+          Every sample point is a measurable random variable.
+      - id: hiid
+        type: ProbabilityTheory.iIndepFun X P
+        statement: >
+          The sample points are mutually independent.
+      - id: huniform
+        type: "∀ i, Measure.map (X i) P = volume.restrict unitSquare"
+        statement: >
+          Every sample point is uniformly distributed on the unit square.

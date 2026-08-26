@@ -72,7 +72,13 @@ dynamic.readme.file = [
 ]
 dynamic.readme.content-type = "text/markdown"
 dynamic.version.attr = "magnet.__version__"
-package-data.magnet = [ "cards/*.yaml", "examples/llama_consistency/*.yaml", "examples/llama_consistency/*.md" ]
+package-data.magnet = [
+  "cards/*.yaml",
+  "examples/llama_consistency/*.yaml",
+  "examples/llama_consistency/*.md",
+  "examples/theory_links/*/*.yaml",
+  "examples/theory_links/*/*.lean",
+]
 packages.find.namespaces = true
 packages.find.include = [ "magnet*" ]
 

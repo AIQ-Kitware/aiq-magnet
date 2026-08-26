@@ -18,6 +18,7 @@ Welcome to aiq_magnet's documentation!
 
    auto/magnet
    auto/modules
+   manual/theory_links
 
 
 Indices and tables
