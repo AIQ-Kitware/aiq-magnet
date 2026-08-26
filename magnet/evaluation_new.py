@@ -396,6 +396,30 @@ class NewEvaluationRecipe(EvaluationCard):
         _check_new_evaluation_recipe(self)
 
     @property
+    def queue_name(self) -> str:
+        """
+        Name for this card's execution queue.
+
+        cmd_queue's tmux backend decides which sessions are "this queue" by
+        matching on the queue name, so the name is a namespace. Left unset it
+        falls back to one constant for every card on the machine, and starting
+        one card reports an unrelated card's sessions as conflicts and offers
+        to kill them.
+
+        The card's own ``name`` is the namespace, which is why a recipe is
+        required to declare one. Two runs of the same card still share a name;
+        that is a real conflict and is meant to be reported as one.
+
+        Example:
+            >>> import magnet.evaluation_new as mod
+            >>> recipe = mod.NewEvaluationRecipe.__new__(mod.NewEvaluationRecipe)
+            >>> recipe.name = 'incubilate_lift'
+            >>> recipe.queue_name
+            'schedule-incubilate_lift'
+        """
+        return f'schedule-{self.name}'
+
+    @property
     def kwdagger_dpath(self) -> ub.Path:
         """Shared KWDagger result/artifact root, independent of the MAGNET run."""
         return self.output_path / '_kwdagger'
@@ -670,6 +694,12 @@ def evaluate_new_recipe(
     # Scheduling is one finite operational request. It may add new results to
     # the shared kwdagger store, reuse results that already exist, or leave
     # some requested work failed / pending.
+    #
+    # The queue is named after the card. cmd_queue's tmux backend matches
+    # sessions on this name to decide which ones belong to this queue, so an
+    # unnamed queue puts every card on the machine in one namespace. An
+    # explicit `queue_name` in schedule_options still wins.
+    schedule_options.setdefault('queue_name', recipe.queue_name)
     processor.schedule(**schedule_options)
     requested_runs = processor.inspect_requested_runs()
     requested_work = _summarize_requested_runs(requested_runs)
