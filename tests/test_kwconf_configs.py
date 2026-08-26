@@ -127,14 +127,35 @@ def test_new_evaluator_has_only_kwdagger_execution_controls():
 
 
 def test_new_evaluator_schedule_defaults_match_kwdagger():
+    """Forwarded options keep kwdagger's names and defaults.
+
+    ``tmux_workers`` is the deliberate exception; see the test below.
+    """
     from kwdagger.schedule import ScheduleEvaluationConfig
 
     magnet_cfg = NewEvaluationCLI()
     kwdagger_cfg = ScheduleEvaluationConfig()
-    for key in [
-        'backend', 'tmux_workers', 'skip_existing', 'cache', 'max_configs'
-    ]:
+    for key in ['backend', 'skip_existing', 'cache', 'max_configs']:
         assert magnet_cfg[key] == kwdagger_cfg[key]
+
+
+def test_tmux_workers_defaults_to_auto_rather_than_kwdaggers_literal():
+    """The one place MAGNET overrides a kwdagger scheduling default.
+
+    kwdagger defaults to a plain 8, which knows nothing about GPUs and
+    deadlocks a 4-GPU host running a cohort with a shared extractor. MAGNET
+    can bound it, because it knows leased nodes hold a model while waiting for
+    another one.
+    """
+    from kwdagger.schedule import ScheduleEvaluationConfig
+
+    from magnet.evaluation_new import DEFAULT_TMUX_WORKERS, resolve_tmux_workers
+
+    assert NewEvaluationCLI()['tmux_workers'] == 'auto'
+    # The fallback when there is no GPU to derive from is still kwdagger's.
+    assert ScheduleEvaluationConfig()['tmux_workers'] == DEFAULT_TMUX_WORKERS
+    # Whatever `auto` resolves to on this machine, kwdagger receives an int.
+    assert isinstance(resolve_tmux_workers('auto'), int)
 
 
 def test_legacy_evaluator_surface_is_still_present():
