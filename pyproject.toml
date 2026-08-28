@@ -21,6 +21,9 @@ dependencies = [
   "dacite>=1.9.2",
   "fsspec>=2024.9",
   "h5py>=3.14",
+  # Invoked as the `infer-stack` CLI by magnet.leasing, never imported -- it is
+  # declared so the executable is present in the same environment as magnet.
+  "infer-stack>=0.7.0",
   "kwarray>=0.7.1",
   "kwdagger>=0.4.0",
   "kwutil>=0.3.8",
