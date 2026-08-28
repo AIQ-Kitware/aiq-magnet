@@ -21,6 +21,8 @@ from rich import print
 
 from magnet.utils.util_logger import setup_logging
 from magnet.schema import EvaluationCardSchema, MetricObjective
+
+from magnet.theory.cards import report_from_card
 from magnet._kwdagger import GenericPipelineProcessor, KWDaggerProcessor
 from magnet.exceptions import SymbolResolutionError
 
@@ -183,6 +185,8 @@ class EvaluationCard:
 
         self.original_card = cfg
         self.output_path = ub.Path(output_path)
+        # Theory paths in a card are relative to the card.
+        self.card_dpath = ub.Path(path).parent
 
         self.title = cfg.get('title', '')
         self.description = cfg.get('description', '')
@@ -267,6 +271,13 @@ class EvaluationCard:
         │   │           └── kwdagger
         │   │           └── results
         """
+        # Resolve all static theory references before any empirical work runs.
+        # A broken source annotation or theory index should fail before an
+        # expensive evaluation starts.
+        theory_report = report_from_card(
+            self.original_card, root=self.card_dpath
+        )
+
         results = []
 
         card_output_path = self.output_path / self._run_hash
@@ -401,6 +412,9 @@ class EvaluationCard:
         ) as f:
             json.dump(aggregate_verdict, f, indent=2, ensure_ascii=False)
             f.write('\n')
+
+        if theory_report is not None:
+            theory_report.write(card_output_path / 'theory.json')
 
         self.claim.status = card_result
         return card_result
@@ -943,8 +957,9 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
             with open(args.path, 'r') as f:
                 cfg = yaml.safe_load(f)
             EvaluationCardSchema.model_validate(cfg)
+            report_from_card(cfg, root=ub.Path(args.path).parent)
             print('Card validation succeeded.')
-        except ValidationError as e:
+        except (ValidationError, ValueError, SyntaxError) as e:
             print('Card validation failed.')
             print(e)
             sys.exit(1)

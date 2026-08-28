@@ -1,0 +1,82 @@
+title: "Enumerated coin flips match the binomial law"
+
+description: |
+  Theory says exactly what should happen, and the experiment checks it.
+
+  Enumerating all 2^n sequences of n fair flips gives the probability of each
+  head count. The binomial law states the same quantity in closed form. The
+  two agree exactly, with no sampling and no tolerance, so the deviation is
+  zero rather than small.
+
+  This is what `theory.tests` means: the theoretical object predicts the
+  outcome, and the code confirms it.
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - theory
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+
+# Under the kwdagger work, when it lands: one job per flip count, one verdict
+# each, and the enumeration cached so a re-run does not redo it. The pipeline
+# can be inline, so the whole port is this block.
+#
+#   kwdagger:
+#     pipeline:
+#       nodes:
+#         enumerate:
+#           executable: 'python -m magnet.examples.theory_links.coin_flip.experiment'
+#           out_paths: {out_fpath: 'coin_flip.json'}
+#           primary_out_key: out_fpath
+#           algo_params:
+#             n_flips: 10
+#     result_node: enumerate
+#     matrix:
+#       enumerate.n_flips: [8, 10, 12, 14]
+#
+#   evidence:
+#     - measures: metrics.enumerate.deviation
+#       relation: {eq: 0}
+#       scope: "every head count, exact rational arithmetic"
+#
+# The theory block below does not change: the annotation stays in the code the
+# node runs, and the link is read from source either way.
+
+# The statement is proved in CoinFlip.lean beside this file.
+theory:
+  empirical_sources:
+    - experiment.py
+  indexes:
+    - theory.yaml
+
+claim:
+  python: |
+    assert deviation == 0, (
+        f"enumeration departs from the binomial law by {deviation}"
+    )
+
+symbols:
+  n_flips:
+    type: int
+    value: 10
+
+  deviation:
+    type: float
+    depends_on:
+      - n_flips
+    python: |
+      from fractions import Fraction
+      from magnet.examples.theory_links.coin_flip.experiment import max_absolute_deviation
+      deviation = float(max_absolute_deviation(n_flips))

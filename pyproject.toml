@@ -72,7 +72,17 @@ dynamic.readme.file = [
 ]
 dynamic.readme.content-type = "text/markdown"
 dynamic.version.attr = "magnet.__version__"
-package-data.magnet = [ "cards/*.yaml", "examples/llama_consistency/*.yaml", "examples/llama_consistency/*.md" ]
+# Each example ships the non-Python files its card reads at evaluation time.
+# The theory examples are a card, its code, its index and its Lean statement
+# in one directory, so all of them have to ship; the llama example is its
+# recipe and the README that walks through it.
+package-data.magnet = [
+  "cards/*.yaml",
+  "examples/llama_consistency/*.yaml",
+  "examples/llama_consistency/*.md",
+  "examples/theory_links/*/*.yaml",
+  "examples/theory_links/*/*.lean",
+]
 packages.find.namespaces = true
 packages.find.include = [ "magnet*" ]
 
