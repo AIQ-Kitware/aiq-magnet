@@ -18,6 +18,8 @@ that a claim is false.
 from __future__ import annotations
 
 import json
+import re
+import warnings
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
@@ -42,12 +44,13 @@ from magnet.evaluation import (
     _parse_symbol_metadata,
     _reduce_results,
 )
-from magnet.schema import NewEvaluationRecipeSchema
+from magnet.schema import RECIPE_NAME_PATTERN, NewEvaluationRecipeSchema
 from magnet.theory.cards import report_from_card
 from magnet.utils.util_logger import setup_logging
 
 __all__ = [
     'ClaimResultNamespace',
+    'derive_recipe_name',
     'NewEvaluationCLI',
     'NewEvaluationCellResult',
     'NewEvaluationRecipe',
@@ -567,6 +570,8 @@ class NewEvaluationRecipe(EvaluationCard):
         self, path, output_path: str | ub.Path, validate: str = 'error'
     ) -> None:
         super().__init__(path, output_path, validate='off')
+        #: Short machine identifier for this card, distinct from ``title``.
+        self.name = self.original_card.get('name') or derive_recipe_name(path)
         _check_new_evaluation_recipe(self)
 
         if validate in ('error', 'warning'):
@@ -818,6 +823,45 @@ def _link_kwdagger_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) ->
         logger.warning(f'could not link {link} to the DAG root: {ex}')
 
 
+def derive_recipe_name(path) -> str:
+    """
+    A recipe's name when the card does not declare one.
+
+    Args:
+        path: the card's path.
+
+    Returns:
+        str: ``<parent directory>_<filename stem>``.
+
+    The parent is included because ``card.yaml`` is a common filename -- three
+    ship in this repository -- and the stem alone would give every one of them
+    the same name, which is the cross-card collision that naming the queue
+    exists to prevent.
+
+    Example:
+        >>> from magnet.evaluation_new import derive_recipe_name
+        >>> derive_recipe_name('examples/theory_links/coin_flip/card.yaml')
+        'coin_flip_card'
+        >>> derive_recipe_name('cards/oc_lift.yaml')
+        'cards_oc_lift'
+    """
+    fpath = ub.Path(path).absolute()
+    derived = f'{fpath.parent.name}_{fpath.stem}'
+    if not re.match(RECIPE_NAME_PATTERN, derived):
+        raise ValueError(
+            f'cannot derive a recipe name from {fpath.name!r}: {derived!r} is '
+            f'not a usable identifier ({RECIPE_NAME_PATTERN}). Declare a '
+            '`name` in the card.'
+        )
+    warnings.warn(
+        f'card declares no `name`; using {derived!r}, derived from its path. '
+        'Declare a `name` so it stays stable when the file moves.',
+        UserWarning,
+        stacklevel=3,
+    )
+    return derived
+
+
 def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
     """Enforce the execution boundary of the replacement evaluator."""
     if not recipe.has_kwdagger:
@@ -835,6 +879,13 @@ def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
             'evaluate_new does not combine `kwdagger:` with the legacy '
             '`pipeline:` executor. Remove the legacy block or use '
             '`magnet evaluate_legacy`.'
+        )
+    if not re.match(RECIPE_NAME_PATTERN, recipe.name or ''):
+        raise ValueError(
+            f'recipe `name` {recipe.name!r} must match {RECIPE_NAME_PATTERN}. '
+            'It is used as a tmux session name and a path component, so it is '
+            'restricted to letters, digits, underscore and hyphen. Put the '
+            'readable version in `title`.'
         )
     if not recipe.kwdagger.get('result_node'):
         raise ValueError(

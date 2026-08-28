@@ -49,6 +49,7 @@ def card_factory(tmp_path):
 
     def make(seeds):
         card = {
+            'name': 'doubling',
             'title': 'Doubling',
             'description': 'Doubling a seed doubles it',
             'version': '1.0',
