@@ -603,6 +603,28 @@ class NewEvaluationRecipe(EvaluationCard):
         _check_new_evaluation_recipe(self)
 
     @property
+    def queue_name(self) -> str:
+        """
+        Name for this card's execution queue.
+
+        cmd_queue's tmux backend decides which sessions are "this queue" by
+        matching on the name, so it is a namespace. Unset, every card on the
+        machine shares one: starting an Incubilate run reported a Princeton
+        run's sessions as conflicts and offered to kill them.
+
+        Two runs of the same card still share a name. That one is a real
+        conflict and is meant to be reported.
+
+        Example:
+            >>> import magnet.evaluation_new as mod
+            >>> recipe = mod.NewEvaluationRecipe.__new__(mod.NewEvaluationRecipe)
+            >>> recipe.name = 'incubilate_lift'
+            >>> recipe.queue_name
+            'schedule-incubilate_lift'
+        """
+        return f'schedule-{self.name}'
+
+    @property
     def kwdagger_dpath(self) -> ub.Path:
         """Shared KWDagger result/artifact root, independent of the MAGNET run."""
         return self.output_path / '_kwdagger'
@@ -956,6 +978,8 @@ def evaluate_new_recipe(
     # Scheduling is one finite operational request. It may add new results to
     # the shared kwdagger store, reuse results that already exist, or leave
     # some requested work failed / pending.
+    # An explicit queue_name from the caller still wins.
+    schedule_options.setdefault('queue_name', recipe.queue_name)
     dry_run = bool(schedule_options.get('dry_run', False))
     processor.schedule(**schedule_options)
     requested_runs = processor.inspect_requested_runs()
