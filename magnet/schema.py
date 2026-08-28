@@ -1,7 +1,8 @@
 from enum import StrEnum
-from typing import Any, Literal, Optional
-from pydantic import AliasChoices, BaseModel, Field, model_validator
-from pydantic import ConfigDict
+from typing import Any, Literal
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+
 
 class LinkSchema(BaseModel):
     title: str
@@ -99,9 +100,11 @@ class SymbolSchema(BaseModel):
             and self.sweep is None
             and self.python is None
         ):
-            if self.metadata is not None and self.metadata.define_metric is not None:
-                # Handle metric definitions in kwdagger/pipeline cards
-                # (i.e. ignore test for symbols defined/calculated in user script)
+            if self.metadata is not None:
+                # A declaration-only symbol: the pipeline produced the value
+                # and this entry supplies the metadata the artifact cannot
+                # carry. Its name is the evidence column it describes, so
+                # there is nothing for the recipe to resolve.
                 return self
             else:
                 raise ValueError(

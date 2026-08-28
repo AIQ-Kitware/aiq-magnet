@@ -6,6 +6,7 @@ import textwrap
 import pytest
 import ubelt as ub
 import yaml
+from pydantic import ValidationError
 
 import magnet.evaluation_new as evaluation_new
 from magnet.evaluation import main as legacy_main
@@ -129,13 +130,11 @@ def test_declared_symbol_metadata_reaches_the_dashboard_contract(
     A kwdagger recipe declares metric symbols without computing them: the
     pipeline produced the value, and the declaration supplies the name,
     display flag, and metric definition the dashboard and the BAA metric
-    report need. `symbol_metadata.json` must come out with the same shape the
-    legacy evaluator writes.
+    report need. Each symbol is named for the evidence column it describes.
     """
     data = yaml.safe_load(ub.Path(kwdagger_recipe_fpath).read_text())
     data['symbols'] = {
-        'score': {
-            'type': 'float',
+        'metrics.emit.score': {
             'metadata': {
                 'display_name': 'Average Exact Match',
                 'display': True,
@@ -145,8 +144,7 @@ def test_declared_symbol_metadata_reaches_the_dashboard_contract(
                 },
             },
         },
-        'seed': {
-            'type': 'int',
+        'params.emit.seed': {
             'metadata': {'display_name': 'Seed', 'display': True},
         },
     }
@@ -161,7 +159,7 @@ def test_declared_symbol_metadata_reaches_the_dashboard_contract(
     written = sorted(output_path.glob('*/symbol_metadata.json'))
     assert len(written) == 1
     assert json.loads(written[0].read_text()) == {
-        'score': {
+        'metrics.emit.score': {
             'display_name': 'Average Exact Match',
             'display': True,
             'define_metric': {
@@ -169,23 +167,57 @@ def test_declared_symbol_metadata_reaches_the_dashboard_contract(
                 'aggregation_strategy': {'type': 'mean'},
             },
         },
-        'seed': {'display_name': 'Seed', 'display': True},
+        'params.emit.seed': {'display_name': 'Seed', 'display': True},
     }
 
-    # `seed` carries display metadata only, so it names no metric. `score` is
-    # filled from `metrics.emit.score` on each evidence row and reduced across
-    # them under its declared display name.
+    # `params.emit.seed` carries display metadata only, so it names no metric.
+    # `metrics.emit.score` is filled from that column on each evidence row and
+    # reduced across them under its declared display name.
     assert set(result_card.metrics) == {'Average Exact Match'}
     assert result_card.metrics['Average Exact Match'] == pytest.approx(0.15)
     for cell in result_card.cell_results:
-        assert cell.symbols['score'] == cell.evidence_row['metrics.emit.score']
+        assert (cell.symbols['metrics.emit.score']
+                == cell.evidence_row['metrics.emit.score'])
+
+
+def test_a_qualified_symbol_names_exactly_one_evidence_column():
+    """
+    `seed` alone matches two columns holding different values. Naming the
+    column says which is meant, and the provenance flag is reachable only by
+    asking for it outright.
+    """
+    row = {
+        'metrics.emit.score': 0.1,
+        'params.emit.seed': 7,
+        'specified.params.emit.seed': 1,
+    }
+    filled, measured = evaluation_new._fill_declared_symbols(
+        {'params.emit.seed': {'metadata': {'display_name': 'Seed'}}}, row
+    )
+    assert measured == {'params.emit.seed'}
+    assert filled['params.emit.seed']['value'] == 7
+
+    filled, _ = evaluation_new._fill_declared_symbols(
+        {'specified.params.emit.seed': {'type': 'int'}}, row
+    )
+    assert filled['specified.params.emit.seed']['value'] == 1
+
+
+def test_unqualified_symbol_names_still_match_the_last_segment():
+    """Legacy cards name a bare symbol; that keeps resolving."""
+    row = {'metrics.emit.score': 0.1, 'params.emit.seed': 7}
+    filled, measured = evaluation_new._fill_declared_symbols(
+        {'score': {'type': 'float'}}, row
+    )
+    assert measured == {'score'}
+    assert filled['score']['value'] == 0.1
 
 
 def test_declared_symbols_ignore_kwdagger_provenance_flags():
     """
     `specified.params.<node>.<param>` is kwdagger's "was requested" flag and
-    is always 1. Matching a declared symbol on the last dotted segment must
-    not let that flag stand in for the parameter's value.
+    is always 1. Matching a bare symbol on the last dotted segment must not
+    let that flag stand in for the parameter's value.
     """
     row = {
         'specified.params.emit.seed': 1,
@@ -197,6 +229,21 @@ def test_declared_symbols_ignore_kwdagger_provenance_flags():
     )
     assert measured == {'seed'}
     assert filled['seed']['value'] == 7
+
+
+def test_a_declaration_only_symbol_needs_no_resolution(tmp_path):
+    """
+    A symbol that only labels a pipeline output has nothing to resolve, so
+    the schema must not demand a `value`, `sweep`, or `python` from it --
+    with or without a metric definition.
+    """
+    from magnet.schema import SymbolSchema
+
+    SymbolSchema.model_validate(
+        {'metadata': {'display_name': 'HELM Data Path', 'display': True}}
+    )
+    with pytest.raises(ValidationError):
+        SymbolSchema.model_validate({})
 
 
 def test_new_recipe_rejects_legacy_symbol_sweeps(

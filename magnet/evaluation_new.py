@@ -519,31 +519,47 @@ PROVENANCE_ROW_PREFIXES = ('specified.',)
 def _fill_declared_symbols(
     symbols: Dict[str, Any], results: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], set[str]]:
-    """Fill unresolved declared symbols from same-named result leaves."""
+    """Fill unresolved declared symbols from the evidence row.
+
+    A symbol may name its evidence column outright --
+    ``metrics.llama_compare.base_score`` -- and that is the form the examples
+    use. The qualified name is kwdagger's own identity for the value, so the
+    declaration states exactly which column it describes instead of leaving
+    it to be guessed. Such a symbol is a label over a pipeline output, never
+    something the recipe computes, so the dotted name is only ever a
+    dictionary key: it is filled from the row and returned as a value, and
+    never reaches the ``exec`` that resolves a ``python:`` symbol.
+
+    A bare name is still accepted and matches on the last dotted segment,
+    which is what legacy cards carry.
+    """
     filled = set()
     out = {}
     for name, spec in symbols.items():
         spec = dict(spec)
         if not {'value', 'sweep', 'python'} & set(spec):
-            candidates = {
-                key: value
-                for key, value in results.items()
-                if key.rsplit('.', 1)[-1] == name
-                and not key.startswith(PROVENANCE_ROW_PREFIXES)
-            }
+            if name in results:
+                candidates = {name: results[name]}
+            else:
+                candidates = {
+                    key: value
+                    for key, value in results.items()
+                    if key.rsplit('.', 1)[-1] == name
+                    and not key.startswith(PROVENANCE_ROW_PREFIXES)
+                }
             if candidates:
-                # One name can appear under several namespaces -- the same
-                # quantity reported by two nodes, or a parameter echoed into
-                # `params` and `resolved_params`. Agreeing duplicates are
+                # One bare name can appear under several namespaces -- the
+                # same quantity reported by two nodes, or a parameter echoed
+                # into `params` and `resolved_params`. Agreeing duplicates are
                 # fine; disagreeing ones make the fill depend on row order,
                 # which is not something a card should silently rest on.
                 chosen = next(iter(candidates))
                 distinct = {repr(value) for value in candidates.values()}
                 if len(distinct) > 1:
                     logger.warning(
-                        f'symbol {name!r} matches evidence leaves that '
-                        f'disagree: {sorted(candidates)}. '
-                        f'Using {chosen!r}.'
+                        f'symbol {name!r} matches evidence columns that '
+                        f'disagree: {sorted(candidates)}. Using {chosen!r}. '
+                        'Name the column outright to say which one is meant.'
                     )
                 spec['value'] = candidates[chosen]
                 filled.add(name)

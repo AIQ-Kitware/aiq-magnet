@@ -42,18 +42,25 @@ evidence:
 
 # Symbol metadata for the visualization dashboard and for BAA metric
 # identification. A kwdagger recipe does not compute these values -- the
-# pipeline already did -- so each symbol is declared without `value`, `sweep`,
-# or `python` and is filled from the same-named leaf of the evidence row
-# (here `metrics.llama_compare.base_score` and
-# `metrics.llama_predict.helm_runs_path`). The declaration carries what the
-# artifact cannot: what the number is called and whether it defines a metric.
+# pipeline already did -- so each symbol is named for the evidence column it
+# describes and carries only what the artifact cannot: what the number is
+# called and whether it defines a metric.
+#
+# Name the column outright. KWDagger aggregate qualifies every column by
+# namespace and node, and those names are its own identity for the value, so
+# `metrics.<node>.<field>` says which node's metric this is and
+# `resolved_params.<node>.<param>` says this is the value that node actually
+# ran with, not merely the one requested. A bare `base_score` would also
+# resolve, by matching the last dotted segment, but it cannot distinguish the
+# two nodes reporting that field, and a bare `helm_runs_path` matches columns
+# in three namespaces holding two different values.
 #
 # `aggregation_strategy` reduces across the recipe's evidence rows -- the 36
 # model-pair cells below. Reduction *within* a run belongs to a kwdagger
 # fan-in node, which reports its aggregate as a single node output for a
 # symbol like this one to read off.
 symbols:
-  base_score:
+  metrics.llama_compare.base_score:
     metadata:
       display_name: "Average Exact Match"
       display: True
@@ -61,14 +68,11 @@ symbols:
         objective: maximize
         aggregation_strategy:
           type: 'mean'
-    type: float
 
-  helm_runs_path:
+  resolved_params.llama_predict.helm_runs_path:
     metadata:
       display_name: "HELM Data Path"
       display: True
-    type: str
-
 
 kwdagger:
   # MAGNET asks KWDagger aggregate for every available result row from this

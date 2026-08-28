@@ -73,7 +73,7 @@ def test_llama_card(
         written = sorted(ub.Path(results_path).glob('*/symbol_metadata.json'))
         assert len(written) == 1
         assert json.loads(written[0].read_text()) == {
-            'base_score': {
+            'metrics.llama_compare.base_score': {
                 'display_name': 'Average Exact Match',
                 'display': True,
                 'define_metric': {
@@ -81,7 +81,7 @@ def test_llama_card(
                     'aggregation_strategy': {'type': 'mean'},
                 },
             },
-            'helm_runs_path': {
+            'resolved_params.llama_predict.helm_runs_path': {
                 'display_name': 'HELM Data Path',
                 'display': True,
             },
