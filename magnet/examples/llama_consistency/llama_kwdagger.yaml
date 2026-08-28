@@ -1,5 +1,6 @@
 # Preliminary Working Evaluation Recipe Example
 
+name: llama_consistency
 title: "In-domain Model Consistency for Llama Family"
 description: |
   Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family

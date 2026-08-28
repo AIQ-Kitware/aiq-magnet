@@ -14,6 +14,7 @@ from magnet.evaluation_new import NewEvaluationRecipe
 
 def _write_card(dpath, pipeline):
     card = {
+        'name': 'doubling',
         'title': 'Doubling',
         'description': 'Doubling a seed doubles it',
         'version': '1.0',

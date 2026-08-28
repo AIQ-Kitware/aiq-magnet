@@ -281,9 +281,40 @@ class NewEvaluationKWDaggerSchema(KWDaggerSchema):
     result_node: str
 
 
-class NewEvaluationRecipeSchema(EvaluationCardSchema):
-    """Schema for a recipe consumed by ``magnet evaluate_new``."""
+#: A recipe `name` is used as an identifier -- a tmux session name, a path
+#: component -- so it is restricted to what those accept. A dot or colon would
+#: be read as structure by tmux rather than as part of the name.
+RECIPE_NAME_PATTERN = r'^[A-Za-z0-9_-]+$'
 
+
+class NewEvaluationRecipeSchema(EvaluationCardSchema):
+    """
+    Schema for a recipe consumed by ``magnet evaluate_new``.
+
+    ``name`` is a short machine identifier for the card, distinct from its
+    prose ``title``. Optional here and derived from the filename when absent
+    (see :func:`magnet.evaluation_new.derive_recipe_name`), but validated when
+    given.
+
+    Example:
+        >>> from magnet.schema import NewEvaluationRecipeSchema
+        >>> raw = {
+        ...     'title': 'Held-out model consistency',
+        ...     'description': 'd',
+        ...     'version': 1.0,
+        ...     'organizations': ['Kitware'],
+        ...     'submitter': {'name': 'K', 'email': 'k@example.com'},
+        ...     'tags': [],
+        ...     'links': [],
+        ...     'claim': {'python': 'assert True'},
+        ...     'kwdagger': {'pipeline': {}, 'result_node': 'score'},
+        ... }
+        >>> NewEvaluationRecipeSchema.model_validate(
+        ...     dict(raw, name='held_out_model')).name
+        'held_out_model'
+    """
+
+    name: str | None = Field(default=None, pattern=RECIPE_NAME_PATTERN)
     kwdagger: NewEvaluationKWDaggerSchema
     pipeline: None = None
     evidence: EvidenceSchema = Field(default_factory=EvidenceSchema)
