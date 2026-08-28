@@ -1,6 +1,8 @@
+import json
 from importlib.resources import files
 
 import pytest
+import ubelt as ub
 
 from magnet.demo.helm_demodata import ensure_helm_llama_fixture_outputs
 from magnet.evaluation import EvaluationCard
@@ -66,6 +68,25 @@ def test_llama_card(
     if use_new_evaluator:
         assert card.evaluate(backend='serial').result == 'FALSIFIED'
         assert len(card.result_card.cell_results) == expected_cells
+        # The kwdagger recipe declares the same symbol metadata the legacy
+        # card does, so the dashboard contract is identical on both routes.
+        written = sorted(ub.Path(results_path).glob('*/symbol_metadata.json'))
+        assert len(written) == 1
+        assert json.loads(written[0].read_text()) == {
+            'base_score': {
+                'display_name': 'Average Exact Match',
+                'display': True,
+                'define_metric': {
+                    'objective': 'maximize',
+                    'aggregation_strategy': {'type': 'mean'},
+                },
+            },
+            'helm_runs_path': {
+                'display_name': 'HELM Data Path',
+                'display': True,
+            },
+        }
+        assert 'Average Exact Match' in card.result_card.metrics
     else:
         assert card.evaluate() == 'FALSIFIED'
         assert len(card.evaluations) == expected_cells

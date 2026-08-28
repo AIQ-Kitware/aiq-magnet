@@ -1,4 +1,5 @@
 """Tests for the replacement kwdagger-native evaluation API."""
+import json
 import sys
 import textwrap
 
@@ -120,6 +121,82 @@ def test_cli_main_returns_an_exit_status_not_a_result_card(
         recipe.evaluate(backend='serial', max_configs=1),
         NewEvaluationResultCard,
     )
+
+
+def test_declared_symbol_metadata_reaches_the_dashboard_contract(
+        kwdagger_recipe_fpath, tmp_path):
+    """
+    A kwdagger recipe declares metric symbols without computing them: the
+    pipeline produced the value, and the declaration supplies the name,
+    display flag, and metric definition the dashboard and the BAA metric
+    report need. `symbol_metadata.json` must come out with the same shape the
+    legacy evaluator writes.
+    """
+    data = yaml.safe_load(ub.Path(kwdagger_recipe_fpath).read_text())
+    data['symbols'] = {
+        'score': {
+            'type': 'float',
+            'metadata': {
+                'display_name': 'Average Exact Match',
+                'display': True,
+                'define_metric': {
+                    'objective': 'maximize',
+                    'aggregation_strategy': {'type': 'mean'},
+                },
+            },
+        },
+        'seed': {
+            'type': 'int',
+            'metadata': {'display_name': 'Seed', 'display': True},
+        },
+    }
+    ub.Path(kwdagger_recipe_fpath).write_text(
+        yaml.safe_dump(data, sort_keys=False)
+    )
+
+    output_path = ub.Path(tmp_path) / 'out'
+    recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    result_card = recipe.evaluate(backend='serial')
+
+    written = sorted(output_path.glob('*/symbol_metadata.json'))
+    assert len(written) == 1
+    assert json.loads(written[0].read_text()) == {
+        'score': {
+            'display_name': 'Average Exact Match',
+            'display': True,
+            'define_metric': {
+                'objective': 'maximize',
+                'aggregation_strategy': {'type': 'mean'},
+            },
+        },
+        'seed': {'display_name': 'Seed', 'display': True},
+    }
+
+    # `seed` carries display metadata only, so it names no metric. `score` is
+    # filled from `metrics.emit.score` on each evidence row and reduced across
+    # them under its declared display name.
+    assert set(result_card.metrics) == {'Average Exact Match'}
+    assert result_card.metrics['Average Exact Match'] == pytest.approx(0.15)
+    for cell in result_card.cell_results:
+        assert cell.symbols['score'] == cell.evidence_row['metrics.emit.score']
+
+
+def test_declared_symbols_ignore_kwdagger_provenance_flags():
+    """
+    `specified.params.<node>.<param>` is kwdagger's "was requested" flag and
+    is always 1. Matching a declared symbol on the last dotted segment must
+    not let that flag stand in for the parameter's value.
+    """
+    row = {
+        'specified.params.emit.seed': 1,
+        'params.emit.seed': 7,
+        'metrics.emit.score': 0.1,
+    }
+    filled, measured = evaluation_new._fill_declared_symbols(
+        {'seed': {'type': 'int'}}, row
+    )
+    assert measured == {'seed'}
+    assert filled['seed']['value'] == 7
 
 
 def test_new_recipe_rejects_legacy_symbol_sweeps(

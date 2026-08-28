@@ -510,6 +510,12 @@ def _deep_merge(base: Any, update: Any) -> Any:
     return merged
 
 
+#: Evidence-row namespaces that record provenance rather than a value.
+#: `specified.params.<node>.<param>` is kwdagger's "this param was requested"
+#: flag and is always ``1``, so it must never fill a declared symbol.
+PROVENANCE_ROW_PREFIXES = ('specified.',)
+
+
 def _fill_declared_symbols(
     symbols: Dict[str, Any], results: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], set[str]]:
@@ -519,11 +525,28 @@ def _fill_declared_symbols(
     for name, spec in symbols.items():
         spec = dict(spec)
         if not {'value', 'sweep', 'python'} & set(spec):
-            for key, value in results.items():
-                if key.rsplit('.', 1)[-1] == name:
-                    spec['value'] = value
-                    filled.add(name)
-                    break
+            candidates = {
+                key: value
+                for key, value in results.items()
+                if key.rsplit('.', 1)[-1] == name
+                and not key.startswith(PROVENANCE_ROW_PREFIXES)
+            }
+            if candidates:
+                # One name can appear under several namespaces -- the same
+                # quantity reported by two nodes, or a parameter echoed into
+                # `params` and `resolved_params`. Agreeing duplicates are
+                # fine; disagreeing ones make the fill depend on row order,
+                # which is not something a card should silently rest on.
+                chosen = next(iter(candidates))
+                distinct = {repr(value) for value in candidates.values()}
+                if len(distinct) > 1:
+                    logger.warning(
+                        f'symbol {name!r} matches evidence leaves that '
+                        f'disagree: {sorted(candidates)}. '
+                        f'Using {chosen!r}.'
+                    )
+                spec['value'] = candidates[chosen]
+                filled.add(name)
         out[name] = spec
     return out, filled
 
