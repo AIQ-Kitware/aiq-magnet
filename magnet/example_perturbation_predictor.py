@@ -14,7 +14,8 @@ class ExamplePerturbationPredictor(RunPredictor):
     Example:
         >>> from magnet.example_perturbation_predictor import *  # NOQA
         >>> import magnet
-        >>> outputs = magnet.HelmOutputs.demo(run_entries=["boolq:data_augmentation=misspelling_sweep,model=openai/gpt2"], max_eval_instances=20)
+        >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)
+        >>> outputs = magnet.HelmOutputs.demo(method='compute', run_entries=["boolq:data_augmentation=misspelling_sweep,model=openai/gpt2"], max_eval_instances=20)
         >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExamplePerturbationPredictor(num_eval_samples=5)
         >>> predictor_instance(helm_suites=suite_path)
