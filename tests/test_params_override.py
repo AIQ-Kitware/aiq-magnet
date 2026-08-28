@@ -6,6 +6,7 @@ recipe can run against models it does not name rather than being forked per
 matrix variation.
 """
 
+import json
 import textwrap
 
 import pytest
@@ -110,14 +111,19 @@ def test_a_different_grid_is_a_different_run(recipe_fpath, tmp_path):
 
 def test_params_reaches_the_cli(recipe_fpath, tmp_path):
     output_path = ub.Path(tmp_path) / 'out'
-    result_card = NewEvaluationCLI.main(argv=[
+    # The CLI returns an exit status, not the card, so read the run record it
+    # wrote. See test_evaluation_new.py for why main must not return the card.
+    NewEvaluationCLI.main(argv=[
         str(recipe_fpath),
         '--output_path', str(output_path),
         '--params', 'matrix: {emit.seed: [7]}',
         '--backend', 'serial',
     ])
 
-    assert result_card is not None
-    assert _scores(result_card) == [0.7]
+    cells = sorted(output_path.glob('*/results/*/verdict.json'))
+    assert sorted(
+        json.loads(cell.read_text())['evidence']['metrics.emit.score']
+        for cell in cells
+    ) == [0.7]
     artifacts = sorted((output_path / '_kwdagger' / 'emit').glob('*/results.json'))
     assert len(artifacts) == 1

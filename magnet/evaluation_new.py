@@ -143,9 +143,19 @@ class NewEvaluationCLI(kwconf.Config):
     )
 
     @classmethod
-    def main(
-        cls, argv: list[str] | None = None, **kwargs: Any
-    ) -> NewEvaluationResultCard | None:
+    def main(cls, argv: list[str] | None = None, **kwargs: Any) -> None:
+        """
+        Run one evaluation as a process.
+
+        Returns nothing on purpose. A CLI ``main`` return value is a process
+        exit status: ``kwconf.ModalCLI.main`` hands it to the console script,
+        which calls ``sys.exit`` on it, and ``sys.exit`` of a non-integer
+        prints that object and exits 1. Returning the result card made every
+        successful ``magnet evaluate_new`` dump the card and report failure.
+        Callers that want the card use the library API --
+        :meth:`NewEvaluationRecipe.evaluate` or :func:`evaluate_new_recipe` --
+        or read ``verdict.json`` from the run directory.
+        """
         args = cls.cli(
             argv=argv,
             data=kwargs,
@@ -183,12 +193,11 @@ class NewEvaluationCLI(kwconf.Config):
                 'max_configs',
             ]
         }
-        result_card = recipe.evaluate(
+        recipe.evaluate(
             verbose=bool(args.verbose),
             **schedule_options,
         )
         recipe.summarize()
-        return result_card
 
 
 class ClaimResultNamespace:

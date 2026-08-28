@@ -14,7 +14,6 @@ from magnet.evaluation_new import (
     NewEvaluationResultCard,
 )
 
-
 SCRIPT = """
 import json, pathlib, sys
 args = dict(a.lstrip('-').split('=', 1) for a in sys.argv[1:])
@@ -77,7 +76,7 @@ def test_new_cli_passes_execution_config_directly(
     monkeypatch.setenv('MAGNET_TMUX_WORKERS', '999')
 
     output_path = ub.Path(tmp_path) / 'out'
-    result_card = NewEvaluationCLI.main(argv=[
+    NewEvaluationCLI.main(argv=[
         str(kwdagger_recipe_fpath),
         '--output_path', str(output_path),
         '--params', 'matrix: {emit.seed: [7]}',
@@ -87,11 +86,40 @@ def test_new_cli_passes_execution_config_directly(
         '--max_configs=1',
     ])
 
-    assert isinstance(result_card, NewEvaluationResultCard)
     artifacts = sorted(
         (output_path / '_kwdagger' / 'emit').glob('*/results.json')
     )
     assert len(artifacts) == 1
+
+
+def test_cli_main_returns_an_exit_status_not_a_result_card(
+        kwdagger_recipe_fpath, tmp_path):
+    """
+    The console script is `sys.exit(MagnetCLI.main())`. `sys.exit` of a
+    non-integer prints that object and exits 1, so a `main` that returned the
+    result card made every successful run dump the card and report failure.
+    """
+    argv = [
+        'evaluate_new',
+        str(kwdagger_recipe_fpath),
+        '--output_path', str(ub.Path(tmp_path) / 'out'),
+        '--backend', 'serial',
+        '--max_configs=1',
+    ]
+    from magnet.cli.main import MagnetCLI
+
+    assert NewEvaluationCLI.main(argv=argv[1:]) is None
+    status = MagnetCLI.main(argv=argv)
+    assert isinstance(status, int) and status == 0
+
+    # The card is still available from the library API and on disk.
+    recipe = NewEvaluationRecipe(
+        kwdagger_recipe_fpath, ub.Path(tmp_path) / 'lib', validate='off'
+    )
+    assert isinstance(
+        recipe.evaluate(backend='serial', max_configs=1),
+        NewEvaluationResultCard,
+    )
 
 
 def test_new_recipe_rejects_legacy_symbol_sweeps(
