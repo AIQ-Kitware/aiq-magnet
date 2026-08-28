@@ -12,7 +12,8 @@ class ExampleRandomPredictor(RunPredictor):
     Example:
         >>> from magnet.example_random_predictor import *  # NOQA
         >>> import magnet
-        >>> outputs = magnet.HelmOutputs.demo()
+        >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)
+        >>> outputs = magnet.HelmOutputs.demo(method='compute')
         >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
         >>> predictor_instance(helm_suites=suite_path)
