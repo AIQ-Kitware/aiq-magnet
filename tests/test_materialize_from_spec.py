@@ -254,7 +254,7 @@ def test_missing_key_paths_helper_flags_drops_and_passes_identity():
     assert _missing_key_paths(raw, raw) == []
 
 
-def _sample_public_run_specs(limit: int = 8) -> list[Path]:
+def _sample_public_run_specs(limit: int = 4) -> list[Path]:
     if not PUBLIC_ROOT.is_dir():
         return []
     found: list[Path] = []

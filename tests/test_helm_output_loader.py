@@ -1,18 +1,12 @@
-def _create_small_helm_output():
-    # Do we want a temp dir, or cache outputs for faster test rerun?
-    # import tempfile
-    # tempdir = tempfile.TemporaryDirectory(prefix='helm-output-test')
+def test_small_helm_output_fixture():
+    """The shared HELM loader fixture is local and contains real JSON shapes."""
+    from magnet.demo.helm_demodata import ensure_helm_fixture_outputs
 
-    import ubelt as ub
-
-    dpath = ub.Path.appdir('magnet/tests/helm_output').ensuredir()
-
-    res = ub.cmd(
-        'helm-run --run-entries mmlu:subject=philosophy,model=openai/gpt2 --suite my-suite --max-eval-instances 1 --num-threads 1',
-        cwd=dpath,
-        verbose=3,
-    )
-    res.check_returncode()
-
-    res = ub.cmd('helm-summarize --suite my-suite', cwd=dpath, verbose=3)
-    res.check_returncode()
+    dpath = ensure_helm_fixture_outputs(max_eval_instances=1)
+    suite = dpath / 'benchmark_output' / 'runs' / 'my-suite'
+    run_dpaths = sorted(p for p in suite.iterdir() if p.is_dir())
+    assert len(run_dpaths) == 4
+    for run_dpath in run_dpaths:
+        assert (run_dpath / 'run_spec.json').is_file()
+        assert (run_dpath / 'stats.json').is_file()
+        assert (run_dpath / 'scenario_state.json').is_file()

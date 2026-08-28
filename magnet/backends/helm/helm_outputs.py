@@ -39,7 +39,7 @@ class HelmOutputs(ub.NiceRepr):
 
     Example:
         >>> from magnet.backends.helm.helm_outputs import HelmOutputs
-        >>> self = HelmOutputs.demo()
+        >>> self = HelmOutputs.demo(method='fixture')
         >>> suite_names = [s.path.name for s in self.suites()]
         >>> run_names = self.list_run_specs(suite='*')
         >>> summary = self.summarize()
@@ -68,7 +68,7 @@ class HelmOutputs(ub.NiceRepr):
     Example:
         >>> # xdoctest: +REQUIRES(module:xdev)
         >>> from magnet.backends.helm.helm_outputs import HelmOutputs
-        >>> self = HelmOutputs.demo()
+        >>> self = HelmOutputs.demo(method='fixture')
         >>> self.write_directory_report()  # xdoctest: +IGNORE_WANT
         ╙── .../magnet/tests/helm_output/5be22292db3f/benchmark_output: txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179,.size=4.00 KB,.files=1,json.size=2.64 MB,json.files=88,tex.size=13.11 KB,tex.files=42
             ├─╼ scenarios: txt.size=10.08 KB,txt.files=2,csv.size=158.33 MB,csv.files=179
@@ -131,7 +131,7 @@ class HelmOutputs(ub.NiceRepr):
 
         Example:
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
-            >>> self = HelmOutputs.demo()
+            >>> self = HelmOutputs.demo(method='fixture')
             >>> assert HelmOutputs.coerce(self) is self, 'check inplace return'
             >>> assert HelmOutputs.coerce(self.root_dir).root_dir == self.root_dir, 'check path coerce'
             >>> assert HelmOutputs.coerce(self.root_dir / 'runs').root_dir == self.root_dir, 'check path coerce'
@@ -162,7 +162,7 @@ class HelmOutputs(ub.NiceRepr):
 
         Example:
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
-            >>> self = HelmOutputs.demo()
+            >>> self = HelmOutputs.demo(method='fixture')
             >>> root = self.root_dir.parent
             >>> result1 = HelmOutputs._coerce_input_path(root)
             >>> result2 = HelmOutputs._coerce_input_path(root / 'benchmark_output')
@@ -233,7 +233,9 @@ class HelmOutputs(ub.NiceRepr):
     @classmethod
     def demo(cls, method='compute', **kwargs) -> Self:
         import magnet
-        if method == 'compute':
+        if method == 'fixture':
+            dpath = magnet.demo.helm_demodata.ensure_helm_fixture_outputs(**kwargs)
+        elif method == 'compute':
             dpath = magnet.demo.helm_demodata.ensure_helm_demo_outputs(**kwargs)
         elif method == 'download':
             dpath = magnet.demo.helm_demodata.grab_helm_demo_outputs(**kwargs)
@@ -275,7 +277,7 @@ class HelmSuite(ub.NiceRepr):
 
     Example:
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
-        >>> root_dir = HelmOutputs.demo().root_dir
+        >>> root_dir = HelmOutputs.demo(method='fixture').root_dir
         >>> self = HelmSuite(root_dir / 'runs/my-suite')
         >>> print(self)
         <HelmSuite(my-suite)>
@@ -291,7 +293,7 @@ class HelmSuite(ub.NiceRepr):
 
     @classmethod
     def demo(cls) -> Self:
-        self = HelmOutputs.demo().suites()[0]
+        self = HelmOutputs.demo(method='fixture').suites()[0]
         return self
 
     @classmethod
@@ -409,7 +411,7 @@ class HelmSuites(ub.NiceRepr):
 
         Example:
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
-            >>> suites = HelmOutputs.demo().suites()
+            >>> suites = HelmOutputs.demo(method='fixture').suites()
             >>> paths = [s.path for s in suites]
             >>> self = HelmSuites.coerce(paths)
             >>> assert isinstance(self, HelmSuites)
@@ -418,7 +420,7 @@ class HelmSuites(ub.NiceRepr):
             >>> one = HelmSuites.coerce(suites[0])
             >>> assert len(one) == 1
             >>> # coerce from patterned paths
-            >>> root_dir = HelmOutputs.demo().root_dir
+            >>> root_dir = HelmOutputs.demo(method='fixture').root_dir
             >>> patterned = root_dir / 'runs' / '*'
             >>> from_pattern = HelmSuites.coerce(patterned)
             >>> assert len(from_pattern) >= 1
@@ -457,7 +459,7 @@ class HelmSuites(ub.NiceRepr):
 
         Example:
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
-            >>> root_dir = HelmOutputs.demo().root_dir
+            >>> root_dir = HelmOutputs.demo(method='fixture').root_dir
             >>> #
             >>> # Test coerce from suite-path-patterns
             >>> cases = [
@@ -510,7 +512,7 @@ class HelmSuites(ub.NiceRepr):
         """
         Construct a demo HelmSuites object using the demo HelmOutputs.
         """
-        outputs = HelmOutputs.demo()
+        outputs = HelmOutputs.demo(method='fixture')
         suite_paths = [s.path for s in outputs.suites()]
         self = cls(suite_paths)
         return self
@@ -632,7 +634,7 @@ class HelmRuns(ub.NiceRepr):
 
         Example:
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
-            >>> root_dir = HelmOutputs.demo().root_dir
+            >>> root_dir = HelmOutputs.demo(method='fixture').root_dir
             >>> #
             >>> # Test coerce from run-path-patterns
             >>> cases = [
@@ -675,7 +677,7 @@ class HelmRuns(ub.NiceRepr):
 
     @classmethod
     def demo(cls):
-        self = HelmOutputs.demo().suites()[0].runs()
+        self = HelmOutputs.demo(method='fixture').suites()[0].runs()
         return self
 
     def __getitem__(self, index) -> HelmSuiteRuns | HelmRun:
@@ -1257,7 +1259,7 @@ class HelmRun(ub.NiceRepr):
 
     @classmethod
     def demo(cls) -> Self:
-        suite = HelmOutputs.demo().suites()[0]
+        suite = HelmOutputs.demo(method='fixture').suites()[0]
         self = suite.runs()[-1]
         return self
 
