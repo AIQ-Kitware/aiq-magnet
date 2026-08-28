@@ -92,6 +92,76 @@ class ClaimAggregationStrategySchema(BaseModel):
             )
         return self
 
+class TheoryFormalizationSchema(BaseModel):
+    """Structured provenance for a formal theory source."""
+    system: str
+    repository: str | None = None
+    revision: str | None = None
+    model_config = {'extra': 'forbid'}
+
+    @model_validator(mode='after')
+    def pinned_repository(self) -> 'TheoryFormalizationSchema':
+        if self.repository and not self.revision:
+            raise ValueError('formalization.revision is required with repository')
+        return self
+
+
+class TheoryPremiseSchema(BaseModel):
+    """A named premise, normally a proposition-valued formal binder."""
+    id: str
+    type: str | None = None
+    statement: str | None = None
+    model_config = {'extra': 'forbid'}
+
+
+class TheoryEntrySchema(BaseModel):
+    """A theoretical object empirical code can point at."""
+    id: str
+    kind: Literal[
+        "theorem", "conjecture", "question", "definition"
+    ]
+    statement: str | None = None
+    declaration: str | None = None
+    formalization: TheoryFormalizationSchema | None = None
+    source_path: str | None = None
+    premises: list[TheoryPremiseSchema] = Field(default_factory=list)
+    model_config = {'extra': 'forbid'}
+
+    @model_validator(mode='after')
+    def has_identity(self) -> 'TheoryEntrySchema':
+        if not self.statement and not self.declaration:
+            raise ValueError("theory entry needs a statement or declaration")
+        if '::' in self.id:
+            raise ValueError("theory entry id may not contain '::'")
+        premise_ids = [premise.id for premise in self.premises]
+        if len(premise_ids) != len(set(premise_ids)):
+            raise ValueError('theory entry has duplicate premise ids')
+        return self
+
+
+class TheoryLinkSchema(BaseModel):
+    """A card-level relationship to a whole theoretical statement."""
+    relation: Literal["tests", "approximates", "motivates"]
+    ref: str
+    note: str | None = None
+    model_config = {'extra': 'forbid'}
+
+    @model_validator(mode='after')
+    def targets_statement(self) -> 'TheoryLinkSchema':
+        if '::' in self.ref:
+            raise ValueError('card-level theory links cannot target premises')
+        return self
+
+
+class TheorySchema(BaseModel):
+    """Static theory references and empirical source files for a card."""
+    links: list[TheoryLinkSchema] = Field(default_factory=list)
+    empirical_sources: list[str] = Field(default_factory=list)
+    entries: list[TheoryEntrySchema] = Field(default_factory=list)
+    indexes: list[str] = Field(default_factory=list)
+    model_config = {'extra': 'forbid'}
+
+
 class EvaluationCardSchema(BaseModel):
     """
     Schema for an Evaluation Card YAML.
@@ -147,6 +217,9 @@ class EvaluationCardSchema(BaseModel):
     # --- Evaluation configuration ---
     claim_aggregation_strategy: ClaimAggregationStrategySchema | None = None
     symbols: dict[str, SymbolSchema] | None = None
+
+    # --- how the code relates to a theoretical object (optional) ---
+    theory: TheorySchema | None = None
 
     # --- Backend (at most one) ---
     kwdagger: dict[str, Any] | None = None

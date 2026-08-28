@@ -1,0 +1,20 @@
+schema_version: 1
+entries:
+  - id: Examples.FibonacciPerformance.Why
+    kind: question
+    statement: >
+      Why does the naive recursive implementation take much longer than the
+      iterative implementation even though both compute the same Fibonacci
+      value?
+
+  - id: Examples.FibonacciPerformance.RecursiveCallGapAt28
+    kind: theorem
+    statement: >
+      At n = 28, the abstract call-count model for naive recursive Fibonacci
+      exceeds the iterative step-count model by more than a factor of 1000.
+      This explains a structural work gap without claiming a theorem about
+      Python wall-clock time.
+    declaration: MagnetExamples.FibonacciPerformance.recursiveCalls_28_costGap
+    formalization:
+      system: lean4
+    source_path: FibonacciCost.lean
