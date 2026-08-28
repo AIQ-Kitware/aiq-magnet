@@ -24,6 +24,7 @@ class HelmInferenceEngine:
 
     Example:
         >>> # xdoctest: +REQUIRES(--slow)
+        >>> # xdoctest: +REQUIRES(env:HELM_INFERENCE_AVAILABLE)
         >>> import magnet
         >>> from dataclasses import replace
         >>> self = magnet.HelmInferenceEngine()

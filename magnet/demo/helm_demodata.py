@@ -49,7 +49,18 @@ def _fixture_run_name(entry):
     return scenario_name + ':' + ','.join(rendered_args)
 
 
-def _build_fixture_run(run_dpath, entry, config, run_index):
+def _build_fixture_run(
+    run_dpath,
+    entry,
+    config,
+    run_index,
+    *,
+    num_stats=162,
+    num_per_instance_stats=27,
+    stat_split='valid',
+    primary_score=None,
+    include_perturbation_context=False,
+):
     """Write one compact, structurally real HELM run without executing HELM."""
     import dataclasses
     import json
@@ -57,6 +68,9 @@ def _build_fixture_run(run_dpath, entry, config, run_index):
     from helm.benchmark.adaptation.adapter_spec import AdapterSpec
     from helm.benchmark.adaptation.request_state import RequestState
     from helm.benchmark.adaptation.scenario_state import ScenarioState
+    from helm.benchmark.augmentations.perturbation_description import (
+        PerturbationDescription,
+    )
     from helm.benchmark.metrics.metric import MetricSpec, PerInstanceStats
     from helm.benchmark.metrics.metric_name import MetricName
     from helm.benchmark.metrics.statistic import Stat
@@ -96,7 +110,7 @@ def _build_fixture_run(run_dpath, entry, config, run_index):
         instance = Instance(
             input=Input(text=f'Fixture question {instance_index}'),
             references=[],
-            split='valid',
+            split=stat_split,
             id=f'id{instance_index}',
         )
         instances.append(instance)
@@ -123,22 +137,45 @@ def _build_fixture_run(run_dpath, entry, config, run_index):
         request_states=request_states,
     )
 
-    # Keep the historical demo cardinalities so existing dataframe and summary
-    # doctests continue exercising nontrivial collections without storing a
-    # large recorded HELM corpus in the repository.
     stats = []
-    for stat_index in range(162):
-        metric_name = 'exact_match' if stat_index == 0 else f'fixture_metric_{stat_index:03d}'
-        value = ((run_index + stat_index) % 10) / 10
-        stats.append(Stat(MetricName(metric_name, split='valid')).add(value))
+    for stat_index in range(num_stats):
+        if stat_index == 0:
+            metric_name = 'exact_match'
+            value = (
+                primary_score
+                if primary_score is not None
+                else ((run_index + stat_index) % 10) / 10
+            )
+            perturbation = None
+        else:
+            metric_name = f'fixture_metric_{stat_index:03d}'
+            value = ((run_index + stat_index) % 10) / 10
+            perturbation = None
+            if include_perturbation_context and stat_index == 1:
+                perturbation = PerturbationDescription(name='fixture')
+        stats.append(
+            Stat(
+                MetricName(
+                    metric_name,
+                    split=stat_split,
+                    perturbation=perturbation,
+                )
+            ).add(value)
+        )
 
     per_instance_stats = []
     for instance_index, instance in enumerate(instances):
         instance_stats = []
-        for stat_index in range(27):
-            metric_name = 'exact_match' if stat_index == 0 else f'fixture_instance_metric_{stat_index:02d}'
+        for stat_index in range(num_per_instance_stats):
+            metric_name = (
+                'exact_match'
+                if stat_index == 0
+                else f'fixture_instance_metric_{stat_index:02d}'
+            )
             value = ((run_index + instance_index + stat_index) % 10) / 10
-            instance_stats.append(Stat(MetricName(metric_name, split='valid')).add(value))
+            instance_stats.append(
+                Stat(MetricName(metric_name, split=stat_split)).add(value)
+            )
         per_instance_stats.append(PerInstanceStats(
             instance_id=instance.id,
             perturbation=None,
@@ -150,7 +187,9 @@ def _build_fixture_run(run_dpath, entry, config, run_index):
         'run_spec.json': dataclasses.asdict(run_spec),
         'scenario_state.json': dataclasses.asdict(scenario_state),
         'stats.json': [dataclasses.asdict(item) for item in stats],
-        'per_instance_stats.json': [dataclasses.asdict(item) for item in per_instance_stats],
+        'per_instance_stats.json': [
+            dataclasses.asdict(item) for item in per_instance_stats
+        ],
         'scenario.json': {
             'name': scenario_name,
             'instances': [dataclasses.asdict(item) for item in instances],
@@ -185,7 +224,7 @@ def ensure_helm_fixture_outputs(**kwargs):
     config = HelmDemoConfig(**kwargs)
     config_dict = config.to_dict()
     depends = {
-        'fixture_schema_version': 1,
+        'fixture_schema_version': 2,
         'config': config_dict,
     }
     hash_id = ub.hash_data(depends)[0:12]
@@ -206,9 +245,194 @@ def ensure_helm_fixture_outputs(**kwargs):
     return dpath
 
 
+def ensure_helm_llama_fixture_outputs():
+    """
+    Create the small HELM Lite corpus used by the llama evaluation cards.
+
+    The directory layout mirrors downloaded HELM Lite releases, but contains
+    only two MMLU subjects for each model and no external data.
+
+    Returns:
+        Path:
+            root corresponding to ``crfm-helm-public``.
+
+    Example:
+        >>> from magnet.demo.helm_demodata import ensure_helm_llama_fixture_outputs
+        >>> root = ensure_helm_llama_fixture_outputs()
+        >>> runs = root / 'lite/benchmark_output/runs'
+        >>> assert (runs / 'v1.0.0').is_dir()
+        >>> assert (runs / 'v1.2.0').is_dir()
+    """
+    import ubelt as ub
+
+    models = {
+        'meta/llama-2-7b': ('v1.0.0', 0.40),
+        'meta/llama-2-13b': ('v1.0.0', 0.46),
+        'meta/llama-2-70b': ('v1.0.0', 0.55),
+        'meta/llama-65b': ('v1.0.0', 0.50),
+        'meta/llama-3-8b': ('v1.2.0', 0.64),
+        'meta/llama-3-70b': ('v1.2.0', 0.76),
+    }
+    subjects = ['abstract_algebra', 'anatomy']
+    depends = {
+        'fixture_schema_version': 1,
+        'models': models,
+        'subjects': subjects,
+    }
+    hash_id = ub.hash_data(depends)[0:12]
+    base_dpath = ub.Path.appdir('magnet/tests/helm_llama_fixture').ensuredir()
+    root = (base_dpath / hash_id).ensuredir()
+    stamp = ub.CacheStamp('helm_llama_fixture', depends=depends, dpath=root)
+
+    if stamp.expired():
+        lite_dpath = root / 'lite' / 'benchmark_output' / 'runs'
+        if lite_dpath.exists():
+            lite_dpath.delete()
+        run_index = 0
+        for model, (version, base_score) in models.items():
+            config = HelmDemoConfig(
+                run_entries=[],
+                suite=version,
+                max_eval_instances=1,
+                num_threads=1,
+            )
+            suite_dpath = (lite_dpath / version).ensuredir()
+            for subject_index, subject in enumerate(subjects):
+                entry = f'mmlu:subject={subject},model={model}'
+                run_dpath = (suite_dpath / _fixture_run_name(entry)).ensuredir()
+                # Two neighboring subject scores make the card exercise its
+                # groupby/mean path while preserving the intended model gap.
+                subject_score = base_score + (subject_index * 0.02 - 0.01)
+                _build_fixture_run(
+                    run_dpath,
+                    entry,
+                    config,
+                    run_index,
+                    num_stats=3,
+                    num_per_instance_stats=1,
+                    stat_split='test',
+                    primary_score=subject_score,
+                    include_perturbation_context=True,
+                )
+                run_index += 1
+        stamp.renew()
+
+    return root
+
+
+class LocalHelmStorageBackend:
+    """Filesystem-backed stand-in for the public HELM GCS bucket."""
+
+    def __init__(self, bucket):
+        import ubelt as ub
+
+        self.bucket = str(ub.Path(bucket))
+
+    def list_dirs(self, prefix):
+        import ubelt as ub
+
+        path = ub.Path(prefix)
+        if not path.is_dir():
+            return []
+        return sorted(p.name for p in path.iterdir() if p.is_dir())
+
+    def download_tree(self, src_prefix, dest_dir, checksum=False):
+        import shutil
+        import ubelt as ub
+
+        src = ub.Path(src_prefix)
+        dest = ub.Path(dest_dir)
+        if not src.is_dir():
+            raise FileNotFoundError(src)
+        dest.parent.ensuredir()
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+
+
+def ensure_helm_remote_store_fixture():
+    """
+    Create a fake HELM public bucket for downloader/listing tests.
+
+    Returns:
+        Path:
+            root of a local directory with the same benchmark/runs/version
+            hierarchy used by ``HelmRemoteStore``.
+
+    Example:
+        >>> from magnet.demo.helm_demodata import ensure_helm_remote_store_fixture
+        >>> bucket = ensure_helm_remote_store_fixture()
+        >>> assert (bucket / 'lite/benchmark_output/runs/v1.13.0').is_dir()
+    """
+    import json
+    import ubelt as ub
+
+    layout = {
+        'classic': {
+            'v0.4.0': [f'classic_task_{idx:02d}:model=fixture' for idx in range(8)],
+        },
+        'image2struct': {
+            'v1.0.0': ['image_task:model=fixture'],
+        },
+        'lite': {
+            'v1.0.0': ['gsm:model=meta_llama-2-13b'],
+            'v1.12.0': ['mmlu:subject=anatomy,model=meta_llama-2-7b'],
+            'v1.13.0': [
+                'med_qa:model=deepseek-ai_deepseek-v3',
+                'med_qa:model=fixture-other',
+            ],
+        },
+    }
+    depends = {'fixture_schema_version': 1, 'layout': layout}
+    hash_id = ub.hash_data(depends)[0:12]
+    base_dpath = ub.Path.appdir('magnet/tests/helm_remote_fixture').ensuredir()
+    bucket = (base_dpath / hash_id).ensuredir()
+    stamp = ub.CacheStamp('helm_remote_fixture', depends=depends, dpath=bucket)
+
+    if stamp.expired():
+        for child in list(bucket.iterdir()):
+            if child.is_dir():
+                child.delete()
+        # These exercise HelmRemoteStore.list_benchmarks() filtering.
+        for blocked in ['assets', 'config', 'prod_env']:
+            (bucket / blocked).ensuredir()
+        for benchmark, versions in layout.items():
+            for version, run_names in versions.items():
+                version_dpath = (
+                    bucket
+                    / benchmark
+                    / 'benchmark_output'
+                    / 'runs'
+                    / version
+                ).ensuredir()
+                for run_name in run_names:
+                    run_dpath = (version_dpath / run_name).ensuredir()
+                    for fname in ['run_spec.json', 'stats.json', 'scenario_state.json']:
+                        payload = {
+                            'fixture': True,
+                            'benchmark': benchmark,
+                            'version': version,
+                            'run': run_name,
+                            'file': fname,
+                        }
+                        (run_dpath / fname).write_text(
+                            json.dumps(payload, sort_keys=True)
+                        )
+        stamp.renew()
+
+    return bucket
+
+
+def make_helm_remote_fixture_store():
+    """Construct ``HelmRemoteStore`` over the local fake public bucket."""
+    from magnet.backends.helm.cli.download_helm_results import HelmRemoteStore
+
+    bucket = ensure_helm_remote_store_fixture()
+    backend = LocalHelmStorageBackend(bucket)
+    return HelmRemoteStore(bucket=str(bucket), backend=backend)
+
+
 def ensure_helm_demo_outputs(**kwargs):
     """
-    Create a cached set of helm outputs for testing.
+    Create a cached set of helm outputs by executing HELM.
 
     Args:
         **kwargs: See :class:`HelmDemoConfig`.
@@ -251,7 +475,10 @@ def ensure_helm_demo_outputs(**kwargs):
 
 def grab_helm_demo_outputs():
     """
-    Downloads official pre-computed results instead of computing them.
+    Download official pre-computed results instead of computing them.
+
+    This is an explicit integration helper. Hermetic tests should use one of
+    the ``ensure_*_fixture`` helpers above.
     """
     import ubelt as ub
     from magnet.backends.helm import download_helm_results

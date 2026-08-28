@@ -1,10 +1,8 @@
-import pytest
-
-pytest.importorskip('gcsfs')
-
 from importlib.resources import files
 
-from magnet.backends.helm.cli import download_helm_results
+import pytest
+
+from magnet.demo.helm_demodata import ensure_helm_llama_fixture_outputs
 from magnet.evaluation import EvaluationCard
 
 
@@ -16,8 +14,8 @@ from magnet.evaluation import EvaluationCard
         'llama_kwdagger.yaml',
     ],
 )
-def test_llama_card(run_download, tmp_path, card_name):
-    data_path = run_download
+def test_llama_card(llama_helm_data, tmp_path, card_name):
+    data_path = llama_helm_data
     results_path = f'{tmp_path}/results'
     card_path = files('magnet') / 'cards' / card_name
 
@@ -49,27 +47,6 @@ def override_path(card, corrected_path):
 
 
 @pytest.fixture(scope='session')
-def run_download(tmp_path_factory):
-    """
-    Follow README download script (HELM lite v1.0.0) and collect llama-3 results from HELM lite v1.2.0
-    """
-    tmp_path = tmp_path_factory.mktemp('helm_data')
-    helm_dir = tmp_path / 'data' / 'crfm-helm-public'
-    helm_dir.mkdir(parents=True, exist_ok=True)
-
-    download_helm_results.main(
-        argv=False,
-        download_dir=helm_dir,
-        benchmark='lite',
-        version='v1.0.0',
-        runs='regex:mmlu.*model=.*llama.*',
-    )
-    download_helm_results.main(
-        argv=False,
-        download_dir=helm_dir,
-        benchmark='lite',
-        version='v1.2.0',
-        runs='regex:mmlu.*model=.*llama.*',
-    )
-
-    return helm_dir
+def llama_helm_data():
+    """Small local HELM Lite fixture; no GCS access or dataset download."""
+    return ensure_helm_llama_fixture_outputs()

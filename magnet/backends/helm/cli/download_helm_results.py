@@ -7,47 +7,44 @@ Download HELM benchmark run artifacts from the public GCS bucket.
 - Use --list-version and --list-benchmarks to explore available data
 
 Example:
-    >>> # xdoctest: +REQUIRES(module:gcsfs)
+    >>> from unittest import mock
     >>> from magnet.backends.helm.cli import download_helm_results
+    >>> from magnet.demo.helm_demodata import make_helm_remote_fixture_store
     >>> import ubelt as ub
-    >>> #
-    >>> # Test listing benchamrks
-    >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(argv=False, list_benchmarks=True)
-    >>> assert len(cap.text.split()) >= 23
-    >>> #
-    >>> # Test listing versions
-    >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(argv=False, list_versions=True, benchmark='lite')
-    >>> assert len(cap.text.split()) >= 14
-
-    >>> # Test listing runs (using classic benchmark, which tests a special case)
-    >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(argv=False, list_runs=True, version='v0.4.0', benchmark='classic')
-    >>> assert len(cap.text.split()) >= 70
+    >>> storage = make_helm_remote_fixture_store()
+    >>> patch = mock.patch.object(download_helm_results, 'HelmRemoteStore', return_value=storage)
+    >>> with patch:
+    ...     with ub.CaptureStdout(suppress=True) as cap:
+    ...         download_helm_results.main(argv=False, list_benchmarks=True)
+    >>> assert cap.text.split() == ['classic', 'image2struct', 'lite']
+    >>> with patch:
+    ...     with ub.CaptureStdout(suppress=True) as cap:
+    ...         download_helm_results.main(argv=False, list_versions=True, benchmark='lite')
+    >>> assert cap.text.split() == ['v1.0.0', 'v1.12.0', 'v1.13.0']
+    >>> with patch:
+    ...     with ub.CaptureStdout(suppress=True) as cap:
+    ...         download_helm_results.main(argv=False, list_runs=True, version='v0.4.0', benchmark='classic')
+    >>> assert len(cap.text.split()) == 8
 
 Example:
-    >>> # xdoctest: +REQUIRES(module:gcsfs)
+    >>> from unittest import mock
     >>> from magnet.backends.helm.cli import download_helm_results
+    >>> from magnet.demo.helm_demodata import make_helm_remote_fixture_store
     >>> import ubelt as ub
-    >>> # Start fresh
+    >>> storage = make_helm_remote_fixture_store()
+    >>> patch = mock.patch.object(download_helm_results, 'HelmRemoteStore', return_value=storage)
     >>> dpath = ub.Path.appdir('magnet/tests/download_helm_list')
     >>> dpath.delete()
-    >>> existing = [r / f for r, ds, fs in dpath.walk() for f in fs + ['.']]
-    >>> assert len(existing) == 0, 'delete should remove everything'
-    >>> #
-    >>> # Test downloading with a bat pattern
-    >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(argv=False, download_dir=dpath, runs='bad-pattern')
-    >>> existing = [r / f for r, ds, fs in dpath.walk() for f in fs + ['.']]
-    >>> assert len(existing) == 0, 'should not have downloaded anything'
-    >>> #
-    >>> # Test downloading with a bat pattern
-    >>> with ub.CaptureStdout(suppress=False) as cap:
-    >>>     download_helm_results.main(argv=False, download_dir=dpath, runs='med_qa:model=deepseek-ai_deepseek-v3', version='v1.13.0')
-    >>> existing = [r / f for r, ds, fs in dpath.walk() for f in fs + ['.']]
-    >>> print(f'existing = {ub.urepr(existing, nl=1)}')
-    >>> assert len(existing) == 14, 'should have only downloaded a few results'
+    >>> dpath.ensuredir()
+    >>> with patch:
+    ...     ret = download_helm_results.main(argv=False, download_dir=dpath, runs='bad-pattern')
+    >>> assert ret == 1
+    >>> assert not list(dpath.glob('**/*.json'))
+    >>> with patch:
+    ...     ret = download_helm_results.main(argv=False, download_dir=dpath, runs='med_qa:model=deepseek-ai_deepseek-v3', version='v1.13.0')
+    >>> assert ret == 0
+    >>> downloaded = sorted(p.name for p in dpath.glob('**/*.json'))
+    >>> assert downloaded == ['run_spec.json', 'scenario_state.json', 'stats.json']
 """
 
 import re
@@ -426,6 +423,7 @@ class FsspecStorageBackend:
             self.list_dirs(prefix)
 
         Example:
+            >>> # xdoctest: +REQUIRES(env:HELM_REMOTE_AVAILABLE)
             >>> # xdoctest: +REQUIRES(module:gcsfs)
             >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
             >>> backend_fs = FsspecStorageBackend('gs://crfm-helm-public')
@@ -524,20 +522,18 @@ class HelmRemoteStore:
     precomptued HELM results.
 
     Example:
-        >>> # xdoctest: +REQUIRES(module:gcsfs)
-        >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
-        >>> self = HelmRemoteStore()
+        >>> from magnet.demo.helm_demodata import make_helm_remote_fixture_store
+        >>> self = make_helm_remote_fixture_store()
         >>> benchmarks = self.list_benchmarks()
-        >>> benchmark = benchmarks[0]
-        >>> verions = self.list_versions(benchmark)
-        >>> verion = verions[0]
-        >>> runs = self.list_runs(benchmark, verion)
-        >>> print(f'benchmarks = {ub.urepr(benchmarks, nl=0)}')
-        >>> print(f'verions = {ub.urepr(verions, nl=0)}')
-        >>> print(f'runs = {ub.urepr(runs, nl=0)}')
+        >>> assert benchmarks == ['classic', 'image2struct', 'lite']
+        >>> versions = self.list_versions('lite')
+        >>> assert versions == ['v1.0.0', 'v1.12.0', 'v1.13.0']
+        >>> runs = self.list_runs('lite', 'v1.13.0')
+        >>> assert 'med_qa:model=deepseek-ai_deepseek-v3' in runs
 
     Example:
         >>> # xdoctest: +REQUIRES(--slow)
+        >>> # xdoctest: +REQUIRES(env:HELM_REMOTE_AVAILABLE)
         >>> # xdoctest: +REQUIRES(module:gcsfs)
         >>> # Test backends are the same
         >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
@@ -574,6 +570,12 @@ class HelmRemoteStore:
             self.backend = FsspecStorageBackend(bucket=bucket)
         elif backend == 'gsutil':
             self.backend = GsutilStorageBackend(bucket=bucket)
+        elif not isinstance(backend, str):
+            # Accept a backend object for dependency injection in tests and
+            # callers that implement the small storage backend protocol.
+            self.backend = backend
+        else:
+            raise KeyError(backend)
 
     @property
     def bucket(self) -> str:
@@ -604,11 +606,10 @@ class HelmRemoteStore:
     def list_versions(self, benchmark: str) -> List[str]:
         """
         Example:
-            >>> # xdoctest: +REQUIRES(module:gcsfs)
-            >>> from magnet.backends.helm.cli.download_helm_results import *  # NOQA
-            >>> store = HelmRemoteStore()
+            >>> from magnet.demo.helm_demodata import make_helm_remote_fixture_store
+            >>> store = make_helm_remote_fixture_store()
             >>> versions = store.list_versions('image2struct')
-            >>> assert 'runs' not in versions
+            >>> assert versions == ['v1.0.0']
         """
         from packaging.version import parse as Version, InvalidVersion
 
