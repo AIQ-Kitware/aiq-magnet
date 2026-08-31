@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Tuple
 
 import ubelt as ub
 from kwdagger import Pipeline, ProcessNode
+from kwdagger.pipeline import coerce_pipeline
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
 
@@ -253,6 +254,11 @@ class KWDaggerProcessor:
             run=not dry_run,
             **schedule_options,
         )
+        # Before anything is submitted: an execution setting that cannot reach
+        # a single node is a failed invocation, not a default.
+        _check_container_settings_apply(
+            coerce_pipeline(self.params['pipeline'])
+        )
         self.request_dag, self.queue = build_schedule(kwd_config)
 
     def _coerce_aggregate_pipeline(self) -> Any:
@@ -451,6 +457,58 @@ def _is_missing_aggregate_value(value: Any) -> bool:
             return False
         return bool(missing.item())
     return False
+
+
+def _check_container_settings_apply(pipeline: Any) -> None:
+    """
+    Refuse to run when ``--container_image`` would do nothing.
+
+    Containerization is opt-in per node class: only a
+    :class:`~magnet.containers.ContainerProcessNode` renders the ``docker run``
+    prefix. A card that declares its DAG as data gets kwdagger's
+    ``YamlProcessNode``, a sibling of that class, so the image was accepted,
+    stored, and never read -- a green run that containerized nothing, with no
+    warning. Evidence from that run is indistinguishable from evidence produced
+    the way the invocation asked for, which is the whole reason it has to be an
+    error rather than a note in a log nobody reads.
+
+    Raises:
+        ValueError: if an image is configured and no node can use it.
+    """
+    from magnet import containers
+
+    if not containers.current_settings().image:
+        return
+
+    node_dict = getattr(pipeline, 'node_dict', None) or {}
+    inert = sorted(
+        name for name, node in node_dict.items()
+        if not isinstance(node, containers.ContainerProcessNode)
+    )
+    if not node_dict or len(inert) < len(node_dict):
+        # A mixed DAG is legitimate -- an analysis step may belong on the host
+        # next to a containerized model step -- so name what will not move
+        # rather than refusing the run.
+        if inert:
+            logger.warning(
+                f'--container_image is set, but these nodes cannot use it and '
+                f'will run on the host: {inert}. Give each a `class:` deriving '
+                'from magnet.containers.ContainerProcessNode (declarative '
+                'cards want ContainerYamlProcessNode) if that is not intended.'
+            )
+        return
+
+    raise ValueError(
+        f'--container_image={containers.current_settings().image!r} was given, '
+        f'but no node in this pipeline can be containerized, so nothing would '
+        f'run in the image and the results would look exactly like a '
+        f'containerized run. Nodes: {inert}.\n'
+        'Containerization is opt-in per node class. For a card that inlines '
+        'its DAG, name the class on each node:\n'
+        '    class: magnet.containers.ContainerYamlProcessNode\n'
+        'Use magnet.leasing.LeasedYamlProcessNode for a node that also leases '
+        'an endpoint. Drop --container_image to run on the host.'
+    )
 
 
 def _primary_result_path(node: Any) -> ub.Path | None:

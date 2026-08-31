@@ -14,6 +14,7 @@ from kwdagger.pipeline import coerce_pipeline
 from kwdagger.yaml_pipeline import YamlProcessNode
 
 from magnet import containers, leasing
+from magnet._kwdagger import _check_container_settings_apply
 from magnet.containers import ContainerYamlProcessNode
 from magnet.leasing import LeasedYamlProcessNode
 
@@ -144,3 +145,69 @@ def test_the_lease_stays_outside_the_container():
 def test_the_node_is_a_kwdagger_process_node():
     """kwdagger's loader checks this before anything else."""
     assert issubclass(ContainerYamlProcessNode, kwdagger.ProcessNode)
+
+
+# --- the guard: an execution setting that reaches nothing is a failed run ----
+
+
+def _pipeline(*node_classes):
+    nodes = {
+        f'n{idx}': {
+            'executable': 'python -m pkg.work',
+            'out_paths': {'results_fpath': 'results.json'},
+            **({'class': cls} if cls else {}),
+        }
+        for idx, cls in enumerate(node_classes)
+    }
+    return coerce_pipeline({'nodes': nodes})
+
+
+def test_an_image_that_reaches_no_node_is_an_error():
+    """The defect this guard exists for: a green run that containerized
+    nothing produces evidence indistinguishable from the real thing."""
+    containers.configure(image=IMAGE, mounts='/repo')
+    with pytest.raises(ValueError) as excinfo:
+        _check_container_settings_apply(_pipeline(None, None))
+    message = str(excinfo.value)
+    # The message has to carry the fix, not just the complaint.
+    assert 'ContainerYamlProcessNode' in message
+    assert IMAGE in message
+
+
+def test_no_image_means_no_opinion():
+    """Running on the host is the default, not a degraded mode."""
+    _check_container_settings_apply(_pipeline(None, None))
+
+
+def test_an_image_every_node_can_use_is_fine():
+    containers.configure(image=IMAGE, mounts='/repo')
+    _check_container_settings_apply(_pipeline(CONTAINER_CLASS, CONTAINER_CLASS))
+
+
+def test_a_mixed_dag_warns_but_runs(caplog):
+    """Legitimate: an analysis step may belong on the host beside a
+    containerized model step. Say which nodes stay behind; do not refuse."""
+    containers.configure(image=IMAGE, mounts='/repo')
+    _check_container_settings_apply(_pipeline(CONTAINER_CLASS, None))
+
+
+def test_the_guard_runs_before_anything_is_submitted(monkeypatch):
+    """A late error would leave a queue half-built and jobs running."""
+    from magnet import _kwdagger
+
+    submitted = []
+    monkeypatch.setattr(
+        _kwdagger, 'build_schedule',
+        lambda config: submitted.append(config) or (None, None),
+    )
+    containers.configure(image=IMAGE, mounts='/repo')
+    processor = _kwdagger.KWDaggerProcessor(
+        {'result_node': 'n0',
+         'pipeline': {'nodes': {'n0': {
+             'executable': 'python -m pkg.work',
+             'out_paths': {'results_fpath': 'results.json'}}}}},
+        '.',
+    )
+    with pytest.raises(ValueError):
+        processor.schedule()
+    assert submitted == []
