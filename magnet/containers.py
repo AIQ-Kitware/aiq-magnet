@@ -23,12 +23,22 @@ The repository is mounted at the same absolute path it has on the host:
 kwdagger bakes absolute output paths into commands, so keeping them identical
 means nothing has to be rewritten and a path in a log is one you can open.
 
+Containerization is opt-in *per node class*: a node inherits from
+:class:`ContainerProcessNode`, or -- for a card that declares its DAG as data
+rather than as Python -- from :class:`ContainerYamlProcessNode`, named in the
+node's ``class`` key.
+
 TODO:
-    Opt-in per node class, so a pipeline must inherit from
-    :class:`ContainerProcessNode`. MAGNET knows the whole DAG at compile time
-    and could inject the wrapper into every node of a card that asks for
-    containerized execution, leaving the pipeline to describe the work and the
-    card to describe where it runs.
+    Inject the wrapper at DAG compile time instead. MAGNET knows the whole DAG
+    and the invocation's settings before anything is scheduled, so a card could
+    ask for containerized execution without any of its nodes naming an
+    execution class: the pipeline would describe the work and the card would
+    describe where it runs. Two things point the same way. A card that names no
+    container class today is silently *not* containerized however it was
+    invoked, which is a green run that proves nothing. And the environment
+    capture below (:data:`DEFAULT_CAPTURED_ENV`) is correct and needed on the
+    host path too, where a cmd_queue tmux worker inherits just as little, but is
+    reachable only through :func:`container_prefix`.
 """
 
 from __future__ import annotations
@@ -40,9 +50,11 @@ import shlex
 import dataclasses
 
 import kwdagger
+from kwdagger.yaml_pipeline import YamlProcessNode
 
 __all__ = [
     'ContainerProcessNode',
+    'ContainerYamlProcessNode',
     'ContainerSettings',
     'configure',
     'current_settings',
@@ -323,3 +335,36 @@ class ContainerProcessNode(kwdagger.ProcessNode):
         if containerization_is_enabled(self):
             base = container_prefix(self) + ' \\\n    ' + base
         return self._wrap_command(base)
+
+
+class ContainerYamlProcessNode(ContainerProcessNode, YamlProcessNode):
+    """
+    A containerized node that a card can declare in YAML.
+
+    :class:`ContainerProcessNode` is a sibling of
+    :class:`~kwdagger.yaml_pipeline.YamlProcessNode`, not an ancestor, and a
+    declarative card gets the latter. So a card that inlines its DAG under
+    ``kwdagger.pipeline.nodes`` produced nodes whose ``command`` was
+    :class:`~kwdagger.ProcessNode`'s, and ``--container_image`` was accepted,
+    stored, and never read: a green run that never containerized.
+
+    Naming this class is what a card does about it::
+
+        nodes:
+          my_node:
+            class: magnet.containers.ContainerYamlProcessNode
+            executable: "python -m pkg.work"
+            out_paths: {results_fpath: results.json}
+            load_result: "pkg.results.load"
+
+    kwdagger's loader rejects the declarative extras (``metrics``, ``result``,
+    ``load_result``, ``vantage_points``) for any ``class`` that is not a
+    :class:`~kwdagger.yaml_pipeline.YamlProcessNode`, which is why inheriting
+    from both is the fix rather than an alias. Containerized execution and
+    declarative readout were mutually exclusive before this class existed.
+
+    Still inert unless an image is named -- by the node or by :func:`configure`
+    -- so the same card runs on the host during development.
+    """
+
+

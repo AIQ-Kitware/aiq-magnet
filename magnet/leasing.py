@@ -30,10 +30,13 @@ from __future__ import annotations
 import os
 import shlex
 
+from kwdagger.yaml_pipeline import YamlProcessNode
+
 from magnet.containers import ContainerProcessNode
 
 __all__ = [
     'LeasedProcessNode',
+    'LeasedYamlProcessNode',
     'configure',
     'leasing_is_enabled',
     'slurm_gpu_allow_list',
@@ -241,3 +244,27 @@ class LeasedProcessNode(ContainerProcessNode):
         # with a dash is parsed as an option to `run`.
         parts += ['--']
         return ' '.join(parts)
+
+
+class LeasedYamlProcessNode(LeasedProcessNode, YamlProcessNode):
+    """
+    A leased, containerized node that a card can declare in YAML.
+
+    The leasing counterpart of
+    :class:`~magnet.containers.ContainerYamlProcessNode`, and the same
+    reasoning: a declarative card's nodes are
+    :class:`~kwdagger.yaml_pipeline.YamlProcessNode`, so they inherited neither
+    the container wrapper nor the lease.
+
+    :attr:`~LeasedProcessNode.endpoint_params` names the parameters whose
+    values are catalog aliases. kwdagger's node-spec allow-list has no key for
+    it, so a card that leases still declares a small subclass::
+
+        class MyInfer(LeasedYamlProcessNode):
+            endpoint_params = ('model_id',)
+
+    and names *that* in ``class``. Everything else -- the command, the paths,
+    the result readout -- stays data in the card.
+    """
+
+
