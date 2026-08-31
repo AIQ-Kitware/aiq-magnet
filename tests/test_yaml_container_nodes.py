@@ -22,6 +22,15 @@ IMAGE = 'aiq-eval-node:latest'
 CONTAINER_CLASS = 'magnet.containers.ContainerYamlProcessNode'
 
 
+class Infer(LeasedYamlProcessNode):
+    """Leasing needs `endpoint_params`, which has no node-spec key, so a card
+    that leases declares a subclass and names that. Module scope on purpose:
+    `class:` is resolved by importing the module and walking attributes, so a
+    class defined inside a test function cannot be found."""
+
+    endpoint_params = ('model_id',)
+
+
 @pytest.fixture(autouse=True)
 def _clean_settings():
     containers.configure()
@@ -115,10 +124,6 @@ def test_metrics_metadata_survives():
 def test_the_lease_stays_outside_the_container():
     """Acquiring a lease needs the host daemon and ledger; consuming the
     endpoint happens inside. Documented in magnet.containers."""
-
-    class Infer(LeasedYamlProcessNode):
-        endpoint_params = ('model_id',)
-
     containers.configure(image=IMAGE, mounts='/repo')
     leasing.configure(True)
     spec = {
