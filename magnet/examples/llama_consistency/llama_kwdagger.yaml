@@ -116,9 +116,6 @@ kwdagger:
         executable: "python -m magnet.examples.llama_consistency.materialize_run"
         algo_params:
           model: null
-          # Tags the run with the family it belongs to. The gather groups on
-          # it; nothing looks it up.
-          family: null
           subject: null
           precomputed_root: "./data/crfm-helm-public"
           # `reuse_only` because it is the mode that works from a cache alone.
@@ -149,7 +146,6 @@ kwdagger:
         algo_params:
           base_model: null
           comp_model: null
-          family: null
           threshold: 0.1
         out_paths:
           results_fpath: results.json
@@ -167,14 +163,10 @@ kwdagger:
 
   # A gather edge: many materialized runs, one collection-valued input.
   #
-  # Grouped by family, so a comparison is handed its own family's runs and not
-  # every run in the sweep. Grouping by model would not work -- a cell needs
-  # runs for two different models, which is a self-join rather than a group --
-  # and grouping by nothing would pool every family the matrix declares into
-  # every cell, which is only invisible while there is one family.
-  #
-  # The src/dst form names the key on each end. An unqualified key is a footgun
-  # once two nodes both carry one.
+  # `group_by: []` gives every predict cell the whole declared corpus, and the
+  # cell picks its two models out of it. Grouping by model would not work: a
+  # cell needs runs for two different models, which is a self-join rather than
+  # a group.
   #
   # KWDagger hands the target a newline-delimited manifest of the source
   # directories, so `--run_dpaths` names a file listing exactly what was used.
@@ -182,21 +174,13 @@ kwdagger:
       - src: materialize_run.out_dpath
         dst: llama_predict.run_dpaths
         gather:
-          group_by:
-            - src: family
-              dst: family
+          group_by: []
           order_by: [model, subject]
           require: all_success
       - llama_predict.results_fpath -> llama_compare.scores_fpath
 
   # Two axes over runs to materialize, two over models to compare. The model
   # lists are the same set: every model compared must have been materialized.
-  #
-  # One family per card. `family` is a fixed axis rather than a swept one:
-  # every cell here is a llama-to-llama comparison, and the gather groups on it
-  # so that stays true if a second family is ever added. Running two families
-  # at once needs kwdagger's `matrices:` form -- one block each, so their model
-  # lists never cross. The README shows the smaller single-family swap.
   #
   # The declared subjects have to exist in the cache. That is the cost of not
   # globbing: the card names what it averages over, so it can name something
@@ -216,22 +200,27 @@ kwdagger:
   #   ls data/crfm-helm-public/lite/benchmark_output/runs/*/ \
   #     | sed -n 's/^mmlu:subject=\([^,]*\).*/\1/p' | sort -u
   matrix:
-    materialize_run.family: [llama]
-    llama_predict.family: [llama]
-
-    materialize_run.subject:
-      - abstract_algebra
-      - college_chemistry
-
-    # The family is written once and referenced. `materialize_run.model` says
-    # which runs to fetch; the two `llama_predict` axes say which pairs to
-    # compare out of them.
-    materialize_run.model: &llama_family
+    materialize_run.model:
       - meta/llama-2-13b
       - meta/llama-2-70b
       - meta/llama-2-7b
       - meta/llama-3-70b
       - meta/llama-3-8b
       - meta/llama-65b
-    llama_predict.base_model: *llama_family
-    llama_predict.comp_model: *llama_family
+    materialize_run.subject:
+      - abstract_algebra
+      - college_chemistry
+    llama_predict.base_model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
+    llama_predict.comp_model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b

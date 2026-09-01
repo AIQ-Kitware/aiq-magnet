@@ -155,18 +155,9 @@ def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
     gather_edge, artifact_edge = pipeline['edges']
     assert gather_edge['src'] == 'materialize_run.out_dpath'
     assert gather_edge['dst'] == 'llama_predict.run_dpaths'
-    # Grouped by family, so a comparison is handed its own family's runs. The
-    # key is resolved on both ends, which is why both nodes declare `family`
-    # even though neither reads it: kwdagger has to know which group a target
-    # belongs to before it can pick sources for it, and a gather's own source
-    # is not yet an ancestor of its target at that point.
-    assert gather_edge['gather']['group_by'] == [
-        {'src': 'family', 'dst': 'family'}
-    ]
+    assert gather_edge['gather']['group_by'] == []
     assert gather_edge['gather']['require'] == 'all_success'
     assert 'run_dpaths' in dag.node_dict['llama_predict'].inputs
-    for node in ['materialize_run', 'llama_predict']:
-        assert 'family' in pipeline['nodes'][node]['algo_params']
 
     # An ordinary artifact edge does resolve at coerce time.
     assert artifact_edge == 'llama_predict.results_fpath -> llama_compare.scores_fpath'
