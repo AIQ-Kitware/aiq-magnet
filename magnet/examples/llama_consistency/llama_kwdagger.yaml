@@ -52,21 +52,25 @@ evidence:
 # describes and carries only what the artifact cannot: what the number is
 # called and whether it defines a metric.
 #
-# Name the column outright. KWDagger aggregate qualifies every column by
-# namespace and node, and those names are its own identity for the value, so
-# `metrics.<node>.<field>` says which node's metric this is and
-# `resolved_params.<node>.<param>` says this is the value that node actually
-# ran with, not merely the one requested. A bare `base_score` would also
-# resolve, by matching the last dotted segment, but it cannot distinguish the
-# two nodes reporting that field, and a bare `helm_runs_path` matches columns
-# in three namespaces holding two different values.
+# A symbol names its column the same way a claim does: by node, or qualified
+# by namespace as well. Name it by node where the node reports the field once,
+# as `llama_compare.base_score` does -- `metrics` is where kwdagger filed it,
+# not part of what it is. A bare `base_score` would resolve too, but both
+# nodes report that field, so it says less than it looks like it does.
+#
+# Qualify where the namespace is the meaning. `resolved_params` says this is
+# the path the node actually ran with rather than the one the matrix asked
+# for; `llama_predict.helm_runs_path` would match `metrics`, `params` and
+# `resolved_params` alike and quietly settle for whichever sorted first. Those
+# three agree today. The symbol is labelled for the resolved value, so it
+# should not depend on their continuing to.
 #
 # `aggregation_strategy` reduces across the recipe's evidence rows -- the 36
 # model-pair cells below. Reduction *within* a run belongs to a kwdagger
 # fan-in node, which reports its aggregate as a single node output for a
 # symbol like this one to read off.
 symbols:
-  metrics.llama_compare.base_score:
+  llama_compare.base_score:
     metadata:
       display_name: "Average Exact Match"
       display: True

@@ -68,12 +68,15 @@ def test_llama_card(
     if use_new_evaluator:
         assert card.evaluate(backend='serial').result == 'FALSIFIED'
         assert len(card.result_card.cell_results) == expected_cells
-        # The kwdagger recipe declares the same symbol metadata the legacy
+        # The kwdagger recipe carries the same symbol metadata the legacy
         # card does, so the dashboard contract is identical on both routes.
+        # The names differ: a legacy card has only a bare `base_score`, while
+        # a recipe says which node's, and qualifies by namespace as well where
+        # that is the meaning.
         written = sorted(ub.Path(results_path).glob('*/symbol_metadata.json'))
         assert len(written) == 1
         assert json.loads(written[0].read_text()) == {
-            'metrics.llama_compare.base_score': {
+            'llama_compare.base_score': {
                 'display_name': 'Average Exact Match',
                 'display': True,
                 'define_metric': {

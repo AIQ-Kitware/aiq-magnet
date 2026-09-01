@@ -699,8 +699,16 @@ def _fill_declared_symbols(
     dictionary key: it is filled from the row and returned as a value, and
     never reaches the ``exec`` that resolves a ``python:`` symbol.
 
-    A bare name is still accepted and matches on the last dotted segment,
-    which is what legacy cards carry.
+    A shorter name is matched against the tail of each column, on segment
+    boundaries. That accepts ``llama_compare.base_score``, the same node-first
+    spelling a claim uses, and the bare ``base_score`` that legacy cards carry,
+    without either one reaching across a partial segment.
+
+    A short name that matches several columns is only safe where they agree.
+    Which one a symbol meant is a question the card can always settle by
+    naming the column outright, so ambiguity here stays a warning rather than
+    an error -- unlike the claim namespace, where the same doubt decides a
+    verdict and so refuses instead.
     """
     filled = set()
     out = {}
@@ -713,7 +721,7 @@ def _fill_declared_symbols(
                 candidates = {
                     key: value
                     for key, value in results.items()
-                    if key.rsplit('.', 1)[-1] == name
+                    if key.endswith(f'.{name}')
                     and not key.startswith(PROVENANCE_ROW_PREFIXES)
                 }
             if candidates:

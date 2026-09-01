@@ -27,6 +27,12 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   shared value, disagreeing ones raise and name the alternatives. Either
   spelling is recorded as the qualified column. A declared symbol of the same
   name as a node keeps precedence, so existing cards are unaffected.
+* A declared symbol can name its evidence column by node --
+  `llama_compare.base_score` -- the same spelling a claim uses. Short names
+  match on segment boundaries, so the bare names legacy cards carry keep
+  working and no name reaches across a partial segment. Where a short name
+  matches columns that disagree, filling still warns and proceeds, since a
+  symbol labels evidence rather than deciding a verdict.
 * The claim namespace object is introspectable: `dir()`, `keys()`, `items()`,
   `values()`, `len()`, `in`, `[...]` indexing, and a repr that names its
   location and children. Inspecting a view does not mark evidence as consumed.

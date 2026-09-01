@@ -187,3 +187,38 @@ def test_a_declared_symbol_outranks_a_node_of_the_same_name():
 def test_a_declared_symbol_still_collides_with_a_namespace():
     with pytest.raises(ValueError, match='collides'):
         _verdict('assert True', symbols={'metrics': {'value': 1}})
+
+
+def _fill(names, row=None):
+    from magnet.evaluation_new import _fill_declared_symbols
+    symbols = {name: {'metadata': {}} for name in names}
+    filled, _ = _fill_declared_symbols(symbols, row or ROW)
+    return {name: spec.get('value') for name, spec in filled.items()}
+
+
+def test_a_symbol_can_name_its_column_by_node():
+    assert _fill(['compare.gap']) == {'compare.gap': 0.15}
+
+
+def test_a_symbol_can_still_name_its_column_outright():
+    assert _fill(['metrics.compare.gap']) == {'metrics.compare.gap': 0.15}
+
+
+def test_a_bare_symbol_name_still_matches_the_last_segment():
+    assert _fill(['gap']) == {'gap': 0.15}
+
+
+def test_a_short_symbol_name_matches_only_whole_segments():
+    """`score` must not match `base_score` just because the text lines up."""
+    assert _fill(['score']) == {'score': None}
+
+
+def test_a_symbol_named_by_node_ignores_provenance_columns():
+    """`specified.params.predict.base_model` is 1, never the value."""
+    assert _fill(['predict.base_model']) == {'predict.base_model': 'family/big'}
+
+
+def test_a_symbol_matching_disagreeing_columns_warns_but_fills():
+    """Unlike a claim, a symbol labels evidence rather than deciding a verdict."""
+    row = dict(ROW, **{'resolved_params.predict.base_model': 'family/small'})
+    assert _fill(['predict.base_model'], row)['predict.base_model'] is not None
