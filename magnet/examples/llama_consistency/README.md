@@ -159,8 +159,9 @@ magnet evaluate_new \
     --output_path ./results_kwdagger --dry_run
 ```
 
-Results already in the shared store are still discovered and judged, so a dry
-run over a populated store reports a real verdict.
+Nothing is judged: the result is `NOT_EVALUATED` and no verdict is written,
+whatever the shared store already holds. A dry run answers what would be
+submitted, and that is all it answers.
 
 For tmux execution, `--tmux_workers` is the native KWDagger worker control:
 

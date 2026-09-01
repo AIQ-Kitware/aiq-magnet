@@ -549,6 +549,26 @@ def test_dry_run_compiles_the_campaign_without_running_it(
     assert not sorted((output_path / '_kwdagger' / 'emit').glob('*/results.json'))
 
 
+def test_dry_run_judges_nothing(kwdagger_recipe_fpath, tmp_path):
+    """A dry run reports a campaign; it does not return a verdict."""
+    output_path = ub.Path(tmp_path) / 'out'
+    recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    result = recipe.evaluate(backend='serial', dry_run=True)
+
+    assert result.result == 'NOT_EVALUATED'
+    assert result.cell_results == []
+    assert recipe.claim.status == 'NOT_EVALUATED'
+
+    run_dpath = next(
+        p for p in output_path.iterdir()
+        if p.is_dir() and p.name != '_kwdagger'
+    )
+    # The plan is written; a verdict for work that did not happen is not.
+    assert (run_dpath / 'requested_runs.json').exists()
+    assert not (run_dpath / 'verdict.json').exists()
+    assert not sorted(run_dpath.glob('results/*/verdict.json'))
+
+
 def test_a_real_run_of_the_same_recipe_does_produce_artifacts(
         kwdagger_recipe_fpath, tmp_path):
     """The contrast that makes the dry run mean something."""
@@ -562,21 +582,21 @@ def test_a_real_run_of_the_same_recipe_does_produce_artifacts(
     ) == 2
 
 
-def test_dry_run_still_judges_evidence_that_already_exists(
+def test_dry_run_judges_nothing_even_when_evidence_exists(
         kwdagger_recipe_fpath, tmp_path):
-    """A dry run does not pretend the result store is empty.
+    """The store being populated does not turn a dry run into a verdict.
 
-    Scheduling and evidence discovery are separate: not submitting work says
-    nothing about what has already been computed.
+    A dry run asks what would be submitted. Answering what the store already
+    implies invites that answer to be read as this invocation's result.
     """
     output_path = ub.Path(tmp_path) / 'out'
-    NewEvaluationRecipe(kwdagger_recipe_fpath, output_path).evaluate(
-        backend='serial')
+    first = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    assert first.evaluate(backend='serial').result == 'VERIFIED'
 
     second = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
     result = second.evaluate(backend='serial', dry_run=True)
-    assert len(result.cell_results) == 2
-    assert result.result == 'VERIFIED'
+    assert result.result == 'NOT_EVALUATED'
+    assert result.cell_results == []
 
 
 def test_dry_run_is_off_by_default(kwdagger_recipe_fpath, tmp_path):

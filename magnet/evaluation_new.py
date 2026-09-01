@@ -132,8 +132,8 @@ class NewEvaluationCLI(kwconf.Config):
         help=(
             'Compile and report the campaign without running it: KWDagger is '
             'scheduled with run=0, so it writes a driver script instead of '
-            'submitting jobs. Evidence already in the shared result store is '
-            'still discovered and the claim is still evaluated against it.'
+            'submitting jobs. No evidence is loaded and no claim is evaluated '
+            '-- the result is NOT_EVALUATED and no verdict is written.'
         ),
     )
 
@@ -893,6 +893,7 @@ def evaluate_new_recipe(
     # Scheduling is one finite operational request. It may add new results to
     # the shared kwdagger store, reuse results that already exist, or leave
     # some requested work failed / pending.
+    dry_run = bool(schedule_options.get('dry_run', False))
     processor.schedule(**schedule_options)
     requested_runs = processor.inspect_requested_runs()
     requested_work = _summarize_requested_runs(requested_runs)
@@ -903,6 +904,36 @@ def evaluate_new_recipe(
     ) as file:
         json.dump(requested_runs, file, indent=2, ensure_ascii=False)
         file.write('\n')
+
+    if dry_run:
+        # Nothing ran, so there is nothing this invocation could have judged.
+        # Report the campaign and stop. Evidence is not loaded and no claim is
+        # evaluated: a dry run asks what would be submitted, and answering a
+        # different question -- what the store already implies -- invites that
+        # answer to be read as this run's verdict.
+        #
+        # No `verdict.json` either, for the same reason. The theory report is
+        # written, because it is resolved from the card and its sources before
+        # anything is scheduled and does not depend on a run happening; that
+        # makes a dry run a way to check a card's theory links on their own.
+        _link_kwdagger_root(recipe_output_path, recipe.kwdagger_dpath)
+        if theory_report is not None:
+            theory_report.write(recipe_output_path / 'theory.json')
+
+        result_card = NewEvaluationResultCard(
+            result='NOT_EVALUATED',
+            claim_aggregation_strategy=recipe.claim_aggregation_strategy,
+            cell_results=[],
+            requested_work=requested_work,
+            evidence_scope=recipe.evidence_scope,
+        )
+        recipe.result_card = result_card
+        recipe.claim.status = 'NOT_EVALUATED'
+        logger.info(
+            'Dry run: compiled the campaign and submitted nothing. '
+            f'Requested work: {requested_work}'
+        )
+        return result_card
 
     # KWDagger aggregate discovers the available result store independently of
     # this request. The recipe may then use the request as an optional filter;
