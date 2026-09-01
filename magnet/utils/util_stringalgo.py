@@ -155,11 +155,13 @@ def _trie_iternodes(self):
     while stack:
         for node in stack.pop():
             yield node
+            # `items` since pygtrie-2.6, which renamed `iteritems` and
+            # stopped deriving the multi-child case from dict.
             try:
-                # only works in pygtrie-2.2 broken in pygtrie-2.3.2
-                stack.append(node.children.values())
+                children = node.children.items()
             except AttributeError:
-                stack.append([v for k, v in node.children.iteritems()])
+                children = node.children.iteritems()
+            stack.append([v for k, v in children])
 
 
 def _trie_iteritems(self):
@@ -174,7 +176,6 @@ def _trie_iteritems(self):
         for key, node in level:
             if key is not sentinel:
                 yield key, node
-            # only works in pygtrie-2.2 broken in pygtrie-2.3.2
             try:
                 stack.append(list(node.children.items()))
             except AttributeError:
