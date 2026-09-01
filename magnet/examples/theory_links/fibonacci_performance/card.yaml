@@ -1,3 +1,4 @@
+name: fibonacci_performance
 title: "Two equivalent programs have very different runtime"
 
 description: |
