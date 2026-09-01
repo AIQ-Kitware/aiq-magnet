@@ -528,3 +528,56 @@ def test_empty_evidence_still_writes_dashboard_run_bundle(
         'available': 0,
         'discovered': 0,
     }
+
+
+def test_dry_run_compiles_the_campaign_without_running_it(
+        kwdagger_recipe_fpath, tmp_path):
+    """`--dry_run` schedules KWDagger with run=0.
+
+    The whole matrix still compiles, so the request can be reported in full --
+    which is the point of asking. Nothing is submitted.
+    """
+    output_path = ub.Path(tmp_path) / 'out'
+    recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    result = recipe.evaluate(backend='serial', dry_run=True)
+
+    requested = result.requested_work
+    assert requested['processes'] == 2
+    assert requested['attempt_status'] == {'not_started': 2}
+    assert requested['outputs_available'] == 0
+
+    assert not sorted((output_path / '_kwdagger' / 'emit').glob('*/results.json'))
+
+
+def test_a_real_run_of_the_same_recipe_does_produce_artifacts(
+        kwdagger_recipe_fpath, tmp_path):
+    """The contrast that makes the dry run mean something."""
+    output_path = ub.Path(tmp_path) / 'out'
+    recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    result = recipe.evaluate(backend='serial')
+
+    assert result.requested_work['outputs_available'] == 2
+    assert len(
+        sorted((output_path / '_kwdagger' / 'emit').glob('*/results.json'))
+    ) == 2
+
+
+def test_dry_run_still_judges_evidence_that_already_exists(
+        kwdagger_recipe_fpath, tmp_path):
+    """A dry run does not pretend the result store is empty.
+
+    Scheduling and evidence discovery are separate: not submitting work says
+    nothing about what has already been computed.
+    """
+    output_path = ub.Path(tmp_path) / 'out'
+    NewEvaluationRecipe(kwdagger_recipe_fpath, output_path).evaluate(
+        backend='serial')
+
+    second = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    result = second.evaluate(backend='serial', dry_run=True)
+    assert len(result.cell_results) == 2
+    assert result.result == 'VERIFIED'
+
+
+def test_dry_run_is_off_by_default(kwdagger_recipe_fpath, tmp_path):
+    assert NewEvaluationCLI()['dry_run'] is False

@@ -30,6 +30,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   scoring.
 * Fixed `_is_missing_aggregate_value` raising on a collection-valued aggregate
   column, which no row carried before gather edges were used.
+* `magnet evaluate_new --dry_run` schedules KWDagger with `run=0`: the matrix
+  still compiles and the request is reported in full, but nothing is submitted
+  and KWDagger writes a driver script instead. Evidence already in the shared
+  result store is still discovered and still judged, since not submitting work
+  says nothing about what has already been computed.
 * `evaluate_new` resolves a recipe's `theory:` block and writes `theory.json`
   into the run directory, as `evaluate_legacy` already did. Links resolve
   before anything is scheduled, so a broken annotation or index fails before

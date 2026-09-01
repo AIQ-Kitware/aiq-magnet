@@ -233,18 +233,24 @@ class KWDaggerProcessor:
         self.request_dag = None
         self.queue = None
 
-    def schedule(self, **schedule_options: Any) -> None:
+    def schedule(
+        self, *, dry_run: bool = False, **schedule_options: Any
+    ) -> None:
         """Submit this invocation's requested experiment campaign.
 
         ``schedule_options`` uses kwdagger's own option names and semantics.
-        MAGNET supplies only the pipeline spec, artifact root, and ``run=True``.
+        MAGNET supplies only the pipeline spec, artifact root, and ``run``.
         The returned compiled graph is retained only to report the operational
         state of this request; it is not used to decide what evidence exists.
+
+        ``dry_run`` schedules with ``run=0``. KWDagger still compiles the whole
+        matrix and hands back the graph, so the request is reported in full; it
+        writes a driver script rather than submitting anything.
         """
         kwd_config = ScheduleEvaluationConfig(
             params=self.params,  # includes pipeline and matrix/grid controls
             root_dpath=self.root_dpath,
-            run=True,
+            run=not dry_run,
             **schedule_options,
         )
         self.request_dag, self.queue = build_schedule(kwd_config)

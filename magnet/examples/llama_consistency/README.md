@@ -148,6 +148,20 @@ magnet evaluate_new \
     --backend serial
 ```
 
+To see what a run would do without doing it, `--dry_run` schedules with
+`run=0`. The matrix compiles and `requested_runs.json` reports the whole
+campaign, but nothing is submitted -- useful for checking the job count before
+committing to a materialize sweep:
+
+```bash
+magnet evaluate_new \
+    magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --output_path ./results_kwdagger --dry_run
+```
+
+Results already in the shared store are still discovered and judged, so a dry
+run over a populated store reports a real verdict.
+
 For tmux execution, `--tmux_workers` is the native KWDagger worker control:
 
 ```bash
