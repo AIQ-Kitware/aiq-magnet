@@ -43,6 +43,24 @@ def load_kwdagger_result(node, node_dpath):
     return util_dotdict.DotDict({})
 
 
+def _sidecar_path(name):
+    """Normalize a sidecar path so the materializer joins it correctly.
+
+    :mod:`materialize_helm_run` treats ``done_fname`` and ``manifest_fname`` as
+    filenames and computes ``out_dpath / name``. KWDagger owns those two paths
+    and passes each one whole, relative to the working directory whenever
+    ``--output_path`` was relative -- and a relative path with directories in it
+    joins onto the node directory to give a second copy of itself nested inside.
+
+    A bare filename is what that join expects, so leave it. Anything carrying
+    directories is made absolute, which wins the join outright.
+    """
+    path = ub.Path(name)
+    if str(path.parent) == '.':
+        return str(path)
+    return str(path.absolute())
+
+
 class MaterializeLlamaRunCLI(kwconf.Config):
     """Reuse or compute one MMLU run for one model."""
 
@@ -79,7 +97,7 @@ class MaterializeLlamaRunCLI(kwconf.Config):
             method=config['method'],
             model=config['model'],
         )
-        out_dpath = ub.Path(config['out_dpath'])
+        out_dpath = ub.Path(config['out_dpath']).absolute()
         out_dpath.ensuredir()
         return MaterializeHelmRunConfig.main(
             argv=False,
@@ -89,8 +107,8 @@ class MaterializeLlamaRunCLI(kwconf.Config):
             precomputed_root=config['precomputed_root'],
             mode=config['mode'],
             materialize=config['materialize'],
-            done_fname=config['done_fname'],
-            manifest_fname=config['manifest_fname'],
+            done_fname=_sidecar_path(config['done_fname']),
+            manifest_fname=_sidecar_path(config['manifest_fname']),
         )
 
 
