@@ -20,6 +20,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `resolved_params.<node>.*`, and available lineage/context fields. A card
   symbol of the same leaf name can still be filled unqualified for the
   transitional `define_metric` behavior.
+* `evaluate_new` resolves a recipe's `theory:` block and writes `theory.json`
+  into the run directory, as `evaluate_legacy` already did. Links resolve
+  before anything is scheduled, so a broken annotation or index fails before
+  jobs run. The theory-link examples are now kwdagger recipes on this path.
+* A short name -- a node-qualified or bare symbol, or a claim's node view --
+  ranges only over `metrics`, `params` and `resolved_params`. `machine`,
+  `resources`, `context` and the always-1 `specified` flags describe the run
+  rather than the result and stay reachable only by qualified name; this keeps
+  `machine.<node>.error`, which appears only when kwdagger's CPU probe fails,
+  from colliding with an error a node measured.
 * A Python claim can address an aggregate column by node alone --
   `llama_compare.gap` -- as well as by its qualified name --
   `metrics.llama_compare.gap`. The short form resolves wherever the node
