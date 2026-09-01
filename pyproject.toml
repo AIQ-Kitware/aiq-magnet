@@ -80,8 +80,10 @@ package-data.magnet = [
   "cards/*.yaml",
   "examples/llama_consistency/*.yaml",
   "examples/llama_consistency/*.md",
+  "examples/theory_links/*.md",
   "examples/theory_links/*/*.yaml",
   "examples/theory_links/*/*.lean",
+  "examples/theory_links/*/*.md",
 ]
 packages.find.namespaces = true
 packages.find.include = [ "magnet*" ]
