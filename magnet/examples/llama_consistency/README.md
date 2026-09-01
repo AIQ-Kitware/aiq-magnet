@@ -126,11 +126,30 @@ python -m magnet.examples.llama_consistency.materialize_run \
 
 ## The declared subject list
 
-MMLU-Lite has 57 subjects. The recipe declares a handful, because averaging over
-a *declared* subset is the price of not globbing -- and it is what makes the
-number reproducible. Widen `materialize_run.subject` to widen the average; the
-job count grows with `models x subjects`, and each materialized run is cached
-and shared across all 36 comparison cells.
+HELM-Lite carries five MMLU subjects, not MMLU's full 57:
+
+```text
+abstract_algebra  college_chemistry  computer_security
+econometrics      us_foreign_policy
+```
+
+All five cover every model the recipe sweeps -- four llama-2/65b runs in lite
+`v1.0.0`, both llama-3 runs in `v1.2.0`. The recipe declares two of them, to
+keep the DAG small.
+
+Averaging over a *declared* subset is the price of not globbing, and it is what
+makes the number reproducible. It also means the card can name a subject that
+was never downloaded: `mode: reuse_only` stops and says which run is missing
+rather than quietly averaging fewer. Confirm against a cache before widening
+the list:
+
+```bash
+ls data/crfm-helm-public/lite/benchmark_output/runs/*/ \
+  | sed -n 's/^mmlu:subject=\([^,]*\).*/\1/p' | sort -u
+```
+
+The job count grows with `models x subjects`, and each materialized run is
+cached and shared across all 36 comparison cells.
 
 ## Run the recipe with the new evaluator
 

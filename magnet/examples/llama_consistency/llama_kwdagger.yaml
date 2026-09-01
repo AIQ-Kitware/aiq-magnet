@@ -118,7 +118,16 @@ kwdagger:
           model: null
           subject: null
           precomputed_root: "./data/crfm-helm-public"
-          mode: compute_if_missing
+          # `reuse_only` because it is the mode that works from a cache alone.
+          # A run that is not there stops the campaign and names itself, which
+          # beats averaging over whatever happened to be present.
+          #
+          # `compute_if_missing` runs HELM for a miss. It needs more than this
+          # card supplies: helm-run requires `--max-eval-instances`, and a
+          # computed run has to match the instance count of the precomputed
+          # ones it will be averaged with, or the mean silently mixes two
+          # different measurements. Set `max_eval_instances` alongside it.
+          mode: reuse_only
         # The node's own directory is the artifact: it holds the run under
         # benchmark_output/runs/<suite>/. DONE is what marks it complete.
         out_paths:
@@ -173,9 +182,23 @@ kwdagger:
   # Two axes over runs to materialize, two over models to compare. The model
   # lists are the same set: every model compared must have been materialized.
   #
-  # MMLU-Lite has 57 subjects. This example declares a handful so the DAG stays
-  # readable; averaging over a declared subset is the price of not globbing,
-  # and it is what makes the number reproducible.
+  # The declared subjects have to exist in the cache. That is the cost of not
+  # globbing: the card names what it averages over, so it can name something
+  # that was never downloaded, and `reuse_only` says so rather than quietly
+  # averaging fewer runs.
+  #
+  # HELM-Lite carries five MMLU subjects, not MMLU's full 57:
+  #
+  #   abstract_algebra  college_chemistry  computer_security
+  #   econometrics      us_foreign_policy
+  #
+  # All five cover every model swept below -- four llama-2/65b in lite v1.0.0
+  # and both llama-3 in v1.2.0. Two are declared here to keep the DAG small;
+  # widening the list is what makes the average more representative. Confirm
+  # against a cache before adding to it:
+  #
+  #   ls data/crfm-helm-public/lite/benchmark_output/runs/*/ \
+  #     | sed -n 's/^mmlu:subject=\([^,]*\).*/\1/p' | sort -u
   matrix:
     materialize_run.model:
       - meta/llama-2-13b
@@ -186,10 +209,7 @@ kwdagger:
       - meta/llama-65b
     materialize_run.subject:
       - abstract_algebra
-      - anatomy
-      - astronomy
-      - college_biology
-      - philosophy
+      - college_chemistry
     llama_predict.base_model:
       - meta/llama-2-13b
       - meta/llama-2-70b
