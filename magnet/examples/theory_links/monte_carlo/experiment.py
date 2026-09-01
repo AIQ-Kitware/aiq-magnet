@@ -12,6 +12,8 @@ import json
 from math import pi
 
 import kwconf
+import kwutil
+import ubelt as ub
 
 import magnet.theory as theory
 
@@ -40,16 +42,30 @@ class MonteCarloCLI(kwconf.Config):
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
         seed = int(config['seed'])
         samples = int(config['samples'])
-        payload = {
-            'seed': seed,
-            'samples': samples,
-            'exact': exact_area_ratio(),
-            'estimate': estimate_area_ratio(seed, samples),
-            'pi': estimate_pi(seed, samples),
-            'error': estimation_error(seed, samples),
+
+        context = kwutil.ProcessContext(
+            name='monte_carlo',
+            type='process',
+            config=kwutil.Json.ensure_serializable(dict(config)),
+            track_emissions=False,
+        )
+        context.start()
+        data = {
+            'result': {
+                'metrics': {
+                    'seed': seed,
+                    'samples': samples,
+                    'exact': exact_area_ratio(),
+                    'estimate': estimate_area_ratio(seed, samples),
+                    'pi': estimate_pi(seed, samples),
+                    'error': estimation_error(seed, samples),
+                },
+            },
+            'info': [context.stop()],
         }
-        with open(config['out_fpath'], 'w') as file:
-            json.dump(payload, file, indent=2)
+        out_fpath = ub.Path(config['out_fpath'])
+        out_fpath.parent.ensuredir()
+        out_fpath.write_text(json.dumps(data, indent=2))
 
 #: Numerical Recipes constants. Written out so this file depends on nothing.
 _LCG_MODULUS = 2 ** 32
