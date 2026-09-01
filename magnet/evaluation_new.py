@@ -215,14 +215,14 @@ class ClaimResultNamespace:
     Attribute-access view of one kwdagger aggregate row for a Python claim.
 
     KWDagger aggregate rows use qualified columns such as
-    ``metrics.llama_compare.gap``, ``params.llama_predict.base_model``, and
+    ``metrics.llama_evaluate.gap``, ``params.llama_evaluate.base_model``, and
     ``resolved_params.llama_predict.base_model``. This proxy exposes the flat
     row through the corresponding nested attribute expressions while recording
     which leaves the claim actually accessed.
 
     A claim reaches a value two ways. The qualified path names the column
-    outright -- ``metrics.llama_compare.gap`` -- and always works. The node
-    view drops the namespace -- ``llama_compare.gap`` -- and works when the
+    outright -- ``metrics.llama_evaluate.gap`` -- and always works. The node
+    view drops the namespace -- ``llama_evaluate.gap`` -- and works when the
     node reports that name once. The namespace is not something a card author
     chose: ``metrics``/``machine``/``resources``/``context`` come from the
     node's ``load_result`` loader and ``params``/``resolved_params`` from
@@ -704,7 +704,7 @@ def _fill_declared_symbols(
     resolves a ``python:`` symbol.
 
     A shorter name matches the tail of a column on segment boundaries:
-    ``llama_compare.base_score``, or the bare ``base_score`` legacy cards
+    ``llama_evaluate.base_score``, or the bare ``base_score`` legacy cards
     carry. Matches that disagree only warn here -- a symbol labels evidence,
     where a claim decides a verdict and so refuses instead.
     """

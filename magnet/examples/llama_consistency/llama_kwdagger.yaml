@@ -32,13 +32,13 @@ links:
 
 # A claim addresses a kwdagger aggregate column two ways. `<node>.<field>` is
 # the short form used here. The qualified `<namespace>.<node>.<field>` --
-# `metrics.llama_compare.gap` -- always works and is what the recipe records as
+# `metrics.llama_evaluate.gap` -- always works and is what the recipe records as
 # evidence either way. The short form resolves wherever the node reports that
 # name once; where two namespaces report it and disagree, it refuses and names
 # them, because which one a verdict rested on should never be a matter of luck.
 claim:
   python: |
-    c = llama_compare
+    c = llama_evaluate
     assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
 # Keep this demo snapshot tied to the matrix requested by this invocation even
@@ -70,7 +70,7 @@ evidence:
 # fan-in node, which reports its aggregate as a single node output for a
 # symbol like this one to read off.
 symbols:
-  llama_compare.base_score:
+  llama_evaluate.base_score:
     metadata:
       display_name: "Average Exact Match"
       display: True
@@ -79,78 +79,110 @@ symbols:
         aggregation_strategy:
           type: 'mean'
 
-  resolved_params.llama_predict.helm_runs_path:
+  # Provenance, now that there is no corpus path to name: how many declared
+  # HELM runs this average was taken over. A path said where to look; this says
+  # what was actually used, which is the question a reader had anyway.
+  llama_evaluate.gathered_runs:
     metadata:
-      display_name: "HELM Data Path"
+      display_name: "HELM runs gathered"
       display: True
 
 kwdagger:
   # MAGNET asks KWDagger aggregate for every available result row from this
   # node in the shared result store. Its metrics appear as
-  # llama_compare.<field>, or metrics.llama_compare.<field> qualified, in the
+  # llama_evaluate.<field>, or metrics.llama_evaluate.<field> qualified, in the
   # transitional Python claim above.
-  result_node: llama_compare
+  result_node: llama_evaluate
 
-  # This is a native declarative KWDagger pipeline. The node interfaces are
-  # intentionally written out here so the complete example is visible in one
-  # file. A separate example can demonstrate ProcessNode / kwconf-derived
-  # interfaces later.
+  # Two nodes, and the edge between them is the point.
+  #
+  # `materialize_run` turns each MMLU run this comparison needs into an
+  # artifact of its own. `llama_evaluate` receives those artifacts as a gathered
+  # collection and scores them. Nothing scans a directory: the set of runs a
+  # verdict rests on is declared by the matrix, resolved when the pipeline is
+  # compiled, and recorded in the result. A run that appears in a shared HELM
+  # cache after the fact cannot silently join an average.
   pipeline:
     nodes:
-      # Read cached HELM-Lite results for one base/comparison model pair and
-      # materialize the two scores as a JSON artifact.
-      llama_predict:
-        # KWDagger formats the declared parameters onto this executable's CLI.
-        executable: "python -m magnet.examples.llama_consistency.llama_predict"
-        # Algorithm parameters are ordinary configurable values. Matrix keys
-        # below address them as <node>.<parameter>.
+      # Reuse one cached HELM run per (model, subject), or compute it when the
+      # pipeline has the deployment configuration to do so. Materializing by
+      # symlink keeps the cache single-copy.
+      materialize_run:
+        executable: "python -m magnet.examples.llama_consistency.materialize_run"
+        algo_params:
+          model: null
+          subject: null
+          precomputed_root: "./data/crfm-helm-public"
+          mode: reuse_only
+        # The node's own directory is the artifact: it holds the run under
+        # benchmark_output/runs/<suite>/. DONE is what marks it complete.
+        out_paths:
+          out_dpath: "."
+          done_fname: DONE
+        primary_out_key: done_fname
+        # A materializer yields an artifact, not a measurement. Aggregate loads
+        # a result node's predecessors too, so say there is nothing to read
+        # rather than let the generic loader parse the DONE sentinel as JSON.
+        load_result: "magnet.examples.llama_consistency.materialize_run.load_kwdagger_result"
+
+      # Average exact_match across the gathered subjects for two models and
+      # report the gap between them.
+      llama_evaluate:
+        executable: "python -m magnet.examples.llama_consistency.llama_evaluate"
+        in_paths: [run_dpaths]
         algo_params:
           base_model: null
           comp_model: null
           threshold: 0.1
-          helm_runs_path: "./data/crfm-helm-public/lite/benchmark_output"
-        # Output paths are artifacts produced by this node.
-        out_paths:
-          results_fpath: results.json
-        # Marks the output that represents this node's primary result artifact.
-        primary_out_key: results_fpath
-        # This example predates KWDagger's generic result envelope, so its
-        # loader maps the existing flat JSON + ProcessContext into the normal
-        # aggregate namespaces without changing the artifact format.
-        load_result: "magnet.examples.llama_consistency.llama_predict.load_kwdagger_result"
-
-      # Reduce the score artifact to the gap consumed by the card claim. This
-      # second stage is pedagogical: this particular calculation could live in
-      # llama_predict, but keeping it separate demonstrates a real artifact
-      # edge and explicit result-node handoff.
-      llama_compare:
-        executable: "python -m magnet.examples.llama_consistency.llama_compare"
-        # This input path is supplied by the edge below rather than the matrix.
-        in_paths: [scores_fpath]
         out_paths:
           out_fpath: comparison.json
-        # KWDagger aggregate discovers this primary artifact. The custom
-        # loader maps its existing flat JSON into metrics.llama_compare.*.
         primary_out_key: out_fpath
-        load_result: "magnet.examples.llama_consistency.llama_compare.load_kwdagger_result"
 
-    # Connecting an output port to an input port both supplies the artifact
-    # path and establishes the execution dependency.
+  # A gather edge: many materialized runs, one collection-valued input.
+  #
+  # `group_by: []` gives every evaluate cell the whole declared corpus, and the
+  # cell picks its two models out of it. Grouping by model instead would not
+  # work: a cell needs runs for two different models, which is a self-join
+  # rather than a group.
+  #
+  # KWDagger hands the target a newline-delimited manifest of the source
+  # directories, so `--run_dpaths` names a file listing exactly what was used.
     edges:
-      - llama_predict.results_fpath -> llama_compare.scores_fpath
+      - src: materialize_run.out_dpath
+        dst: llama_evaluate.run_dpaths
+        gather:
+          group_by: []
+          order_by: [model, subject]
+          require: all_success
 
-  # KWDagger expands this matrix into concrete pipeline configurations. The
-  # two six-element axes below form the 36 model-pair cells for this recipe.
+  # Two axes over runs to materialize, two over models to compare. The model
+  # lists are the same set: every model compared must have been materialized.
+  #
+  # MMLU-Lite has 57 subjects. This example declares a handful so the DAG stays
+  # readable; averaging over a declared subset is the price of not globbing,
+  # and it is what makes the number reproducible.
   matrix:
-    llama_predict.helm_runs_path: './data/crfm-helm-public/lite/benchmark_output'
-    llama_predict.base_model:
+    materialize_run.model:
       - meta/llama-2-13b
       - meta/llama-2-70b
       - meta/llama-2-7b
       - meta/llama-3-70b
       - meta/llama-3-8b
       - meta/llama-65b
-    llama_predict.comp_model:
+    materialize_run.subject:
+      - abstract_algebra
+      - anatomy
+      - astronomy
+      - college_biology
+      - philosophy
+    llama_evaluate.base_model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
+    llama_evaluate.comp_model:
       - meta/llama-2-13b
       - meta/llama-2-70b
       - meta/llama-2-7b

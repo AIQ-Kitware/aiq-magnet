@@ -76,7 +76,7 @@ def test_llama_card(
         written = sorted(ub.Path(results_path).glob('*/symbol_metadata.json'))
         assert len(written) == 1
         assert json.loads(written[0].read_text()) == {
-            'llama_compare.base_score': {
+            'llama_evaluate.base_score': {
                 'display_name': 'Average Exact Match',
                 'display': True,
                 'define_metric': {
@@ -84,8 +84,8 @@ def test_llama_card(
                     'aggregation_strategy': {'type': 'mean'},
                 },
             },
-            'resolved_params.llama_predict.helm_runs_path': {
-                'display_name': 'HELM Data Path',
+            'llama_evaluate.gathered_runs': {
+                'display_name': 'HELM runs gathered',
                 'display': True,
             },
         }
@@ -102,8 +102,8 @@ def _card_model_matrix(card):
     elif card.has_kwdagger:
         matrix = card.kwdagger['matrix']
         return (
-            matrix['llama_predict.base_model'],
-            matrix['llama_predict.comp_model'],
+            matrix['llama_evaluate.base_model'],
+            matrix['llama_evaluate.comp_model'],
         )
     else:
         return (
@@ -121,8 +121,10 @@ def _limit_model_matrix(card, models):
         params['comp_model'] = models
     elif card.has_kwdagger:
         matrix = card.kwdagger['matrix']
-        matrix['llama_predict.base_model'] = models
-        matrix['llama_predict.comp_model'] = models
+        matrix['llama_evaluate.base_model'] = models
+        matrix['llama_evaluate.comp_model'] = models
+        # Only materialize what the comparison actually needs.
+        matrix['materialize_run.model'] = models
     else:
         card.replace({'base_model': models, 'comp_model': models})
 
@@ -142,7 +144,14 @@ def override_path(card, corrected_path):
 
         card.pipeline['llama_predict']['executable'] = python_module
     elif card.has_kwdagger:
-        card.kwdagger['matrix']['llama_predict.helm_runs_path'] = corrected_path
+        # The recipe materializes runs out of a precomputed HELM root, so it
+        # takes the cache root rather than a benchmark_output directory.
+        matrix = card.kwdagger['matrix']
+        matrix['materialize_run.precomputed_root'] = str(
+            ub.Path(corrected_path).parent.parent
+        )
+        # The hermetic fixture carries these two subjects.
+        matrix['materialize_run.subject'] = ['abstract_algebra', 'anatomy']
     else:
         card.replace({'helm_runs_path': corrected_path})
 

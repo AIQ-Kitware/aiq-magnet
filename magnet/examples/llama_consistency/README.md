@@ -4,28 +4,46 @@ This directory contains the kwdagger version of the Llama consistency example.
 The complete pipeline is declared inline in `llama_kwdagger.yaml`:
 
 ```text
-llama_predict -> llama_compare
+materialize_run -> llama_evaluate
 ```
 
-`llama_predict.py` reads precomputed HELM-Lite MMLU results and writes the two
-model scores for one matrix cell. `llama_compare.py` reads that artifact and
-writes the score gap. The card declares `llama_compare` as its `result_node`, so
+`materialize_run.py` materializes one precomputed HELM-Lite MMLU run per
+`(model, subject)`. `llama_evaluate.py` receives those runs as a gathered
+collection, averages each model's exact_match across the subjects, and writes
+the score gap. The card declares `llama_evaluate` as its `result_node`, so
 KWDagger aggregate loads its available results and exposes them to the
-transitional Python claim as `metrics.llama_compare.<field>`. The YAML keeps
-explicit node parameters, while each node's `load_result` hook maps the
-example's existing flat JSON artifacts into KWDagger's aggregate namespace.
+transitional Python claim as `llama_evaluate.<field>` -- or
+`metrics.llama_evaluate.<field>` qualified.
+
+`llama_predict.py` is still here because the legacy `cards/llama_pipeline.yaml`
+runs it. The kwdagger recipe no longer does.
 
 ## Why this example has two nodes
 
-The Llama calculation itself does not require a two-stage pipeline.
-`llama_predict` could compute the gap and emit the final result directly, and a
-one-node pipeline would be simpler for this particular problem.
+Because the second node needs the first, and the edge is the interesting part.
 
-The extra `llama_compare` stage is kept for now because it makes the small
-example exercise a declarative kwdagger edge, artifact handoff, and explicit
-`result_node`. It should eventually be replaced by an example whose computation
-actually requires two stages rather than preserving a second node only for
-pedagogy.
+`materialize_run` turns each MMLU run the comparison needs into an artifact of
+its own -- reused from the downloaded HELM cache by symlink, or computed when
+the pipeline has the deployment configuration for it. `llama_evaluate` receives
+those artifacts as a **gathered collection** and scores them.
+
+Nothing scans a directory. The set of runs a verdict rests on is declared by the
+matrix, resolved when the pipeline is compiled, and recorded in the result, so a
+run that lands in a shared HELM cache later cannot silently join an average.
+That is the difference between "the data was somewhere on disk" and "these runs
+are the inputs to this number".
+
+```text
+materialize_run[model, subject]        one artifact per HELM run
+     |
+     |  gather (group_by: []) -> newline-delimited manifest
+     v
+llama_evaluate[base_model, comp_model] averages subjects, reports the gap
+```
+
+`group_by: []` hands every evaluate cell the whole declared corpus, and the cell
+picks its two models out of it. Grouping by model instead would not work: a cell
+needs runs for *two* models, which is a self-join rather than a group.
 
 ## Prepare the HELM-Lite cache
 
@@ -55,11 +73,10 @@ The card expects the resulting benchmark output at:
 The downloader is incremental, so rerunning these commands only fills in data
 that is missing or changed.
 
-## Exercise the HELM materializer
+## Exercise the HELM materializer directly
 
-MAGNET also provides a single-run materializer for kwdagger pipelines that need
-to reuse a cached HELM run or compute one when it is missing. After downloading
-the cache above, this command exercises the reuse path without launching HELM:
+The recipe drives `materialize_run` for you, but the underlying single-run
+materializer is worth seeing on its own. After downloading the cache above:
 
 ```bash
 python -m magnet.backends.helm.cli.materialize_helm_run \
@@ -74,13 +91,27 @@ python -m magnet.backends.helm.cli.materialize_helm_run \
 The output directory contains the selected HELM run under
 `benchmark_output/runs/`, an `adapter_manifest.json`, and a `DONE` sentinel.
 Use `--mode=compute_if_missing` when a pipeline has the model deployment
-configuration needed to compute a cache miss. `--mode=force_recompute` bypasses
-cache reuse.
+configuration needed to compute a cache miss; `--mode=force_recompute` bypasses
+reuse entirely.
 
-This Llama recipe reads the complete downloaded HELM-Lite corpus rather than one
-materialized run because each cell compares scores averaged across the MMLU
-subjects. The materializer is the lower-level primitive for held-out pipelines
-where each missing `(model, dataset)` run is represented by a kwdagger node.
+The recipe's node is a thin wrapper over this. It takes `--model` and
+`--subject` separately rather than one composed `run_entry`, so the card's
+matrix sweeps the two axes it actually means:
+
+```bash
+python -m magnet.examples.llama_consistency.materialize_run \
+    --model=meta/llama-2-13b --subject=philosophy \
+    --precomputed_root=./data/crfm-helm-public \
+    --out_dpath=./results/materialized/llama-2-13b-philosophy
+```
+
+## The declared subject list
+
+MMLU-Lite has 57 subjects. The recipe declares a handful, because averaging over
+a *declared* subset is the price of not globbing -- and it is what makes the
+number reproducible. Widen `materialize_run.subject` to widen the average; the
+job count grows with `models x subjects`, and each materialized run is cached
+and shared across all 36 comparison cells.
 
 ## Run the recipe with the new evaluator
 
@@ -219,22 +250,37 @@ The recipe uses the standard declarative kwdagger YAML form:
 
 ```yaml
 kwdagger:
-  result_node: llama_compare
+  result_node: llama_evaluate
   pipeline:
     nodes:
-      llama_predict:
-        executable: "python -m magnet.examples.llama_consistency.llama_predict"
-        # ...
-      llama_compare:
-        executable: "python -m magnet.examples.llama_consistency.llama_compare"
+      materialize_run:
+        executable: "python -m magnet.examples.llama_consistency.materialize_run"
+        out_paths: {out_dpath: ".", done_fname: DONE}
+        primary_out_key: done_fname
+        # A materializer yields an artifact, not a measurement. Aggregate loads
+        # a result node's predecessors too, so this says there is nothing to
+        # read rather than let the generic loader parse DONE as JSON.
+        load_result: "...materialize_run.load_kwdagger_result"
+      llama_evaluate:
+        executable: "python -m magnet.examples.llama_consistency.llama_evaluate"
+        in_paths: [run_dpaths]
         # ...
     edges:
-      - llama_predict.results_fpath -> llama_compare.scores_fpath
+      - src: materialize_run.out_dpath
+        dst: llama_evaluate.run_dpaths
+        gather:
+          group_by: []
+          order_by: [model, subject]
+          require: all_success
   matrix:
     # ...
 ```
 
 There is no separate Python pipeline definition. The recipe owns the DAG
-declaration; the Python files implement the node executables and, for these
-legacy flat JSON artifacts, small KWDagger result loaders. New node formats can
-use KWDagger's generic result envelope instead.
+declaration; the Python files implement the node executables.
+
+`llama_evaluate` writes KWDagger's generic result envelope -- metrics under
+`result.metrics` -- so it needs no `load_result` of its own. The one on
+`materialize_run` exists for the opposite reason: to declare that the node has
+no result to load. A Python node says that by not defining the method; a
+declarative node inherits the generic one whether it wants it or not.
