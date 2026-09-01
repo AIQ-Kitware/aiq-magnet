@@ -1,4 +1,4 @@
-"""
+r"""
 Materialize one HELM run for this example, addressed by model and subject.
 
 :mod:`magnet.backends.helm.cli.materialize_helm_run` takes a single
@@ -45,8 +45,6 @@ def load_kwdagger_result(node, node_dpath):
 
 class MaterializeLlamaRunCLI(kwconf.Config):
     """Reuse or compute one MMLU run for one model."""
-
-    __command__ = 'materialize_llama_run'
 
     model: str = kwconf.Value(
         None, required=True, help='HELM model common name, e.g. meta/llama-2-13b')

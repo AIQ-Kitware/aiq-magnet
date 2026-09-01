@@ -17,7 +17,7 @@ import magnet.theory as theory
 
 
 class CoinFlipCLI(kwconf.Config):
-    """
+    r"""
     Enumerate every sequence of flips and compare against the binomial law.
 
     Already a kwdagger node executable, so porting the card is a block of YAML
@@ -27,8 +27,6 @@ class CoinFlipCLI(kwconf.Config):
         python -m magnet.examples.theory_links.coin_flip.experiment \
             --n_flips=10 --out_fpath=coin_flip.json
     """
-
-    __command__ = 'coin_flip'
 
     n_flips: int = kwconf.Value(10, help='number of fair flips to enumerate')
     out_fpath: str = kwconf.Value(

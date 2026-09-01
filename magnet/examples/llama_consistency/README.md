@@ -45,10 +45,24 @@ llama_evaluate[base_model, comp_model] averages subjects, reports the gap
 picks its two models out of it. Grouping by model instead would not work: a cell
 needs runs for *two* models, which is a self-join rather than a group.
 
-## Prepare the HELM-Lite cache
+## Provide a HELM-Lite cache
 
-The example uses Llama results from two public HELM-Lite releases. Download only
-the MMLU Llama runs:
+`materialize_run` reuses runs from a local HELM cache; it does not fetch them.
+The recipe runs `mode: reuse_only`, so a run it cannot find is an error rather
+than a silently smaller average. Something has to put the runs on disk first.
+
+**If you already have a HELM corpus**, skip the download and point the recipe at
+it -- any directory containing nested `benchmark_output` directories works:
+
+```bash
+magnet evaluate_new \
+    magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --params="matrix: {materialize_run.precomputed_root: /path/to/crfm-helm-public}" \
+    --output_path ./results_kwdagger --backend serial
+```
+
+**Otherwise**, download the MMLU Llama runs from the two public HELM-Lite
+releases the example uses:
 
 ```bash
 magnet download helm \
@@ -64,14 +78,18 @@ magnet download helm \
     --runs='regex:mmlu.*model=.*llama.*'
 ```
 
-The card expects the resulting benchmark output at:
+That is where the card looks by default:
 
 ```text
-./data/crfm-helm-public/lite/benchmark_output
+./data/crfm-helm-public
 ```
 
 The downloader is incremental, so rerunning these commands only fills in data
 that is missing or changed.
+
+The third option is `mode: compute_if_missing`, which runs HELM to produce a run
+it cannot reuse. That needs a working HELM deployment and real model access, so
+it is not how you try the example.
 
 ## Exercise the HELM materializer directly
 

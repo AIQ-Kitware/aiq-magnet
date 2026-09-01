@@ -17,7 +17,7 @@ import ubelt as ub
 import magnet.theory as theory
 
 class MonteCarloCLI(kwconf.Config):
-    """
+    r"""
     Estimate the quarter-disc area ratio from a seeded sample.
 
     Already a kwdagger node executable, so porting the card is a block of YAML
@@ -27,8 +27,6 @@ class MonteCarloCLI(kwconf.Config):
         python -m magnet.examples.theory_links.monte_carlo.experiment \
             --seed=1 --samples=20000 --out_fpath=monte_carlo.json
     """
-
-    __command__ = 'monte_carlo'
 
     seed: int = kwconf.Value(1, help='LCG seed; one job per value')
     samples: int = kwconf.Value(20000, help='points to draw')

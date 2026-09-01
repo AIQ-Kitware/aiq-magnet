@@ -25,8 +25,6 @@ import magnet.theory as theory
 class FibonacciPerformanceCLI(kwconf.Config):
     """Benchmark the two implementations and write a JSON summary."""
 
-    __command__ = 'fibonacci_performance'
-
     repeats: int = kwconf.Value(5, help='timing repetitions per implementation')
     out_fpath: str = kwconf.Value(
         'fibonacci_performance.json',

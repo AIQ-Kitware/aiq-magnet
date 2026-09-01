@@ -1,4 +1,4 @@
-"""
+r"""
 Compare two Llama models over the MMLU runs this pipeline materialized.
 
 Reads a kwdagger gather manifest -- one materialized run directory per line --
@@ -79,8 +79,6 @@ def mean_exact_match_by_model(run_dpaths):
 
 class LlamaEvaluateCLI(kwconf.Config):
     """Score two models over the gathered runs and report the gap."""
-
-    __command__ = 'llama_evaluate'
 
     run_dpaths: str = kwconf.Value(
         None, required=True, tags=['in_path'],
