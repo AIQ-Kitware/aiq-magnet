@@ -20,6 +20,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `resolved_params.<node>.*`, and available lineage/context fields. A card
   symbol of the same leaf name can still be filled unqualified for the
   transitional `define_metric` behavior.
+* `materialize_run` forwards the materializer's remaining parameters --
+  `max_eval_instances`, the HuggingFace and registration options, `num_threads`
+  and friends -- instead of dropping them. Without them `compute_if_missing`
+  was reachable but unusable.
 * The llama example's pipeline is
   `materialize_run -> llama_predict -> llama_compare`. Each MMLU run it needs is
   materialized as its own artifact and reaches the scoring node through a

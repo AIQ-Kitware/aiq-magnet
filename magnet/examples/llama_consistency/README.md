@@ -151,6 +151,38 @@ ls data/crfm-helm-public/lite/benchmark_output/runs/*/ \
 The job count grows with `models x subjects`, and each materialized run is
 cached and shared across all 36 comparison cells.
 
+## Trying it on a smaller model
+
+Nothing in HELM-Lite is smaller than 7B, so the shipped sweep can only reuse
+precomputed runs. SmolLM2 is the cheap way to exercise the compute path: HELM
+registers it already -- `huggingface/smollm2-135m` and `-360m` map to
+`HuggingFaceTB/SmolLM2-135M` and `-360M` in HELM's own `model_deployments.yaml`
+-- so no sidecar registration files are needed.
+
+```bash
+magnet evaluate_new \
+    magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --output_path ./results_smol --backend serial \
+    --params "matrix:
+      materialize_run.subject: [abstract_algebra]
+      materialize_run.model: [huggingface/smollm2-135m, huggingface/smollm2-360m]
+      llama_predict.base_model: [huggingface/smollm2-135m, huggingface/smollm2-360m]
+      llama_predict.comp_model: [huggingface/smollm2-135m, huggingface/smollm2-360m]
+      materialize_run.mode: compute_if_missing
+      materialize_run.max_eval_instances: 10"
+```
+
+`max_eval_instances` is an override rather than a card field because it belongs
+to the run, not the claim. helm-run requires it, and it is identity-bearing: a
+run computed at 10 instances must not be averaged with precomputed runs at their
+full count, or the mean mixes two different measurements. That is also why this
+replaces the model sweep rather than adding to it -- one invocation per model
+family, so a computed run never lands in a reused run's average.
+
+Computing needs a working HELM deployment and will download weights. Two models
+give a real comparison; one model can only compare with itself, which asserts
+`0 < 0.1` and passes however broken the plumbing is.
+
 ## Run the recipe with the new evaluator
 
 `evaluate_new` forwards the KWDagger schedule controls it exposes using the

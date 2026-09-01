@@ -103,3 +103,39 @@ def test_a_relative_output_path_does_not_nest_the_node_directory(
 
     assert (ub.Path(tmp_path) / out_dpath / 'DONE').exists()
     assert not (ub.Path(tmp_path) / out_dpath / 'runs').exists()
+
+
+def test_compute_parameters_reach_the_materializer(monkeypatch):
+    """The wrapper must not narrow the tool it wraps.
+
+    It exists to make `model` and `subject` matrix axes. Dropping everything it
+    did not name left `compute_if_missing` reachable but unusable: no way to set
+    `max_eval_instances`, which helm-run refuses to start without.
+    """
+    from magnet.examples.llama_consistency import materialize_run
+
+    seen = {}
+
+    def spy(**kwargs):
+        seen.update(kwargs)
+
+    monkeypatch.setattr(
+        materialize_run.MaterializeHelmRunConfig, 'main', staticmethod(spy))
+    materialize_run.MaterializeLlamaRunCLI.main(
+        argv=False,
+        model='huggingface/smollm2-135m',
+        subject='abstract_algebra',
+        precomputed_root='/nowhere',
+        out_dpath='/tmp/unused-by-the-spy',
+        max_eval_instances=10,
+        enable_huggingface_models='HuggingFaceTB/SmolLM2-135M',
+        num_threads=4,
+    )
+
+    assert seen['max_eval_instances'] == 10
+    assert seen['enable_huggingface_models'] == 'HuggingFaceTB/SmolLM2-135M'
+    assert seen['num_threads'] == 4
+    assert seen['run_entry'] == (
+        'mmlu:subject=abstract_algebra,method=multiple_choice_joint,'
+        'model=huggingface/smollm2-135m'
+    )

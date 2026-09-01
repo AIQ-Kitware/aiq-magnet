@@ -43,6 +43,20 @@ def load_kwdagger_result(node, node_dpath):
     return util_dotdict.DotDict({})
 
 
+#: Passed to the materializer as given.
+_FORWARDED = [
+    'max_eval_instances',
+    'enable_huggingface_models',
+    'enable_local_huggingface_models',
+    'model_deployments_fpath',
+    'model_metadata_fpath',
+    'tokenizer_configs_fpath',
+    'require_per_instance_stats',
+    'num_threads',
+    'local_path',
+]
+
+
 def _sidecar_path(name):
     """Normalize a sidecar path so the materializer joins it correctly.
 
@@ -72,6 +86,31 @@ class MaterializeLlamaRunCLI(kwconf.Config):
         'multiple_choice_joint', help='HELM adaptation method')
     precomputed_root: str = kwconf.Value(
         None, required=True, help='root of the downloaded HELM cache')
+
+    # Forwarded to the materializer untouched. They are what computing a run
+    # takes, as opposed to reusing one, and a wrapper that dropped them left
+    # `compute_if_missing` reachable but unusable.
+    max_eval_instances: int | None = kwconf.Value(
+        None,
+        help=(
+            'instances to evaluate when computing. helm-run requires it, and '
+            'it is identity-bearing: a computed run has to match the instance '
+            'count of the precomputed runs it will be averaged with'
+        ))
+    enable_huggingface_models: str | None = kwconf.Value(
+        None, help='HuggingFace model ids to make available to helm-run')
+    enable_local_huggingface_models: str | None = kwconf.Value(
+        None, help='local HuggingFace model paths to make available')
+    model_deployments_fpath: str | None = kwconf.Value(
+        None, help='HELM model deployment registrations')
+    model_metadata_fpath: str | None = kwconf.Value(
+        None, help='HELM model metadata registrations')
+    tokenizer_configs_fpath: str | None = kwconf.Value(
+        None, help='HELM tokenizer registrations')
+    require_per_instance_stats: bool = kwconf.Value(
+        True, help='require per_instance_stats.json when reusing')
+    num_threads: int = kwconf.Value(1, help='helm-run threads')
+    local_path: str = kwconf.Value('prod_env', help='helm-run local path')
     suite: str = kwconf.Value(
         'llama-consistency', help='suite name for the materialized run')
     mode: str = kwconf.Value(
@@ -109,6 +148,7 @@ class MaterializeLlamaRunCLI(kwconf.Config):
             materialize=config['materialize'],
             done_fname=_sidecar_path(config['done_fname']),
             manifest_fname=_sidecar_path(config['manifest_fname']),
+            **{key: config[key] for key in _FORWARDED},
         )
 
 
