@@ -127,6 +127,17 @@ class NewEvaluationCLI(kwconf.Config):
         ),
     )
 
+    print_commands = kwconf.Value(
+        'auto',
+        isflag=True,
+        help=(
+            'KWDagger/cmd_queue schedule option: print each job command. '
+            "'auto' prints them unless the queue is large enough that "
+            'cmd_queue suppresses them, which is when you would want to ask '
+            'for them explicitly.'
+        ),
+    )
+
     dry_run = kwconf.Flag(
         False,
         help=(
@@ -202,6 +213,7 @@ class NewEvaluationCLI(kwconf.Config):
                 'skip_existing',
                 'cache',
                 'max_configs',
+                'print_commands',
                 'dry_run',
             ]
         }

@@ -30,6 +30,11 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   scoring.
 * Fixed `_is_missing_aggregate_value` raising on a collection-valued aggregate
   column, which no row carried before gather edges were used.
+* `magnet evaluate_new --print_commands` forwards cmd_queue's option of the
+  same name, so a run can be asked to show each job command. It defaults to
+  cmd_queue's `auto`, which prints them unless the queue is large enough to be
+  suppressed -- the case where asking explicitly is the point. Pairs with
+  `--dry_run` to read a campaign before running it.
 * `magnet evaluate_new --dry_run` schedules KWDagger with `run=0`: the matrix
   still compiles and `requested_runs.json` reports the campaign in full, but
   nothing is submitted and KWDagger writes a driver script instead. No evidence

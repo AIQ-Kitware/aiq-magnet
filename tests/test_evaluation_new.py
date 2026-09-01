@@ -601,3 +601,28 @@ def test_dry_run_judges_nothing_even_when_evidence_exists(
 
 def test_dry_run_is_off_by_default(kwdagger_recipe_fpath, tmp_path):
     assert NewEvaluationCLI()['dry_run'] is False
+
+
+@pytest.mark.parametrize('print_commands,expect_commands', [(1, True), (0, False)])
+def test_print_commands_is_forwarded_to_cmd_queue(
+        kwdagger_recipe_fpath, tmp_path, capsys, print_commands,
+        expect_commands):
+    """`--print_commands` reaches cmd_queue and decides whether jobs are shown.
+
+    Pinned with `print_queue=0`: the queue graph embeds the same command text,
+    so leaving it on would make this pass whatever `print_commands` said.
+    """
+    output_path = ub.Path(tmp_path) / 'out'
+    NewEvaluationRecipe(kwdagger_recipe_fpath, output_path).evaluate(
+        backend='serial',
+        dry_run=True,
+        print_commands=print_commands,
+        print_queue=0,
+    )
+    shown = 'emit.py' in capsys.readouterr().out
+    assert shown is expect_commands
+
+
+def test_print_commands_defaults_to_auto():
+    """cmd_queue's own default: show them unless the queue is large."""
+    assert NewEvaluationCLI()['print_commands'] == 'auto'
