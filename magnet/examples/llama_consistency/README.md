@@ -51,12 +51,11 @@ the HELM scoring instead of growing a second copy -- and it has to emit scores
 for the legacy card, while this card's claim wants the gap. That is a better
 reason for the split than the one this example used to give.
 
-## Provide a HELM-Lite cache, or let the pipeline compute
+## Provide a HELM-Lite cache
 
-`materialize_run` runs `mode: compute_if_missing`: it reuses a run from a local
-HELM cache when it finds one, and runs HELM to produce it when it does not.
-Computing needs a working HELM deployment and real model access, so in practice
-you give it a cache and it reuses everything.
+`materialize_run` runs `mode: reuse_only`: it reuses runs from a local HELM
+cache and never computes one. A run it cannot find stops the campaign and names
+itself, rather than being averaged around.
 
 **If you already have a HELM corpus**, point the recipe at it -- any directory
 containing nested `benchmark_output` directories works:
@@ -88,9 +87,10 @@ magnet download helm \
 The downloader is incremental, so rerunning these commands only fills in data
 that is missing or changed.
 
-Set `mode: reuse_only` to make a cache miss an error instead of a HELM run --
-which is what the test suite does, so a miss there is a bug rather than a cue to
-go compute something.
+`materialize_helm_run` does have modes that compute a missing run with
+`helm-run`. This example does not use them and does not document them: computing
+needs a HELM deployment, model access, and the MMLU dataset, which is not a
+single command and is not something an example should teach.
 
 ## Exercise the HELM materializer directly
 
@@ -99,9 +99,9 @@ materializer is worth seeing on its own. After downloading the cache above:
 
 ```bash
 python -m magnet.backends.helm.cli.materialize_helm_run \
-    --run_entry='mmlu:subject=philosophy,model=meta/llama-2-13b' \
+    --run_entry='mmlu:subject=abstract_algebra,model=meta/llama-2-13b' \
     --suite=llama-materialize-smoke \
-    --out_dpath=./results/materialized/llama-2-13b-philosophy \
+    --out_dpath=./results/materialized/llama-2-13b-abstract_algebra \
     --precomputed_root=./data/crfm-helm-public \
     --mode=reuse_only \
     --materialize=symlink
@@ -109,9 +109,6 @@ python -m magnet.backends.helm.cli.materialize_helm_run \
 
 The output directory contains the selected HELM run under
 `benchmark_output/runs/`, an `adapter_manifest.json`, and a `DONE` sentinel.
-Use `--mode=compute_if_missing` when a pipeline has the model deployment
-configuration needed to compute a cache miss; `--mode=force_recompute` bypasses
-reuse entirely.
 
 The recipe's node is a thin wrapper over this. It takes `--model` and
 `--subject` separately rather than one composed `run_entry`, so the card's
@@ -119,9 +116,9 @@ matrix sweeps the two axes it actually means:
 
 ```bash
 python -m magnet.examples.llama_consistency.materialize_run \
-    --model=meta/llama-2-13b --subject=philosophy \
+    --model=meta/llama-2-13b --subject=abstract_algebra \
     --precomputed_root=./data/crfm-helm-public \
-    --out_dpath=./results/materialized/llama-2-13b-philosophy
+    --out_dpath=./results/materialized/llama-2-13b-abstract_algebra
 ```
 
 ## The declared subject list
@@ -150,38 +147,6 @@ ls data/crfm-helm-public/lite/benchmark_output/runs/*/ \
 
 The job count grows with `models x subjects`, and each materialized run is
 cached and shared across all 36 comparison cells.
-
-## Trying it on a smaller model
-
-Nothing in HELM-Lite is smaller than 7B, so the shipped sweep can only reuse
-precomputed runs. SmolLM2 is the cheap way to exercise the compute path: HELM
-registers it already -- `huggingface/smollm2-135m` and `-360m` map to
-`HuggingFaceTB/SmolLM2-135M` and `-360M` in HELM's own `model_deployments.yaml`
--- so no sidecar registration files are needed.
-
-```bash
-magnet evaluate_new \
-    magnet/examples/llama_consistency/llama_kwdagger.yaml \
-    --output_path ./results_smol --backend serial \
-    --params "matrix:
-      materialize_run.subject: [abstract_algebra]
-      materialize_run.model: [huggingface/smollm2-135m, huggingface/smollm2-360m]
-      llama_predict.base_model: [huggingface/smollm2-135m, huggingface/smollm2-360m]
-      llama_predict.comp_model: [huggingface/smollm2-135m, huggingface/smollm2-360m]
-      materialize_run.mode: compute_if_missing
-      materialize_run.max_eval_instances: 10"
-```
-
-`max_eval_instances` is an override rather than a card field because it belongs
-to the run, not the claim. helm-run requires it, and it is identity-bearing: a
-run computed at 10 instances must not be averaged with precomputed runs at their
-full count, or the mean mixes two different measurements. That is also why this
-replaces the model sweep rather than adding to it -- one invocation per model
-family, so a computed run never lands in a reused run's average.
-
-Computing needs a working HELM deployment and will download weights. Two models
-give a real comparison; one model can only compare with itself, which asserts
-`0 < 0.1` and passes however broken the plumbing is.
 
 ## Run the recipe with the new evaluator
 
