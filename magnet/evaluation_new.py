@@ -200,6 +200,13 @@ class NewEvaluationCLI(kwconf.Config):
         recipe.summarize()
 
 
+#: Evidence-row namespaces that record provenance rather than a value.
+#: `specified.params.<node>.<param>` is kwdagger's "this param was requested"
+#: flag and is always ``1``, so it must never fill a declared symbol or appear
+#: in a node view.
+PROVENANCE_ROW_PREFIXES = ('specified.',)
+
+
 class ClaimResultNamespace:
     """
     Attribute-access view of one kwdagger aggregate row for a Python claim.
@@ -209,6 +216,23 @@ class ClaimResultNamespace:
     ``resolved_params.llama_predict.base_model``. This proxy exposes the flat
     row through the corresponding nested attribute expressions while recording
     which leaves the claim actually accessed.
+
+    A claim reaches a value two ways. The qualified path names the column
+    outright -- ``metrics.llama_compare.gap`` -- and always works. The node
+    view drops the namespace -- ``llama_compare.gap`` -- and works when the
+    node reports that name once. The namespace is not something a card author
+    chose: ``metrics``/``machine``/``resources``/``context`` come from the
+    node's ``load_result`` loader and ``params``/``resolved_params`` from
+    kwdagger aggregate, so requiring it of a reader who only wants a number is
+    asking them to know where kwdagger filed it. Both spellings are recorded
+    as the qualified column, so evidence stays traceable either way.
+
+    A node view resolves only where the answer is not in doubt. The same name
+    can appear under several namespaces -- a parameter echoed into ``params``
+    and ``resolved_params``, or one field reported by two nodes. Agreeing
+    columns collapse to their shared value; disagreeing ones raise and name
+    the alternatives, because a claim that silently picked one would rest its
+    verdict on row order.
 
     The object is only an access adapter over evidence already loaded by
     kwdagger. It does not discover results, represent an execution attempt, or
@@ -220,10 +244,22 @@ class ClaimResultNamespace:
         flat: Dict[str, Any],
         prefix: str = '',
         accessed: set[str] | None = None,
+        alias: Dict[str, str] | None = None,
+        ambiguous: Dict[str, List[str]] | None = None,
+        label: str | None = None,
     ) -> None:
         self._flat = dict(flat)
         self._prefix = prefix
         self._accessed = set() if accessed is None else accessed
+        # A node view is keyed by the name left over once the namespace and
+        # node are stripped, so it needs `alias` to report the qualified
+        # column it came from. Identity for a qualified view.
+        self._alias = {} if alias is None else alias
+        # Node-view names that matched disagreeing columns. Kept rather than
+        # dropped so they still list, and explain themselves on access.
+        self._ambiguous = {} if ambiguous is None else ambiguous
+        # What to call this view when it has no prefix to name it by.
+        self._label = label
 
     @property
     def accessed(self) -> set[str]:
@@ -242,28 +278,161 @@ class ClaimResultNamespace:
                 )
         return bound
 
-    def __getattr__(self, name: str) -> Any:
-        if name.startswith('_'):
-            raise AttributeError(name)
+    def node_names(self) -> List[str]:
+        """Return the pipeline nodes this row carries columns for.
+
+        A node is a dotted segment that is neither the namespace a column
+        opens with nor the field it ends in. Depth varies -- ``metrics`` puts
+        the node second and ``specified.params`` puts it third -- so the node
+        is found by position within each key rather than at a fixed offset.
+        """
+        namespaces = set()
+        interior = set()
+        for key in self._flat:
+            parts = key.split('.')
+            if len(parts) > 1:
+                namespaces.add(parts[0])
+            interior.update(parts[1:-1])
+        return sorted(
+            name
+            for name in interior - namespaces
+            if not name.startswith('_')
+        )
+
+    def bind_nodes(self) -> Dict[str, Any]:
+        """Return one namespace-free view per node, keyed by node name."""
+        return {name: self._node_view(name) for name in self.node_names()}
+
+    def _node_view(self, node: str) -> 'ClaimResultNamespace':
+        """Collapse every namespace's columns for one node into one view."""
+        marker = f'.{node}.'
+        candidates: Dict[str, Dict[str, Any]] = {}
+        for key, value in self._flat.items():
+            if key.startswith(PROVENANCE_ROW_PREFIXES):
+                continue
+            index = key.find(marker)
+            if index < 0:
+                continue
+            local = key[index + len(marker):]
+            candidates.setdefault(local, {})[key] = value
+
+        values: Dict[str, Any] = {}
+        alias: Dict[str, str] = {}
+        ambiguous: Dict[str, List[str]] = {}
+        for local, matches in candidates.items():
+            columns = sorted(matches)
+            if len({repr(value) for value in matches.values()}) > 1:
+                ambiguous[local] = columns
+                continue
+            values[local] = matches[columns[0]]
+            alias[local] = columns[0]
+        return ClaimResultNamespace(
+            values, '', self._accessed, alias, ambiguous, label=node
+        )
+
+    def _children(self) -> List[str]:
+        """Names reachable by one attribute access from here."""
+        names = {
+            key[len(self._prefix):].split('.')[0]
+            for key in self._flat
+            if key.startswith(self._prefix)
+        }
+        names.update(
+            key[len(self._prefix):].split('.')[0]
+            for key in self._ambiguous
+            if key.startswith(self._prefix)
+        )
+        return sorted(names)
+
+    def keys(self) -> List[str]:
+        """Return the dotted leaf names under this view."""
+        found = [
+            key[len(self._prefix):]
+            for key in self._flat
+            if key.startswith(self._prefix)
+        ]
+        found.extend(
+            key[len(self._prefix):]
+            for key in self._ambiguous
+            if key.startswith(self._prefix)
+        )
+        return sorted(found)
+
+    def items(self) -> List[Any]:
+        """Return ``(leaf name, value)`` pairs, recording each as accessed."""
+        return [(key, self[key]) for key in self.keys()]
+
+    def values(self) -> List[Any]:
+        """Return the leaf values, recording each as accessed."""
+        return [self[key] for key in self.keys()]
+
+    def _lookup(self, name: str) -> Any:
+        """Resolve one dotted name, raising ``KeyError`` with the reason."""
         key = f'{self._prefix}{name}'
         if key in self._flat:
-            self._accessed.add(key)
+            self._accessed.add(self._alias.get(key, key))
             return self._flat[key]
         deeper = f'{key}.'
         if any(k.startswith(deeper) for k in self._flat):
-            return ClaimResultNamespace(self._flat, deeper, self._accessed)
-        available = sorted({
-            k[len(self._prefix):].split('.')[0]
-            for k in self._flat
-            if k.startswith(self._prefix)
-        })
-        raise AttributeError(
-            f'no {name!r} under {self._prefix.rstrip(".")!r}; '
-            f'available: {available}'
+            return ClaimResultNamespace(
+                self._flat, deeper, self._accessed, self._alias,
+                self._ambiguous, self._label,
+            )
+        if key in self._ambiguous:
+            raise KeyError(
+                f'{name!r} is reported by more than one namespace, and they '
+                f'disagree: {self._ambiguous[key]}. Name the column outright '
+                'to say which one is meant.'
+            )
+        raise KeyError(
+            f'no {name!r} under {self._where()!r}; '
+            f'available: {self._children()}'
         )
 
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith('_'):
+            raise AttributeError(name)
+        try:
+            return self._lookup(name)
+        except KeyError as ex:
+            raise AttributeError(ex.args[0]) from None
+
+    def __getitem__(self, key: str) -> Any:
+        return self._lookup(key)
+
+    def __contains__(self, key: str) -> bool:
+        target = f'{self._prefix}{key}'
+        return (
+            target in self._flat
+            or target in self._ambiguous
+            or any(k.startswith(f'{target}.') for k in self._flat)
+        )
+
+    def __iter__(self) -> Any:
+        return iter(self.keys())
+
+    def __len__(self) -> int:
+        return len(self.keys())
+
+    def __dir__(self) -> List[str]:
+        return sorted(set(self._children()) | set(object.__dir__(self)))
+
+    def _ipython_key_completions_(self) -> List[str]:
+        return self.keys()
+
+    def _where(self) -> str:
+        trail = self._prefix.rstrip('.')
+        if self._label:
+            return f'{self._label}.{trail}' if trail else self._label
+        return trail or '/'
+
     def __repr__(self) -> str:
-        return f'<ClaimResultNamespace {self._prefix or "/"}>'
+        where = self._where()
+        children = self._children()
+        shown = ', '.join(children[:8])
+        if len(children) > 8:
+            shown += f', +{len(children) - 8} more'
+        return f'<ClaimResultNamespace {where}: {shown}>'
 
 
 @dataclass
@@ -461,6 +630,12 @@ def _evaluate_claim_cell(
             )
         context[name] = value
 
+    # Node views are a convenience over the qualified namespaces, never a
+    # replacement, so an existing card that declares a symbol named after a
+    # node keeps that symbol and loses nothing.
+    for name, value in namespace.bind_nodes().items():
+        context.setdefault(name, value)
+
     claim = Claim({'python': claim_text})
     status, output = claim.evaluate(context)
     execution_hash = _claim_execution_hash(symbols, measured)
@@ -508,12 +683,6 @@ def _deep_merge(base: Any, update: Any) -> Any:
     for key, value in update.items():
         merged[key] = _deep_merge(base[key], value) if key in base else value
     return merged
-
-
-#: Evidence-row namespaces that record provenance rather than a value.
-#: `specified.params.<node>.<param>` is kwdagger's "this param was requested"
-#: flag and is always ``1``, so it must never fill a declared symbol.
-PROVENANCE_ROW_PREFIXES = ('specified.',)
 
 
 def _fill_declared_symbols(

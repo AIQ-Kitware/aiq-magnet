@@ -20,6 +20,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `resolved_params.<node>.*`, and available lineage/context fields. A card
   symbol of the same leaf name can still be filled unqualified for the
   transitional `define_metric` behavior.
+* A Python claim can address an aggregate column by node alone --
+  `llama_compare.gap` -- as well as by its qualified name --
+  `metrics.llama_compare.gap`. The short form resolves wherever the node
+  reports that name once; agreeing columns across namespaces collapse to their
+  shared value, disagreeing ones raise and name the alternatives. Either
+  spelling is recorded as the qualified column. A declared symbol of the same
+  name as a node keeps precedence, so existing cards are unaffected.
+* The claim namespace object is introspectable: `dir()`, `keys()`, `items()`,
+  `values()`, `len()`, `in`, `[...]` indexing, and a repr that names its
+  location and children. Inspecting a view does not mark evidence as consumed.
 * A per-evidence claim record stores the source artifact, stable computation
   cell, and qualified fields the claim consumed.
 * `requested_runs.json` records the current scheduling request separately from
