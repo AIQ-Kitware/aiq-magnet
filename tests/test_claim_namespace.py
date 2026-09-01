@@ -245,3 +245,19 @@ def test_a_symbol_matching_disagreeing_columns_warns_but_fills():
     """Unlike a claim, a symbol labels evidence rather than deciding a verdict."""
     row = dict(ROW, **{'resolved_params.predict.base_model': 'family/small'})
     assert _fill(['predict.base_model'], row)['predict.base_model'] is not None
+
+
+def test_a_collection_valued_column_is_not_a_missing_scalar():
+    """A gathered input arrives as a container.
+
+    `pd.isna` answers elementwise for one, so the missing-value check gets an
+    array back and must not try to read it as a single truth value.
+    """
+    from magnet._kwdagger import _is_missing_aggregate_value
+
+    assert _is_missing_aggregate_value(float('nan')) is True
+    assert _is_missing_aggregate_value(0.5) is False
+    assert _is_missing_aggregate_value(None) is False
+    assert _is_missing_aggregate_value(['a', 'b']) is False
+    assert _is_missing_aggregate_value([float('nan'), float('nan')]) is False
+    assert _is_missing_aggregate_value([]) is False

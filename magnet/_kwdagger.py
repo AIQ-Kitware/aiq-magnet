@@ -438,6 +438,11 @@ def _is_missing_aggregate_value(value: Any) -> bool:
     if isinstance(missing, bool):
         return missing
     if type(missing).__module__.startswith('numpy') and hasattr(missing, 'item'):
+        # `pd.isna` answers elementwise for a container, so a gathered
+        # collection-valued column comes back as an array. A container is not a
+        # missing scalar whatever its elements are.
+        if getattr(missing, 'size', 1) != 1:
+            return False
         return bool(missing.item())
     return False
 
