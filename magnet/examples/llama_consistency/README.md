@@ -375,3 +375,48 @@ The loader on `materialize_run` exists for the opposite reason to the other
 two: to declare that the node has *no* result to load. A Python node says that
 by not defining the method; a declarative node inherits the generic one whether
 it wants it or not.
+
+## Limitations
+
+This recipe is a **port**, not a redesign. It exists to run the same evaluation
+as `cards/llama.yaml` and `cards/llama_pipeline.yaml` on the kwdagger executor,
+so it inherits their shape whether or not that shape is a good one. Several
+things below would be different if the card were written from scratch.
+
+**The 6x6 sweep computes more cells than it has comparisons.** `base_model` and
+`comp_model` sweep the same six models, giving 36 cells. Six of those compare a
+model with itself and assert `0 < threshold` -- they pass by construction and
+cannot fail. Fifteen more are mirrors of another cell, since the claim is about
+`abs(base - comp)`. That leaves **15 distinct comparisons out of 36**, with the
+trivial cells padding the verdict counts and the `mean` aggregation. All three
+cards do this, and `tests/test_llama_cards.py` asserts `len(models) ** 2` for
+each of them, so changing it here alone would make them stop agreeing.
+
+**The pair axes are the only reason there are 36 cells.** The gather already
+hands `llama_predict` every run the matrix declared; the two axes just choose
+which two of them a cell looks at. A node that read the whole set at once could
+compute all 15 gaps -- or the family spread the title actually describes -- in a
+single cell. That is the shape this example would have if the claim were written
+for it rather than inherited.
+
+**Its numbers differ from the legacy cards.** The legacy route globs a HELM
+cache and averages over every MMLU subject it finds. This one averages over the
+subjects the matrix declares, currently two of HELM-Lite's five. Same 36 cells,
+different values inside them. That is the deliberate cost of declaring inputs
+instead of discovering them, and it means the three cards are the same
+evaluation but not the same measurement.
+
+**One model family at a time.** The gather uses `group_by: []`, which hands
+every comparison every run in the sweep. With one family that is what you want.
+Adding a second family to the same matrix would pool both into every average
+without saying so -- run each family as its own invocation, as above. Grouping
+the gather by a declared family tag does fix this, and was tried and reverted:
+it costs a parameter on two nodes that never read it, plus model-by-model
+tagging once per node, plus an exclusion block to stop pairs straddling
+families. Too much matrix apparatus for a card that sweeps one family.
+
+**`scored_runs` counts different things on the two routes.** It is taken before
+the base/comp model filter, so the gather route reports the runs it was handed
+while the legacy route reports every llama MMLU run in the cache -- 4 against 12
+for the same comparison. Reported as "HELM runs scored", it overstates the
+legacy route. It should count the runs that reached the average.
