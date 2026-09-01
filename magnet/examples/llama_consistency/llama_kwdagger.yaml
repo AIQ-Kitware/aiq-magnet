@@ -30,9 +30,15 @@ links:
     url: "https://console.cloud.google.com/storage/browser/crfm-helm-public/lite"
     type: "asset"
 
+# A claim addresses a kwdagger aggregate column two ways. `<node>.<field>` is
+# the short form used here. The qualified `<namespace>.<node>.<field>` --
+# `metrics.llama_compare.gap` -- always works and is what the recipe records as
+# evidence either way. The short form resolves wherever the node reports that
+# name once; where two namespaces report it and disagree, it refuses and names
+# them, because which one a verdict rested on should never be a matter of luck.
 claim:
   python: |
-    c = metrics.llama_compare
+    c = llama_compare
     assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
 # Keep this demo snapshot tied to the matrix requested by this invocation even
@@ -76,8 +82,9 @@ symbols:
 
 kwdagger:
   # MAGNET asks KWDagger aggregate for every available result row from this
-  # node in the shared result store. Its metrics appear under
-  # metrics.llama_compare.<field> in the transitional Python claim above.
+  # node in the shared result store. Its metrics appear as
+  # llama_compare.<field>, or metrics.llama_compare.<field> qualified, in the
+  # transitional Python claim above.
   result_node: llama_compare
 
   # This is a native declarative KWDagger pipeline. The node interfaces are

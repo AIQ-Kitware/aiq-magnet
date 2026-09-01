@@ -152,7 +152,9 @@ def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
     assert pipeline['nodes']['llama_compare']['load_result'].endswith(
         'llama_compare.load_kwdagger_result'
     )
-    assert 'metrics.llama_compare' in kwdagger_card['claim']['python']
+    # The claim reads the result node's evidence. Either spelling says so:
+    # `llama_compare.gap`, or `metrics.llama_compare.gap` qualified.
+    assert 'llama_compare' in kwdagger_card['claim']['python']
 
 
 def test_shared_schema_allows_legacy_kwdagger_without_result_node(kwdagger_card):
