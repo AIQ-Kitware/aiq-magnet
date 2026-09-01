@@ -691,24 +691,18 @@ def _fill_declared_symbols(
     """Fill unresolved declared symbols from the evidence row.
 
     A symbol may name its evidence column outright --
-    ``metrics.llama_compare.base_score`` -- and that is the form the examples
-    use. The qualified name is kwdagger's own identity for the value, so the
-    declaration states exactly which column it describes instead of leaving
-    it to be guessed. Such a symbol is a label over a pipeline output, never
-    something the recipe computes, so the dotted name is only ever a
-    dictionary key: it is filled from the row and returned as a value, and
-    never reaches the ``exec`` that resolves a ``python:`` symbol.
+    ``resolved_params.llama_predict.helm_runs_path``. The qualified name is
+    kwdagger's own identity for the value, so the declaration states exactly
+    which column it describes instead of leaving it to be guessed. Such a
+    symbol is a label over a pipeline output, never something the recipe
+    computes, so the dotted name is only ever a dictionary key: it is filled
+    from the row and returned as a value, and never reaches the ``exec`` that
+    resolves a ``python:`` symbol.
 
-    A shorter name is matched against the tail of each column, on segment
-    boundaries. That accepts ``llama_compare.base_score``, the same node-first
-    spelling a claim uses, and the bare ``base_score`` that legacy cards carry,
-    without either one reaching across a partial segment.
-
-    A short name that matches several columns is only safe where they agree.
-    Which one a symbol meant is a question the card can always settle by
-    naming the column outright, so ambiguity here stays a warning rather than
-    an error -- unlike the claim namespace, where the same doubt decides a
-    verdict and so refuses instead.
+    A shorter name matches the tail of a column on segment boundaries:
+    ``llama_compare.base_score``, or the bare ``base_score`` legacy cards
+    carry. Matches that disagree only warn here -- a symbol labels evidence,
+    where a claim decides a verdict and so refuses instead.
     """
     filled = set()
     out = {}
