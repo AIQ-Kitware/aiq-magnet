@@ -200,11 +200,13 @@ class NewEvaluationCLI(kwconf.Config):
         recipe.summarize()
 
 
-#: Evidence-row namespaces that record provenance rather than a value.
-#: `specified.params.<node>.<param>` is kwdagger's "this param was requested"
-#: flag and is always ``1``, so it must never fill a declared symbol or appear
-#: in a node view.
-PROVENANCE_ROW_PREFIXES = ('specified.',)
+#: Row namespaces a short name ranges over: what a node computed and what it
+#: ran with. Everything else in a row describes the run rather than the result
+#: -- `machine`, `resources`, `context`, and the always-1 `specified` flags --
+#: and stays reachable only by its qualified name. Keeping them out is what
+#: stops `machine.<node>.error`, which exists only when the machine probe
+#: failed, from colliding with an error a node measured.
+RESULT_ROW_NAMESPACES = ('metrics', 'params', 'resolved_params')
 
 
 class ClaimResultNamespace:
@@ -290,8 +292,9 @@ class ClaimResultNamespace:
         interior = set()
         for key in self._flat:
             parts = key.split('.')
-            if len(parts) > 1:
-                namespaces.add(parts[0])
+            if parts[0] not in RESULT_ROW_NAMESPACES:
+                continue
+            namespaces.add(parts[0])
             interior.update(parts[1:-1])
         return sorted(
             name
@@ -308,7 +311,7 @@ class ClaimResultNamespace:
         marker = f'.{node}.'
         candidates: Dict[str, Dict[str, Any]] = {}
         for key, value in self._flat.items():
-            if key.startswith(PROVENANCE_ROW_PREFIXES):
+            if key.split('.', 1)[0] not in RESULT_ROW_NAMESPACES:
                 continue
             index = key.find(marker)
             if index < 0:
@@ -716,7 +719,7 @@ def _fill_declared_symbols(
                     key: value
                     for key, value in results.items()
                     if key.endswith(f'.{name}')
-                    and not key.startswith(PROVENANCE_ROW_PREFIXES)
+                    and key.split('.', 1)[0] in RESULT_ROW_NAMESPACES
                 }
             if candidates:
                 # One bare name can appear under several namespaces -- the

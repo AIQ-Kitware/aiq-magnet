@@ -6,6 +6,10 @@ A row's columns are qualified by namespace and node --
 loaders supply ``metrics``/``machine``/``resources``/``context`` and kwdagger
 aggregate supplies ``params``/``resolved_params``. So a claim may also address
 a column by node alone, wherever the node reports that name once.
+
+A short name ranges only over what the node computed and ran with. Run
+provenance stays qualified, so a fact about the machine cannot collide with a
+field the node measured.
 """
 
 import pytest
@@ -21,7 +25,9 @@ ROW = {
     'params.predict.base_model': 'family/big',
     'resolved_params.predict.base_model': 'family/big',
     'specified.params.predict.base_model': 1,
-    'machine.predict.host': 'somehost',
+    'resources.predict.duration': '0:00:01',   # provenance, stays qualified
+    'machine.predict.error': 'probe failed',   # would collide with a metric
+    'metrics.predict.error': 0.02,
 }
 
 
@@ -42,11 +48,22 @@ def test_node_view_drops_the_namespace():
     assert _nodes()['predict'].base_score == 0.58
 
 
-def test_node_view_reaches_across_namespaces():
-    """One node's columns arrive under several namespaces; the view is flat."""
+def test_node_view_reaches_across_result_namespaces():
+    """One node's results arrive under several namespaces; the view is flat."""
     predict = _nodes()['predict']
-    assert predict.base_score == 0.58   # metrics.
-    assert predict.host == 'somehost'   # machine.
+    assert predict.base_score == 0.58        # metrics.
+    assert predict.base_model == 'family/big'  # params. / resolved_params.
+
+
+def test_a_node_view_leaves_run_provenance_qualified():
+    """`machine.predict.error` exists only when the machine probe failed.
+
+    Letting it into the node view would make `predict.error` resolve to a
+    measured value on one machine and a probe message on another.
+    """
+    assert _nodes()['predict'].error == 0.02
+    assert 'duration' not in _nodes()['predict'].keys()
+    assert _namespaces()['resources'].predict.duration == '0:00:01' 
 
 
 def test_node_names_tolerate_the_namespace_depth_varying():
@@ -79,7 +96,7 @@ def test_a_disagreeing_name_still_lists_and_names_its_columns():
         predict.base_model
 
 
-def test_provenance_columns_never_reach_a_node_view():
+def test_the_always_one_specified_flags_never_reach_a_node_view():
     """`specified.params.*` is always 1 and would fake a disagreement."""
     assert _nodes()['predict'].base_model == 'family/big'
 
@@ -89,9 +106,9 @@ def test_a_node_view_records_the_qualified_column_it_came_from():
     namespace = ClaimResultNamespace(ROW)
     nodes = namespace.bind_nodes()
     nodes['compare'].gap
-    nodes['predict'].host
+    nodes['predict'].base_score
     assert namespace.accessed == {
-        'metrics.compare.gap', 'machine.predict.host',
+        'metrics.compare.gap', 'metrics.predict.base_score',
     }
 
 
@@ -110,6 +127,7 @@ def test_introspection_lists_children_not_dotted_keys():
     assert 'compare' in dir(metrics)
     assert metrics.keys() == [
         'compare.gap', 'compare.threshold', 'predict.base_score',
+        'predict.error',
     ]
 
 
@@ -134,7 +152,7 @@ def test_a_view_reads_like_a_mapping():
     assert metrics['compare.gap'] == 0.15
     assert 'compare.gap' in metrics
     assert 'compare' in metrics
-    assert len(metrics) == 3
+    assert len(metrics) == 4
     assert sorted(metrics) == metrics.keys()
 
 
@@ -216,6 +234,11 @@ def test_a_short_symbol_name_matches_only_whole_segments():
 def test_a_symbol_named_by_node_ignores_provenance_columns():
     """`specified.params.predict.base_model` is 1, never the value."""
     assert _fill(['predict.base_model']) == {'predict.base_model': 'family/big'}
+
+
+def test_a_short_symbol_name_also_skips_run_provenance():
+    """The same namespaces a claim sees, so one rule covers the whole card."""
+    assert _fill(['predict.error']) == {'predict.error': 0.02}
 
 
 def test_a_symbol_matching_disagreeing_columns_warns_but_fills():
