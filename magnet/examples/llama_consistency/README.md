@@ -151,6 +151,55 @@ ls data/crfm-helm-public/lite/benchmark_output/runs/*/ \
 The job count grows with `models x subjects`, and each materialized run is
 cached and shared across all 36 comparison cells.
 
+## Trying it on a different family
+
+The card ships one family, `llama`, and every cell is a llama-to-llama
+comparison. The gather is grouped by family rather than by nothing, so that
+stays true if a second family is ever added -- `group_by: []` would hand every
+comparison every run in the matrix, which is invisible with one family and
+wrong with two.
+
+Both nodes declare a `family` parameter and neither reads it. `group_by` is
+resolved on *both* ends: kwdagger has to know which group a comparison belongs
+to before it can pick runs for it, and a gather's own source is not yet an
+ancestor of its target at that point. So the tag has to be on the comparison
+too, not just on the run.
+
+**SmolLM2 is the cheap way to exercise this.** HELM registers it already --
+`huggingface/smollm2-135m` and `-360m` map to `HuggingFaceTB/SmolLM2-135M` and
+`-360M` in HELM's own `model_deployments.yaml` -- so no sidecar registration
+files are needed. Nothing in HELM-Lite is smaller than 7B, so these are the only
+models here that can realistically be computed rather than reused:
+
+```bash
+magnet evaluate_new \
+    magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --output_path ./results_smol --backend serial \
+    --params "matrix:
+      materialize_run.family: [smollm2]
+      llama_predict.family: [smollm2]
+      materialize_run.subject: [abstract_algebra]
+      materialize_run.model: &smol [huggingface/smollm2-135m, huggingface/smollm2-360m]
+      llama_predict.base_model: *smol
+      llama_predict.comp_model: *smol
+      materialize_run.mode: compute_if_missing
+      materialize_run.max_eval_instances: 10"
+```
+
+`max_eval_instances` lives here rather than in the card because it belongs to
+the run, not the claim. helm-run requires it, and it is identity-bearing: a run
+computed at 10 instances must not be averaged with precomputed runs at their
+full count, or the mean mixes two different measurements. That is also why this
+is a *separate* invocation rather than a second family alongside llama.
+
+Computing needs a working HELM deployment and will download weights. Two models
+give a real comparison; one model can only compare with itself, which asserts
+`0 < 0.1` and passes however broken the plumbing is.
+
+To run two families in one sweep, kwdagger takes a `matrices:` block per family
+so their model lists never cross. The card uses the single-`matrix:` form
+because it ships one family.
+
 ## Run the recipe with the new evaluator
 
 `evaluate_new` forwards the KWDagger schedule controls it exposes using the

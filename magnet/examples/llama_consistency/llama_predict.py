@@ -83,6 +83,18 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         tags=['algo_param'],
     )
 
+    family: str = kwconf.Value(
+        None,
+        help=ub.paragraph(
+            """
+        Which model family this comparison is within. Not read by the scoring:
+        it is what the gather edge groups on, so a comparison is handed its own
+        family's runs and not every run in the sweep.
+        """
+        ),
+        tags=['algo_param'],
+    )
+
     threshold: float = kwconf.Value(
         0.1,
         help=ub.paragraph(

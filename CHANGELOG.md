@@ -20,6 +20,16 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `resolved_params.<node>.*`, and available lineage/context fields. A card
   symbol of the same leaf name can still be filled unqualified for the
   transitional `define_metric` behavior.
+* The llama example's gather is grouped by model family rather than by nothing,
+  so a comparison is handed its own family's runs. `group_by: []` pooled the
+  whole input space into every cell, which is invisible with one family and
+  wrong with two. Both `materialize_run` and `llama_predict` declare a `family`
+  parameter that neither reads: `group_by` resolves on both ends, and a
+  gather's own source is not yet an ancestor of its target when it does.
+* `materialize_run` forwards the materializer's remaining parameters --
+  `max_eval_instances`, the HuggingFace and registration options, `num_threads`
+  and friends -- instead of dropping them. Without them `compute_if_missing`
+  was reachable but unusable.
 * The llama example's pipeline is
   `materialize_run -> llama_predict -> llama_compare`. Each MMLU run it needs is
   materialized as its own artifact and reaches the scoring node through a
