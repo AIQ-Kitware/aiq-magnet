@@ -43,6 +43,7 @@ from magnet.evaluation import (
     _reduce_results,
 )
 from magnet.schema import NewEvaluationRecipeSchema
+from magnet.theory.cards import report_from_card
 from magnet.utils.util_logger import setup_logging
 
 __all__ = [
@@ -846,6 +847,12 @@ def evaluate_new_recipe(
     """Schedule requested work, then evaluate the claim over available evidence."""
     _check_new_evaluation_recipe(recipe)
 
+    # Resolve static theory references before scheduling anything. A broken
+    # annotation or index should fail before jobs run, not after.
+    theory_report = report_from_card(
+        recipe.original_card, root=recipe.card_dpath
+    )
+
     recipe_output_path = recipe.output_path / recipe._run_hash
     recipe_output_path.ensuredir()
     setup_logging(verbose, recipe_output_path)
@@ -980,6 +987,9 @@ def evaluate_new_recipe(
     ) as file:
         json.dump(result_card.as_record(), file, indent=2, ensure_ascii=False)
         file.write('\n')
+
+    if theory_report is not None:
+        theory_report.write(recipe_output_path / 'theory.json')
 
     recipe.result_card = result_card
     recipe.claim.status = aggregate_result
