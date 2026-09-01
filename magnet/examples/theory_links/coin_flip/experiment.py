@@ -11,7 +11,6 @@ from itertools import product
 from math import comb
 
 import kwconf
-import kwutil
 import ubelt as ub
 
 import magnet.theory as theory
@@ -41,23 +40,14 @@ class CoinFlipCLI(kwconf.Config):
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
         n_flips = int(config['n_flips'])
 
-        context = kwutil.ProcessContext(
-            name='coin_flip',
-            type='process',
-            config=kwutil.Json.ensure_serializable(dict(config)),
-            track_emissions=False,
-        )
-        context.start()
-        deviation = float(max_absolute_deviation(n_flips))
         data = {
             'result': {
                 'metrics': {
                     'n_flips': n_flips,
                     'outcomes': 2 ** n_flips,
-                    'deviation': deviation,
+                    'deviation': float(max_absolute_deviation(n_flips)),
                 },
             },
-            'info': [context.stop()],
         }
         out_fpath = ub.Path(config['out_fpath'])
         out_fpath.parent.ensuredir()

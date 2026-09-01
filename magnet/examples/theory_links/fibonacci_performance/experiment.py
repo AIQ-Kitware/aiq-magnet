@@ -17,7 +17,6 @@ import statistics
 import time
 
 import kwconf
-import kwutil
 import ubelt as ub
 
 import magnet.theory as theory
@@ -39,16 +38,8 @@ class FibonacciPerformanceCLI(kwconf.Config):
     def main(cls, argv=True, **kwargs):
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
 
-        context = kwutil.ProcessContext(
-            name='fibonacci_performance',
-            type='process',
-            config=kwutil.Json.ensure_serializable(dict(config)),
-            track_emissions=False,
-        )
-        context.start()
         data = {
             'result': {'metrics': benchmark_fibonacci(config['repeats'])},
-            'info': [context.stop()],
         }
         out_fpath = ub.Path(config['out_fpath'])
         out_fpath.parent.ensuredir()

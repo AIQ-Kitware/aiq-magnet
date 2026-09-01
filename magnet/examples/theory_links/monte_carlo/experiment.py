@@ -12,7 +12,6 @@ import json
 from math import pi
 
 import kwconf
-import kwutil
 import ubelt as ub
 
 import magnet.theory as theory
@@ -43,13 +42,6 @@ class MonteCarloCLI(kwconf.Config):
         seed = int(config['seed'])
         samples = int(config['samples'])
 
-        context = kwutil.ProcessContext(
-            name='monte_carlo',
-            type='process',
-            config=kwutil.Json.ensure_serializable(dict(config)),
-            track_emissions=False,
-        )
-        context.start()
         data = {
             'result': {
                 'metrics': {
@@ -61,7 +53,6 @@ class MonteCarloCLI(kwconf.Config):
                     'error': estimation_error(seed, samples),
                 },
             },
-            'info': [context.stop()],
         }
         out_fpath = ub.Path(config['out_fpath'])
         out_fpath.parent.ensuredir()
