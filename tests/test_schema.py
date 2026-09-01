@@ -130,12 +130,12 @@ def kwdagger_card():
 
 def test_a_kwdagger_card_validates(kwdagger_card):
     card = EvaluationCardSchema.model_validate(kwdagger_card)
-    assert card.kwdagger.result_node == 'llama_evaluate'
+    assert card.kwdagger.result_node == 'llama_compare'
 
 
 def test_a_kwdagger_recipe_validates(kwdagger_card):
     recipe = NewEvaluationRecipeSchema.model_validate(kwdagger_card)
-    assert recipe.kwdagger.result_node == 'llama_evaluate'
+    assert recipe.kwdagger.result_node == 'llama_compare'
 
 
 def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
@@ -144,29 +144,40 @@ def test_llama_kwdagger_pipeline_is_inline_and_wired(kwdagger_card):
     pipeline = kwdagger_card['kwdagger']['pipeline']
     assert isinstance(pipeline, dict)
     dag = coerce_pipeline(pipeline)
-    assert sorted(dag.node_dict) == ['llama_evaluate', 'materialize_run']
+    assert sorted(dag.node_dict) == [
+        'llama_compare', 'llama_predict', 'materialize_run',
+    ]
 
     # The runs a verdict rests on arrive as a declared collection rather than
     # by scanning a directory. Gather membership resolves when the matrix is
     # compiled, so the port has no predecessor at coerce time -- the edge
     # specification is what states the dependency here.
-    edge, = pipeline['edges']
-    assert edge['src'] == 'materialize_run.out_dpath'
-    assert edge['dst'] == 'llama_evaluate.run_dpaths'
-    assert edge['gather']['group_by'] == []
-    assert edge['gather']['require'] == 'all_success'
-    assert 'run_dpaths' in dag.node_dict['llama_evaluate'].inputs
+    gather_edge, artifact_edge = pipeline['edges']
+    assert gather_edge['src'] == 'materialize_run.out_dpath'
+    assert gather_edge['dst'] == 'llama_predict.run_dpaths'
+    assert gather_edge['gather']['group_by'] == []
+    assert gather_edge['gather']['require'] == 'all_success'
+    assert 'run_dpaths' in dag.node_dict['llama_predict'].inputs
+
+    # An ordinary artifact edge does resolve at coerce time.
+    assert artifact_edge == 'llama_predict.results_fpath -> llama_compare.scores_fpath'
+    assert dag.node_dict['llama_compare'].inputs['scores_fpath'].pred
 
     # A materializer produces an artifact, not a measurement, and its primary
     # output is a sentinel the generic loader must not try to parse.
     assert pipeline['nodes']['materialize_run']['load_result'].endswith(
         'materialize_run.load_kwdagger_result'
     )
-    assert 'load_result' not in pipeline['nodes']['llama_evaluate']
+    assert pipeline['nodes']['llama_predict']['load_result'].endswith(
+        'llama_predict.load_kwdagger_result'
+    )
+    assert pipeline['nodes']['llama_compare']['load_result'].endswith(
+        'llama_compare.load_kwdagger_result'
+    )
 
     # The claim reads the result node's evidence. Either spelling says so:
-    # `llama_evaluate.gap`, or `metrics.llama_evaluate.gap` qualified.
-    assert 'llama_evaluate' in kwdagger_card['claim']['python']
+    # `llama_compare.gap`, or `metrics.llama_compare.gap` qualified.
+    assert 'llama_compare' in kwdagger_card['claim']['python']
 
 
 def test_shared_schema_allows_legacy_kwdagger_without_result_node(kwdagger_card):

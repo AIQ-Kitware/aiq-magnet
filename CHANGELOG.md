@@ -20,12 +20,14 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `resolved_params.<node>.*`, and available lineage/context fields. A card
   symbol of the same leaf name can still be filled unqualified for the
   transitional `define_metric` behavior.
-* The llama example's pipeline is `materialize_run -> llama_evaluate`. Each
-  MMLU run it needs is materialized as its own artifact and reaches the
-  comparison through a kwdagger gather edge, so the runs a verdict rests on are
-  declared by the matrix rather than found by scanning a HELM cache directory.
-  This replaces the `llama_predict -> llama_compare` pair, whose split the card
-  itself described as pedagogical.
+* The llama example's pipeline is
+  `materialize_run -> llama_predict -> llama_compare`. Each MMLU run it needs is
+  materialized as its own artifact and reaches the scoring node through a
+  kwdagger gather edge, so the runs a verdict rests on are declared by the
+  matrix rather than found by scanning a HELM cache directory. `llama_predict`
+  now takes either a gather manifest or a corpus directory, so the kwdagger
+  recipe and the legacy `pipeline:` card share one implementation of the HELM
+  scoring.
 * Fixed `_is_missing_aggregate_value` raising on a collection-valued aggregate
   column, which no row carried before gather edges were used.
 * `evaluate_new` resolves a recipe's `theory:` block and writes `theory.json`

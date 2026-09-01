@@ -8,6 +8,35 @@ from magnet.backends.helm.helm_outputs import HelmOutputs
 from magnet.backends.helm.helm_outputs import HelmSuiteRuns
 
 
+def read_gathered_run_dpaths(manifest_fpath):
+    """
+    Resolve a kwdagger gather manifest into the HELM run directories it names.
+
+    Each line is one materialize node's output directory, which holds its run
+    under ``benchmark_output/runs/<suite>/<run_name>``.
+
+    Args:
+        manifest_fpath (str | PathLike): newline-delimited paths from kwdagger.
+
+    Returns:
+        list: HELM run directories, in manifest order.
+    """
+    manifest_fpath = ub.Path(manifest_fpath)
+    run_dpaths = []
+    for line in manifest_fpath.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        runs_root = ub.Path(line) / 'benchmark_output' / 'runs'
+        if not runs_root.exists():
+            raise FileNotFoundError(
+                f'materialized run {line!r} has no benchmark_output/runs'
+            )
+        for suite_dpath in sorted(runs_root.iterdir()):
+            run_dpaths.extend(sorted(suite_dpath.iterdir()))
+    return run_dpaths
+
+
 def load_kwdagger_result(node, node_dpath):
     """Load this node's flat JSON plus ProcessContext for kwdagger aggregate."""
     from kwdagger.aggregate_loader import new_process_context_parser
@@ -68,10 +97,23 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         './data/crfm-helm-public/lite/benchmark_output',
         help=ub.paragraph(
             """
-        Default path to precomputed HELM results.
+        Path to precomputed HELM results, scanned for llama MMLU runs. How the
+        legacy `pipeline:` card supplies its data. Ignored when `run_dpaths` is
+        given.
         """
         ),
         tags=['algo_param'],
+    )
+
+    run_dpaths: str | None = kwconf.Value(
+        None,
+        help=ub.paragraph(
+            """
+        KWDagger gather manifest naming the materialized runs to score. When
+        set, the runs are exactly the ones listed and no directory is scanned.
+        """
+        ),
+        tags=['in_path'],
     )
 
     results_fpath: str = kwconf.Value(
@@ -103,14 +145,18 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         # ----------------------------------------------
         ## run_specs Symbol Resolution
 
-        # Load all HELM Lite releases
-        helm_data = HelmOutputs(ub.Path(config.helm_runs_path))
-
-        # Collect runs from each release
-        helm_lite_runs = []
-        for suite in helm_data.suites():
-            # unix glob filter runs for llama models evaluated on MMLU
-            helm_lite_runs.extend(suite.runs('mmlu*model=meta_*llama*').paths)
+        if config.run_dpaths is not None:
+            # The runs are declared upstream: this scores exactly what the
+            # pipeline materialized, and nothing that merely shares a directory
+            # with it.
+            helm_lite_runs = read_gathered_run_dpaths(config.run_dpaths)
+        else:
+            # The legacy route, where the corpus is a directory to search.
+            helm_data = HelmOutputs(ub.Path(config.helm_runs_path))
+            helm_lite_runs = []
+            for suite in helm_data.suites():
+                # unix glob filter runs for llama models evaluated on MMLU
+                helm_lite_runs.extend(suite.runs('mmlu*model=meta_*llama*').paths)
 
         # Create an aggregate view of all HELM Lite runs used for latest leaderboard
         run_specs = HelmSuiteRuns.coerce(helm_lite_runs)
@@ -164,6 +210,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         # Anything not a result of the run goes under a leading underscore.
         run_data.update({
             'helm_runs_path': config.helm_runs_path,
+            'scored_runs': len(helm_lite_runs),
             'base_model': config.base_model,
             'base_score': base_score,
             'comp_model': config.comp_model,

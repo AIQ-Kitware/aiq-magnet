@@ -8,7 +8,7 @@ HELM cache afterwards cannot silently join the average.
 import pytest
 import ubelt as ub
 
-from magnet.examples.llama_consistency.llama_evaluate import (
+from magnet.examples.llama_consistency.llama_predict import (
     read_gathered_run_dpaths)
 
 

@@ -32,13 +32,13 @@ links:
 
 # A claim addresses a kwdagger aggregate column two ways. `<node>.<field>` is
 # the short form used here. The qualified `<namespace>.<node>.<field>` --
-# `metrics.llama_evaluate.gap` -- always works and is what the recipe records as
+# `metrics.llama_compare.gap` -- always works and is what the recipe records as
 # evidence either way. The short form resolves wherever the node reports that
 # name once; where two namespaces report it and disagree, it refuses and names
 # them, because which one a verdict rested on should never be a matter of luck.
 claim:
   python: |
-    c = llama_evaluate
+    c = llama_compare
     assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
 
 # Keep this demo snapshot tied to the matrix requested by this invocation even
@@ -70,7 +70,7 @@ evidence:
 # fan-in node, which reports its aggregate as a single node output for a
 # symbol like this one to read off.
 symbols:
-  llama_evaluate.base_score:
+  llama_compare.base_score:
     metadata:
       display_name: "Average Exact Match"
       display: True
@@ -82,38 +82,43 @@ symbols:
   # Provenance, now that there is no corpus path to name: how many declared
   # HELM runs this average was taken over. A path said where to look; this says
   # what was actually used, which is the question a reader had anyway.
-  llama_evaluate.gathered_runs:
+  llama_predict.scored_runs:
     metadata:
-      display_name: "HELM runs gathered"
+      display_name: "HELM runs scored"
       display: True
 
 kwdagger:
   # MAGNET asks KWDagger aggregate for every available result row from this
   # node in the shared result store. Its metrics appear as
-  # llama_evaluate.<field>, or metrics.llama_evaluate.<field> qualified, in the
+  # llama_compare.<field>, or metrics.llama_compare.<field> qualified, in the
   # transitional Python claim above.
-  result_node: llama_evaluate
+  result_node: llama_compare
 
-  # Two nodes, and the edge between them is the point.
+  # Three nodes, and the first edge is the one that matters.
   #
-  # `materialize_run` turns each MMLU run this comparison needs into an
-  # artifact of its own. `llama_evaluate` receives those artifacts as a gathered
-  # collection and scores them. Nothing scans a directory: the set of runs a
+  # `materialize_run` turns each MMLU run this comparison needs into an artifact
+  # of its own. `llama_predict` receives those artifacts as a gathered
+  # collection and scores them; nothing scans a directory, so the set of runs a
   # verdict rests on is declared by the matrix, resolved when the pipeline is
-  # compiled, and recorded in the result. A run that appears in a shared HELM
-  # cache after the fact cannot silently join an average.
+  # compiled, and recorded in the result.
+  #
+  # `llama_predict` is the same executable the legacy `pipeline:` card runs. It
+  # takes either a gather manifest or a corpus directory, so both cards share
+  # one implementation of the scoring rather than growing a second copy. That
+  # is why the score and the gap stay in separate nodes: `llama_predict` has to
+  # emit scores for the legacy card, and the claim wants the gap.
   pipeline:
     nodes:
       # Reuse one cached HELM run per (model, subject), or compute it when the
-      # pipeline has the deployment configuration to do so. Materializing by
-      # symlink keeps the cache single-copy.
+      # run is missing and a HELM deployment is available. Materializing by
+      # symlink keeps a reused cache single-copy.
       materialize_run:
         executable: "python -m magnet.examples.llama_consistency.materialize_run"
         algo_params:
           model: null
           subject: null
           precomputed_root: "./data/crfm-helm-public"
-          mode: reuse_only
+          mode: compute_if_missing
         # The node's own directory is the artifact: it holds the run under
         # benchmark_output/runs/<suite>/. DONE is what marks it complete.
         out_paths:
@@ -125,35 +130,45 @@ kwdagger:
         # rather than let the generic loader parse the DONE sentinel as JSON.
         load_result: "magnet.examples.llama_consistency.materialize_run.load_kwdagger_result"
 
-      # Average exact_match across the gathered subjects for two models and
-      # report the gap between them.
-      llama_evaluate:
-        executable: "python -m magnet.examples.llama_consistency.llama_evaluate"
+      # Average exact_match across the gathered subjects for two models.
+      llama_predict:
+        executable: "python -m magnet.examples.llama_consistency.llama_predict"
         in_paths: [run_dpaths]
         algo_params:
           base_model: null
           comp_model: null
           threshold: 0.1
         out_paths:
+          results_fpath: results.json
+        primary_out_key: results_fpath
+        load_result: "magnet.examples.llama_consistency.llama_predict.load_kwdagger_result"
+
+      # Reduce the two scores to the gap the claim is about.
+      llama_compare:
+        executable: "python -m magnet.examples.llama_consistency.llama_compare"
+        in_paths: [scores_fpath]
+        out_paths:
           out_fpath: comparison.json
         primary_out_key: out_fpath
+        load_result: "magnet.examples.llama_consistency.llama_compare.load_kwdagger_result"
 
   # A gather edge: many materialized runs, one collection-valued input.
   #
-  # `group_by: []` gives every evaluate cell the whole declared corpus, and the
-  # cell picks its two models out of it. Grouping by model instead would not
-  # work: a cell needs runs for two different models, which is a self-join
-  # rather than a group.
+  # `group_by: []` gives every predict cell the whole declared corpus, and the
+  # cell picks its two models out of it. Grouping by model would not work: a
+  # cell needs runs for two different models, which is a self-join rather than
+  # a group.
   #
   # KWDagger hands the target a newline-delimited manifest of the source
   # directories, so `--run_dpaths` names a file listing exactly what was used.
     edges:
       - src: materialize_run.out_dpath
-        dst: llama_evaluate.run_dpaths
+        dst: llama_predict.run_dpaths
         gather:
           group_by: []
           order_by: [model, subject]
           require: all_success
+      - llama_predict.results_fpath -> llama_compare.scores_fpath
 
   # Two axes over runs to materialize, two over models to compare. The model
   # lists are the same set: every model compared must have been materialized.
@@ -175,14 +190,14 @@ kwdagger:
       - astronomy
       - college_biology
       - philosophy
-    llama_evaluate.base_model:
+    llama_predict.base_model:
       - meta/llama-2-13b
       - meta/llama-2-70b
       - meta/llama-2-7b
       - meta/llama-3-70b
       - meta/llama-3-8b
       - meta/llama-65b
-    llama_evaluate.comp_model:
+    llama_predict.comp_model:
       - meta/llama-2-13b
       - meta/llama-2-70b
       - meta/llama-2-7b
