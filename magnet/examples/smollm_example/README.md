@@ -38,24 +38,23 @@ Cache guard outermost, so a node whose output exists neither leases nor starts a
 container. The `${SLURM_JOB_GPUS...}` word is unexpanded on purpose: the
 allocation it names does not exist yet on the host that rendered the string.
 
-**The endpoint is an ordinary matrix axis, declared in the card.**
-`ask.endpoint` sweeps like any other parameter, and naming it in
-`endpoint_params` is what also makes its value the catalog alias that cell
-acquires. Two endpoints, two cells, each holding only the model it is using.
+**The endpoint is an ordinary matrix axis.** `ask.endpoint` sweeps like any
+other parameter, and naming it in `endpoint_params` is what also makes its
+value the catalog alias that cell acquires. Two endpoints, two cells, each
+holding only the model it is using.
 
-```yaml
-ask:
-  class: magnet.leasing.LeasedYamlProcessNode
-  endpoint_params: [endpoint]
-  executable: "python -m magnet.examples.smollm_example.ask_model"
+```python
+class Ask(LeasedYamlProcessNode):
+    name = 'ask'
+    executable = 'python -m magnet.examples.smollm_example.cli.ask_model'
+    params = AskModelCLI
+    endpoint_params = ('endpoint',)
 ```
 
-**No node names a class written for this example.** Which parameter holds an
-alias is a fact about the card, so it is written in the card. kwdagger's
-node-spec allow-list is closed, and `LeasedYamlProcessNode` widens it for its
-own four keys (`endpoint_params`, `lease_ttl`, `lease_timeout`, `lease_queue`)
-via `extra_node_spec_keys` — needs kwdagger >= 0.4.1. The list is widened for
-the named class, not opened: any other key is still refused.
+**Nothing is restated.** Each node's inputs, outputs and parameters come from
+its CLI's own kwconf declaration via `params`, so the tags on
+`AskModelCLI.items_fpath` are the only place that fact is written. What is left
+in the card is what a card is for: the claim, the evidence scope and the sweep.
 
 **A gather edge turns N cells into one comparison.** `group_by: []` hands the
 single `compare` cell every endpoint's answers as a newline-delimited manifest,
@@ -63,6 +62,28 @@ so the comparison names exactly what it read instead of globbing a directory.
 
 **No `load_result` anywhere.** Every node writes `result.metrics`, which is
 what kwdagger's generic loader reads. Nothing here hand-rolls a loader.
+
+## Why the DAG is Python
+
+One reason only: a leasing node has to be told which of its parameters holds a
+catalog alias, and kwdagger's node-spec allow-list is closed, so a declarative
+card cannot say `endpoint_params` until kwdagger 0.4.1 ships
+`extra_node_spec_keys`. In Python it is a class attribute, so this example runs
+on the released 0.4.0 today.
+
+After 0.4.1 lands, `pipeline.py` can be deleted and the card can say it
+directly:
+
+```yaml
+ask:
+  class: magnet.leasing.LeasedYamlProcessNode
+  endpoint_params: [endpoint]
+  executable: "python -m magnet.examples.smollm_example.cli.ask_model"
+```
+
+Nothing in `cli/` changes when it is, which is the point of keeping the
+executables free of any of this. `tests/test_yaml_container_nodes.py` pins the
+destination and skips itself on a kwdagger that cannot do it yet.
 
 ## Running it
 
@@ -103,12 +124,18 @@ is about.
 
 ## Files
 
+Scaffolding and executables are separate on purpose. Everything in `cli/` is an
+ordinary command-line program that reads files, talks to an endpoint and writes
+JSON — runnable by hand, debuggable without a scheduler, and knowing nothing
+about kwdagger, containers or leases. `pipeline.py` is what makes them a DAG.
+
 | | |
 |---|---|
-| `smollm_kwdagger.yaml` | the card: three nodes, one gather edge, one claim |
-| `make_items.py` | the dummy dataset, generated from a seed |
-| `ask_model.py` | one leased endpoint, every question, over plain `urllib` |
-| `compare_answers.py` | the gather manifest reduced to coverage and agreement |
+| `smollm_kwdagger.yaml` | the card: claim, evidence scope, sweep |
+| `pipeline.py` | the DAG: three nodes, one gather edge, which one leases |
+| `cli/make_items.py` | the dummy dataset, generated from a seed |
+| `cli/ask_model.py` | one leased endpoint, every question, over plain `urllib` |
+| `cli/compare_answers.py` | the gather manifest reduced to coverage and agreement |
 | `catalog.yaml` | `smol-135` / `smol-360` on vLLM, on a GPU |
 | `catalog-mock.yaml` | the same two aliases, simulated, no GPU |
 

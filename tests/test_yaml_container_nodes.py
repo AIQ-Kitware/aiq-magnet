@@ -148,10 +148,26 @@ def test_the_lease_stays_outside_the_container():
     assert command.index('infer-stack run') < command.index('docker run')
 
 
+def _kwdagger_widens_the_node_spec():
+    """Whether the installed kwdagger honours `extra_node_spec_keys` (>=0.4.1)."""
+    import inspect
+
+    from kwdagger import yaml_pipeline
+
+    return 'extra_node_spec_keys' in inspect.getsource(yaml_pipeline)
+
+
+@pytest.mark.skipif(
+    not _kwdagger_widens_the_node_spec(),
+    reason='needs kwdagger >= 0.4.1 for extra_node_spec_keys',
+)
 def test_a_card_can_declare_endpoint_params():
-    """Which parameter holds a catalog alias is card data, so it lives in the
-    card. `LeasedYamlProcessNode.extra_node_spec_keys` widens kwdagger's
-    closed node-spec allow-list for exactly its own four keys."""
+    """Which parameter holds a catalog alias is card data, so it can live in
+    the card once kwdagger allows it. `extra_node_spec_keys` widens kwdagger's
+    closed node-spec allow-list for exactly LeasedYamlProcessNode's four keys.
+
+    MAGNET's floor is still 0.4.0, where this is not available -- which is why
+    the smollm example builds its DAG in Python. This pins the destination."""
     spec = {'nodes': {'work': {
         'class': 'magnet.leasing.LeasedYamlProcessNode',
         'endpoint_params': ['model_id'],
@@ -168,6 +184,10 @@ def test_a_card_can_declare_endpoint_params():
     assert '--ttl 2h' in command
 
 
+@pytest.mark.skipif(
+    not _kwdagger_widens_the_node_spec(),
+    reason='needs kwdagger >= 0.4.1 for extra_node_spec_keys',
+)
 def test_an_unknown_node_spec_key_is_still_refused():
     """The allow-list is widened for the named class, not opened."""
     spec = {'nodes': {'work': {

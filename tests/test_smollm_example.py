@@ -22,7 +22,7 @@ from kwdagger.pipeline import coerce_pipeline
 
 from magnet import containers, leasing
 from magnet.containers import ContainerSettings
-from magnet.examples.smollm_example.compare_answers import compare
+from magnet.examples.smollm_example.cli.compare_answers import compare
 from magnet.leasing import LeaseSettings
 
 CARD_FPATH = (
@@ -87,25 +87,41 @@ def test_every_node_can_use_the_image(card):
         assert isinstance(node, containers.ContainerProcessNode), name
 
 
-def test_the_card_names_no_class_of_its_own(card):
-    """Everything that varies is data in the card.
+def test_the_card_carries_no_wiring(card):
+    """The card points at a Python pipeline and says nothing about I/O.
 
-    Both classes are MAGNET's; nothing is defined for this example. Which
-    parameter holds a catalog alias is a fact about the card, and it is written
-    in the card -- `LeasedYamlProcessNode.extra_node_spec_keys` is what lets
-    kwdagger accept it.
+    Each node's inputs, outputs and parameters are derived from its CLI's own
+    kwconf declaration, so the card restates none of them. What is left in the
+    file is the claim, the evidence scope and the sweep.
     """
-    nodes = card['kwdagger']['pipeline']['nodes']
-    assert nodes['ask']['class'] == 'magnet.leasing.LeasedYamlProcessNode'
-    assert nodes['ask']['endpoint_params'] == ['endpoint']
-    for name in ('items', 'compare'):
-        assert nodes[name]['class'] == (
-            'magnet.containers.ContainerYamlProcessNode')
-    for spec in nodes.values():
-        assert not spec['class'].startswith('magnet.examples'), spec['class']
+    assert card['kwdagger']['pipeline'] == (
+        'magnet.examples.smollm_example.pipeline.smollm_pipeline()')
+    text = CARD_FPATH.read_text()
+    for restated in ('out_paths', 'in_paths', 'algo_params', 'executable'):
+        assert restated not in text, restated
 
-    # And it arrives on the built node, not just in the YAML.
-    assert _configured_nodes(card)['ask'].endpoint_params == ['endpoint']
+
+def test_the_nodes_take_their_io_from_their_cli(card):
+    """One source of authority: the tags on the CLI's kwconf values."""
+    nodes = _configured_nodes(card)
+    assert nodes['items'].out_paths == {'out_fpath': 'items.json'}
+    assert sorted(nodes['ask'].in_paths) == ['items_fpath']
+    assert nodes['ask'].out_paths == {'out_fpath': 'answers.json'}
+    assert sorted(nodes['compare'].in_paths) == ['answer_fpaths']
+    # And the generic loader is inherited rather than hand-rolled.
+    for node in nodes.values():
+        assert node._load_result_ref is None
+
+
+def test_it_runs_on_released_kwdagger(card):
+    """The reason the DAG is Python and not a declarative `nodes:` block.
+
+    `endpoint_params` has no node-spec key before kwdagger 0.4.1, so a
+    declarative card cannot say it. As a class attribute it needs nothing
+    unreleased -- which is what lets this example ship now and be ported later.
+    """
+    assert isinstance(card['kwdagger']['pipeline'], str)
+    assert _configured_nodes(card)['ask'].endpoint_params == ('endpoint',)
 
 
 def test_the_endpoint_axis_is_what_gets_leased(card):
@@ -169,7 +185,7 @@ def _run(module, dpath, **kwargs):
     args = [f'--{k}={v}' for k, v in kwargs.items()]
     env = {**dict(__import__('os').environ), 'OPENAI_BASE_URL': dpath['url']}
     proc = subprocess.run(
-        [sys.executable, '-m', f'magnet.examples.smollm_example.{module}',
+        [sys.executable, '-m', f'magnet.examples.smollm_example.cli.{module}',
          *args],
         capture_output=True, text=True, env=env,
     )
@@ -220,12 +236,12 @@ def test_a_missing_lease_says_so_rather_than_failing_per_request(tmp_path):
     env = {k: v for k, v in os.environ.items() if k != 'OPENAI_BASE_URL'}
     items_fpath = ub.Path(tmp_path) / 'items.json'
     subprocess.run(
-        [sys.executable, '-m', 'magnet.examples.smollm_example.make_items',
+        [sys.executable, '-m', 'magnet.examples.smollm_example.cli.make_items',
          f'--out_fpath={items_fpath}', '--n_items=1'],
         check=True, capture_output=True, env=env,
     )
     proc = subprocess.run(
-        [sys.executable, '-m', 'magnet.examples.smollm_example.ask_model',
+        [sys.executable, '-m', 'magnet.examples.smollm_example.cli.ask_model',
          '--endpoint=smol-135', f'--items_fpath={items_fpath}',
          f'--out_fpath={ub.Path(tmp_path) / "answers.json"}'],
         capture_output=True, text=True, env=env,

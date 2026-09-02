@@ -10,7 +10,7 @@ at a simulator instead of a GPU is ``INFER_STACK_CATALOG``, not a code change.
 CommandLine:
     # Never run bare -- there is no endpoint without a lease.
     infer-stack run --endpoint smol-135 -- \
-        python -m magnet.examples.smollm_example.ask_model \
+        python -m magnet.examples.smollm_example.cli.ask_model \
             --endpoint=smol-135 --items_fpath=items.json \
             --out_fpath=answers.json
 """
@@ -51,7 +51,7 @@ def served_model_name(alias: str) -> str:
 
     Example:
         >>> import os
-        >>> from magnet.examples.smollm_example.ask_model import (
+        >>> from magnet.examples.smollm_example.cli.ask_model import (
         ...     served_model_name)
         >>> served_model_name('smol-135')
         'smol-135'
@@ -110,7 +110,7 @@ def _normalize(text: str) -> str:
     """The first number in a response, so formatting chatter does not count.
 
     Example:
-        >>> from magnet.examples.smollm_example.ask_model import _normalize
+        >>> from magnet.examples.smollm_example.cli.ask_model import _normalize
         >>> _normalize('The answer is 12.')
         '12'
         >>> _normalize('no digits here')
@@ -126,7 +126,7 @@ class AskModelCLI(kwconf.Config):
     endpoint: str = kwconf.Value(
         None, help='catalog alias this node leased; also the model asked')
     items_fpath: str = kwconf.Value(
-        'items.json', help='dataset written by make_items',
+        None, help='dataset written by make_items',
         tags=['in_path'])
     max_tokens: int = kwconf.Value(16, help='cap on the reply length')
     temperature: float = kwconf.Value(0.0, help='0 for a repeatable answer')

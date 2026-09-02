@@ -6,7 +6,7 @@ the set of endpoints a verdict rests on is declared by the matrix and resolved
 when the pipeline is compiled. Nothing scans a directory.
 
 CommandLine:
-    python -m magnet.examples.smollm_example.compare_answers \
+    python -m magnet.examples.smollm_example.cli.compare_answers \
         --answer_fpaths=manifest.txt --out_fpath=comparison.json
 """
 
@@ -58,7 +58,8 @@ def compare(payloads: list) -> dict:
             is a lesson for another example.
 
     Example:
-        >>> from magnet.examples.smollm_example.compare_answers import compare
+        >>> from magnet.examples.smollm_example.cli.compare_answers import (
+        ...     compare)
         >>> mk = lambda ep, vals: {
         ...     'result': {'metrics': {'endpoint': ep, 'answered_rate': 1.0}},
         ...     'answers': [{'id': i, 'answer': v, 'normalized': v,

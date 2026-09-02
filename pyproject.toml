@@ -25,9 +25,7 @@ dependencies = [
   # declared so the executable is present in the same environment as magnet.
   "infer-stack>=0.7.0",
   "kwarray>=0.7.1",
-  # 0.4.1 for `extra_node_spec_keys`: without it a card cannot declare
-  # `endpoint_params`, and every leasing card needs a Python subclass.
-  "kwdagger>=0.4.1",
+  "kwdagger>=0.4.0",
   "kwutil>=0.3.8",
   "lazy-loader>=0.4",
   "loguru>=0.7.3",
