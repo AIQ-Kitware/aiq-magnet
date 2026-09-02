@@ -75,18 +75,22 @@ kwdagger:
   # Three nodes, and the middle one is the point.
   #
   # `items` and `compare` need no model, so they never lease -- they hold no
-  # GPU while they run. `ask` declares `endpoint` as an endpoint parameter, so
-  # each of its two cells acquires only the model it is about to use and
-  # releases it when its own job ends. Wrapping the whole evaluation in one
+  # GPU while they run. `ask` names which of its parameters holds a catalog
+  # alias, so each of its two cells acquires only the model it is about to use
+  # and releases it when its own job ends. Wrapping the whole evaluation in one
   # lease would instead hold both models from the first node to the last.
   #
   # Every node names a container class. A node that does not cannot be
   # containerized, and `--container_image` would be accepted and never read.
+  #
+  # No node names a class defined for this example. Both classes are MAGNET's
+  # own, and everything that varies -- including which parameter is an
+  # endpoint -- is data in this file.
   pipeline:
     nodes:
       # The dummy dataset, written once and read by both endpoints.
       items:
-        class: magnet.examples.smollm_example.nodes.PlainStep
+        class: magnet.containers.ContainerYamlProcessNode
         executable: "python -m magnet.examples.smollm_example.make_items"
         algo_params:
           n_items: 8
@@ -96,11 +100,16 @@ kwdagger:
         primary_out_key: out_fpath
 
       # The leased node. `endpoint` is an ordinary algo_param, so the matrix
-      # sweeps it like any other axis -- and because the class declares it in
-      # `endpoint_params`, its value is also the catalog alias each cell
-      # leases.
+      # sweeps it like any other axis; naming it in `endpoint_params` is what
+      # also makes its value the catalog alias each cell acquires.
+      #
+      # Which parameter holds an alias is a fact about this card, so it is
+      # written here rather than in a Python subclass. kwdagger's node-spec
+      # allow-list is closed; LeasedYamlProcessNode widens it for its own four
+      # keys via `extra_node_spec_keys`.
       ask:
-        class: magnet.examples.smollm_example.nodes.AskModel
+        class: magnet.leasing.LeasedYamlProcessNode
+        endpoint_params: [endpoint]
         executable: "python -m magnet.examples.smollm_example.ask_model"
         in_paths: [items_fpath]
         algo_params:
@@ -113,7 +122,7 @@ kwdagger:
 
       # Reduce both endpoints' answers to the two numbers above.
       compare:
-        class: magnet.examples.smollm_example.nodes.PlainStep
+        class: magnet.containers.ContainerYamlProcessNode
         executable: "python -m magnet.examples.smollm_example.compare_answers"
         in_paths: [answer_fpaths]
         out_paths:

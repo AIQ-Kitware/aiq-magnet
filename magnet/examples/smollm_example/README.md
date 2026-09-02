@@ -38,10 +38,24 @@ Cache guard outermost, so a node whose output exists neither leases nor starts a
 container. The `${SLURM_JOB_GPUS...}` word is unexpanded on purpose: the
 allocation it names does not exist yet on the host that rendered the string.
 
-**The endpoint is an ordinary matrix axis.** `ask.endpoint` sweeps like any
-other parameter. `nodes.AskModel` declares it in `endpoint_params`, which is
-what also makes its value the catalog alias that cell acquires. Two endpoints,
-two cells, each holding only the model it is using.
+**The endpoint is an ordinary matrix axis, declared in the card.**
+`ask.endpoint` sweeps like any other parameter, and naming it in
+`endpoint_params` is what also makes its value the catalog alias that cell
+acquires. Two endpoints, two cells, each holding only the model it is using.
+
+```yaml
+ask:
+  class: magnet.leasing.LeasedYamlProcessNode
+  endpoint_params: [endpoint]
+  executable: "python -m magnet.examples.smollm_example.ask_model"
+```
+
+**No node names a class written for this example.** Which parameter holds an
+alias is a fact about the card, so it is written in the card. kwdagger's
+node-spec allow-list is closed, and `LeasedYamlProcessNode` widens it for its
+own four keys (`endpoint_params`, `lease_ttl`, `lease_timeout`, `lease_queue`)
+via `extra_node_spec_keys` — needs kwdagger >= 0.4.1. The list is widened for
+the named class, not opened: any other key is still refused.
 
 **A gather edge turns N cells into one comparison.** `group_by: []` hands the
 single `compare` cell every endpoint's answers as a newline-delimited manifest,
@@ -92,7 +106,6 @@ is about.
 | | |
 |---|---|
 | `smollm_kwdagger.yaml` | the card: three nodes, one gather edge, one claim |
-| `nodes.py` | `AskModel` (leases) and `PlainStep` (containerized, no lease) |
 | `make_items.py` | the dummy dataset, generated from a seed |
 | `ask_model.py` | one leased endpoint, every question, over plain `urllib` |
 | `compare_answers.py` | the gather manifest reduced to coverage and agreement |

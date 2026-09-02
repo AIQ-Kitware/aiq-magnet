@@ -24,10 +24,11 @@ CONTAINER_CLASS = 'magnet.containers.ContainerYamlProcessNode'
 
 
 class Infer(LeasedYamlProcessNode):
-    """Leasing needs `endpoint_params`, which has no node-spec key, so a card
-    that leases declares a subclass and names that. Module scope on purpose:
-    `class:` is resolved by importing the module and walking attributes, so a
-    class defined inside a test function cannot be found."""
+    """A class that fixes `endpoint_params` itself, rather than taking it from
+    the card. Still supported -- a class may hardcode what it knows -- but no
+    longer required; see `test_a_card_can_declare_endpoint_params`. Module
+    scope on purpose: `class:` is resolved by importing the module and walking
+    attributes, so a class defined inside a test function cannot be found."""
 
     endpoint_params = ('model_id',)
 
@@ -145,6 +146,38 @@ def test_the_lease_stays_outside_the_container():
         settings=_settings(), lease=leasing.LeaseSettings(enabled=True),
     ).command
     assert command.index('infer-stack run') < command.index('docker run')
+
+
+def test_a_card_can_declare_endpoint_params():
+    """Which parameter holds a catalog alias is card data, so it lives in the
+    card. `LeasedYamlProcessNode.extra_node_spec_keys` widens kwdagger's
+    closed node-spec allow-list for exactly its own four keys."""
+    spec = {'nodes': {'work': {
+        'class': 'magnet.leasing.LeasedYamlProcessNode',
+        'endpoint_params': ['model_id'],
+        'lease_ttl': '2h',
+        'executable': 'python -m pkg.infer',
+        'algo_params': {'model_id': None},
+        'out_paths': {'results_fpath': 'results.json'},
+    }}}
+    node = _node(spec, {'model_id': 'qwen3-8b'}, settings=_settings(),
+                 lease=leasing.LeaseSettings(enabled=True))
+    assert node.endpoint_params == ['model_id']
+    command = node.command
+    assert '--endpoint qwen3-8b' in command
+    assert '--ttl 2h' in command
+
+
+def test_an_unknown_node_spec_key_is_still_refused():
+    """The allow-list is widened for the named class, not opened."""
+    spec = {'nodes': {'work': {
+        'class': 'magnet.leasing.LeasedYamlProcessNode',
+        'not_a_real_key': 1,
+        'executable': 'python -m pkg.infer',
+        'out_paths': {'results_fpath': 'results.json'},
+    }}}
+    with pytest.raises(ValueError, match='not_a_real_key'):
+        coerce_pipeline(spec)
 
 
 def test_the_node_is_a_kwdagger_process_node():

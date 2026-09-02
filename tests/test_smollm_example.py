@@ -87,9 +87,30 @@ def test_every_node_can_use_the_image(card):
         assert isinstance(node, containers.ContainerProcessNode), name
 
 
+def test_the_card_names_no_class_of_its_own(card):
+    """Everything that varies is data in the card.
+
+    Both classes are MAGNET's; nothing is defined for this example. Which
+    parameter holds a catalog alias is a fact about the card, and it is written
+    in the card -- `LeasedYamlProcessNode.extra_node_spec_keys` is what lets
+    kwdagger accept it.
+    """
+    nodes = card['kwdagger']['pipeline']['nodes']
+    assert nodes['ask']['class'] == 'magnet.leasing.LeasedYamlProcessNode'
+    assert nodes['ask']['endpoint_params'] == ['endpoint']
+    for name in ('items', 'compare'):
+        assert nodes[name]['class'] == (
+            'magnet.containers.ContainerYamlProcessNode')
+    for spec in nodes.values():
+        assert not spec['class'].startswith('magnet.examples'), spec['class']
+
+    # And it arrives on the built node, not just in the YAML.
+    assert _configured_nodes(card)['ask'].endpoint_params == ['endpoint']
+
+
 def test_the_endpoint_axis_is_what_gets_leased(card):
-    """`endpoint` is an ordinary algo_param, so the matrix sweeps it; the node
-    class is what also makes its value the alias to acquire."""
+    """`endpoint` is an ordinary algo_param, so the matrix sweeps it; naming
+    it in `endpoint_params` is what also makes its value the alias."""
     assert card['kwdagger']['matrix']['ask.endpoint'] == [
         'smol-135', 'smol-360']
     for alias in card['kwdagger']['matrix']['ask.endpoint']:

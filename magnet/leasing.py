@@ -310,14 +310,30 @@ class LeasedYamlProcessNode(LeasedProcessNode, YamlProcessNode):
     the container wrapper nor the lease.
 
     :attr:`~LeasedProcessNode.endpoint_params` names the parameters whose
-    values are catalog aliases. kwdagger's node-spec allow-list has no key for
-    it, so a card that leases still declares a small subclass::
+    values are catalog aliases, and it is card data: which parameter holds an
+    alias is a fact about the card, not about Python. So it is declared in the
+    node spec like anything else::
 
-        class MyInfer(LeasedYamlProcessNode):
-            endpoint_params = ('model_id',)
+        nodes:
+          infer:
+            class: magnet.leasing.LeasedYamlProcessNode
+            endpoint_params: [model_id]
+            executable: "python -m pkg.infer"
+            out_paths: {results_fpath: results.json}
 
-    and names *that* in ``class``. Everything else -- the command, the paths,
-    the result readout -- stays data in the card.
+    kwdagger's node-spec allow-list is closed, so this class widens it with
+    :attr:`extra_node_spec_keys` (kwdagger >= 0.4.2). Nothing about leasing
+    needs a subclass any more.
     """
+
+    #: The leasing knobs a card may set directly. kwdagger validates a node
+    #: spec against its own key list plus whatever the named class adds here,
+    #: which is what keeps these out of Python.
+    extra_node_spec_keys = frozenset({
+        'endpoint_params',
+        'lease_ttl',
+        'lease_timeout',
+        'lease_queue',
+    })
 
 
