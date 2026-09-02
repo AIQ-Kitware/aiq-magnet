@@ -1,3 +1,4 @@
+name: fibonacci_performance
 title: "Two equivalent programs have very different runtime"
 
 description: |
@@ -32,43 +33,50 @@ links:
     url: "https://github.com/AIQ-Kitware/aiq-magnet"
     type: "software"
 
-# Under the kwdagger work, this remains a single benchmark node. The theory
-# annotations stay in the empirical source either way.
-#
-#   kwdagger:
-#     pipeline:
-#       nodes:
-#         benchmark:
-#           executable: >-
-#             python -m magnet.examples.theory_links.fibonacci_performance.experiment
-#           out_paths: {out_fpath: 'fibonacci_performance.json'}
-#           primary_out_key: out_fpath
-#           algo_params:
-#             repeats: 5
-#     result_node: benchmark
-
 theory:
   empirical_sources:
     - experiment.py
   indexes:
     - theory.yaml
 
+# A single benchmark node: there is one phenomenon to observe, and repeats are
+# handled inside the timing rather than by fanning out jobs.
+kwdagger:
+  result_node: benchmark
+
+  pipeline:
+    nodes:
+      benchmark:
+        executable: >-
+          python -m
+          magnet.examples.theory_links.fibonacci_performance.experiment
+        algo_params:
+          repeats: 5
+        out_paths:
+          out_fpath: fibonacci_performance.json
+        primary_out_key: out_fpath
+
+evidence:
+  scope: requested
+
 claim:
   python: |
-    assert result['same_value'], (
+    assert benchmark.same_value, (
         "the implementations no longer compute the same function"
     )
-    assert result['recursive_slower'], (
+    assert benchmark.recursive_slower, (
         "the empirical phenomenon was not observed on this run"
     )
-    assert result['abstract_cost_gap'], (
+    assert benchmark.abstract_cost_gap, (
         "the Python cost model no longer matches the formal n=28 example"
     )
 
 symbols:
-  result:
-    type: dict
-    python: |
-      from magnet.examples.theory_links.fibonacci_performance.experiment import (
-          benchmark_fibonacci)
-      result = benchmark_fibonacci(repeats=5)
+  benchmark.speed_ratio:
+    metadata:
+      display_name: "Recursive / iterative runtime"
+      display: True
+      define_metric:
+        objective: maximize
+        aggregation_strategy:
+          type: 'mean'

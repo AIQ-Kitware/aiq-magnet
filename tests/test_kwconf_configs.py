@@ -8,6 +8,7 @@ import magnet
 from magnet.backends.helm.cli.download_helm_results import DownloadHelmConfig
 from magnet.backends.helm.cli.inspect_helm_models import InspectHelmModelsConfig
 from magnet.evaluation import EvaluationConfig
+from magnet.evaluation_new import NewEvaluationCLI
 
 
 def _discover_config_classes():
@@ -37,6 +38,7 @@ ALL_CONFIG_CLASSES = _discover_config_classes()
 def test_configs_were_discovered():
     # A discovery bug would make the checks below vacuously pass.
     assert EvaluationConfig in ALL_CONFIG_CLASSES
+    assert NewEvaluationCLI in ALL_CONFIG_CLASSES
     assert len(ALL_CONFIG_CLASSES) >= 5
 
 
@@ -98,6 +100,7 @@ def test_no_config_option_shadows_a_config_method():
         # Renaming it would break `--validate` and every card that sets it, so
         # it is read as an item instead. See magnet/evaluation.py:main.
         (EvaluationConfig, 'validate'),
+        (NewEvaluationCLI, 'validate'),
     }
 
     collisions = set()
@@ -110,3 +113,33 @@ def test_no_config_option_shadows_a_config_method():
         f'config options shadow kwconf.Config attributes: {sorted(collisions)}. '
         'Rename the option, or read it with item access and add it to `known`.'
     )
+
+
+def test_new_evaluator_has_only_kwdagger_execution_controls():
+    keys = set(NewEvaluationCLI().keys())
+    assert {
+        'path', 'output_path', 'params', 'backend', 'tmux_workers',
+        'skip_existing', 'cache', 'max_configs',
+    } <= keys
+    assert not {
+        'override', 'jobs', 'parallel_backend', 'queue_backend', 'workers'
+    } & keys
+
+
+def test_new_evaluator_schedule_defaults_match_kwdagger():
+    from kwdagger.schedule import ScheduleEvaluationConfig
+
+    magnet_cfg = NewEvaluationCLI()
+    kwdagger_cfg = ScheduleEvaluationConfig()
+    for key in [
+        'backend', 'tmux_workers', 'skip_existing', 'cache', 'max_configs'
+    ]:
+        assert magnet_cfg[key] == kwdagger_cfg[key]
+
+
+def test_legacy_evaluator_surface_is_still_present():
+    keys = set(EvaluationConfig().keys())
+    assert {
+        'path', 'output_path', 'override', 'jobs', 'parallel_backend',
+    } <= keys
+    assert not {'params', 'queue_backend'} & keys

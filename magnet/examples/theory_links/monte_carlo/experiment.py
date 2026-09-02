@@ -12,11 +12,12 @@ import json
 from math import pi
 
 import kwconf
+import ubelt as ub
 
 import magnet.theory as theory
 
 class MonteCarloCLI(kwconf.Config):
-    """
+    r"""
     Estimate the quarter-disc area ratio from a seeded sample.
 
     Already a kwdagger node executable, so porting the card is a block of YAML
@@ -26,8 +27,6 @@ class MonteCarloCLI(kwconf.Config):
         python -m magnet.examples.theory_links.monte_carlo.experiment \
             --seed=1 --samples=20000 --out_fpath=monte_carlo.json
     """
-
-    __command__ = 'monte_carlo'
 
     seed: int = kwconf.Value(1, help='LCG seed; one job per value')
     samples: int = kwconf.Value(20000, help='points to draw')
@@ -40,16 +39,22 @@ class MonteCarloCLI(kwconf.Config):
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
         seed = int(config['seed'])
         samples = int(config['samples'])
-        payload = {
-            'seed': seed,
-            'samples': samples,
-            'exact': exact_area_ratio(),
-            'estimate': estimate_area_ratio(seed, samples),
-            'pi': estimate_pi(seed, samples),
-            'error': estimation_error(seed, samples),
+
+        data = {
+            'result': {
+                'metrics': {
+                    'seed': seed,
+                    'samples': samples,
+                    'exact': exact_area_ratio(),
+                    'estimate': estimate_area_ratio(seed, samples),
+                    'pi': estimate_pi(seed, samples),
+                    'error': estimation_error(seed, samples),
+                },
+            },
         }
-        with open(config['out_fpath'], 'w') as file:
-            json.dump(payload, file, indent=2)
+        out_fpath = ub.Path(config['out_fpath'])
+        out_fpath.parent.ensuredir()
+        out_fpath.write_text(json.dumps(data, indent=2))
 
 #: Numerical Recipes constants. Written out so this file depends on nothing.
 _LCG_MODULUS = 2 ** 32

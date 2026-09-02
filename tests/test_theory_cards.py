@@ -18,15 +18,27 @@ EXAMPLES = files('magnet') / 'examples' / 'theory_links'
 
 
 def _run(example, output_path):
-    from magnet.evaluation import EvaluationCard
-    card_fpath = (
-        files('magnet') / 'cards' / example
-        if example.endswith('.yaml')
-        else EXAMPLES / example / 'card.yaml'
+    """Evaluate a demo card and return its status and run directory.
+
+    The theory_links examples are kwdagger recipes; the ones named by file are
+    legacy cards. Both write `theory.json` into the run directory, which is the
+    point: the theory report is a property of the card, not of the executor.
+    """
+    if example.endswith('.yaml'):
+        from magnet.evaluation import EvaluationCard
+        card = EvaluationCard(files('magnet') / 'cards' / example, output_path)
+        status = card.evaluate()
+    else:
+        from magnet.evaluation_new import NewEvaluationRecipe
+        recipe = NewEvaluationRecipe(
+            EXAMPLES / example / 'card.yaml', output_path
+        )
+        status = recipe.evaluate(backend='serial').result
+    # The new evaluator also puts its shared kwdagger store here.
+    run_dpath = next(
+        path for path in Path(output_path).iterdir()
+        if path.is_dir() and path.name != '_kwdagger'
     )
-    card = EvaluationCard(card_fpath, output_path)
-    status = card.evaluate()
-    run_dpath = Path(next(iter(Path(output_path).iterdir())))
     return status, run_dpath
 
 

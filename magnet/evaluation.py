@@ -2,6 +2,7 @@ import builtins
 import json
 import os
 import sys
+import warnings
 from collections.abc import Callable
 from datetime import datetime
 from graphlib import TopologicalSorter
@@ -230,7 +231,7 @@ class EvaluationCard:
         """
         Handle overrides in symbol field by replacing 'value' entries and appending to sweeps
         """
-        override = kwutil.Yaml.coerce(override_str)
+        override = kwutil.Yaml.coerce(override_str, backend='pyyaml')
 
         for key, value in override.items():
             if key not in self.symbols:
@@ -316,6 +317,12 @@ class EvaluationCard:
                 )
 
         elif self.has_pipeline:
+            warnings.warn(
+                "a card's `pipeline:` block is soft-deprecated; declare a "
+                '`kwdagger:` block with a `result_node` instead.',
+                DeprecationWarning,
+                stacklevel=2,
+            )
             # Implicit pipeline definition needs parsing
             pipeline_runs = GenericPipelineProcessor(
                 self.pipeline, root_dpath=card_output_path / 'kwdagger'
@@ -959,6 +966,13 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         return
 
     card = EvaluationCard(args.path, args.output_path, validate=validate)
+    if card.has_kwdagger:
+        raise SystemExit(
+            f'{args.path}: this card declares a `kwdagger:` pipeline.\n'
+            '`magnet evaluate` / `magnet evaluate_legacy` use the legacy '
+            'evaluator and do not execute kwdagger cards.\n'
+            f'Use `magnet evaluate_new {args.path}` instead.'
+        )
     if args.override is not None:
         card.replace(args.override)
 

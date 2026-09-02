@@ -1,0 +1,226 @@
+# Preliminary Working Evaluation Recipe Example
+
+title: "In-domain Model Consistency for Llama Family"
+description: |
+  Performance in a single domain benchmark should be consistent within a bound of variation for an entire model family
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - llama
+  - helm
+  - mmlu
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+  - title: "mmlu"
+    url: "https://huggingface.co/datasets/cais/mmlu"
+    type: "dataset"
+  - title: "Precomputed HELM lite benchmark outputs"
+    url: "https://console.cloud.google.com/storage/browser/crfm-helm-public/lite"
+    type: "asset"
+
+# A claim addresses a kwdagger aggregate column two ways. `<node>.<field>` is
+# the short form used here. The qualified `<namespace>.<node>.<field>` --
+# `metrics.llama_compare.gap` -- always works and is what the recipe records as
+# evidence either way. The short form resolves wherever the node reports that
+# name once; where two namespaces report it and disagree, it refuses and names
+# them, because which one a verdict rested on should never be a matter of luck.
+claim:
+  python: |
+    c = llama_compare
+    assert c.gap < c.threshold, f"{c.comp_model} score ({c.comp_score:.2f}) exceeds consistency bound on {c.base_model} ({c.base_score:.2f})"
+
+# Keep this demo snapshot tied to the matrix requested by this invocation even
+# if the shared KWDagger store contains results from earlier experiments.
+evidence:
+  scope: requested
+
+# Symbol metadata for the visualization dashboard and for BAA metric
+# identification. A kwdagger recipe does not compute these values -- the
+# pipeline already did -- so each symbol is named for the evidence column it
+# describes and carries only what the artifact cannot: what the number is
+# called and whether it defines a metric.
+#
+# A symbol names its column the same way a claim does: by node, or qualified
+# by namespace as well. Name it by node where the node reports the field once,
+# as `llama_compare.base_score` does -- `metrics` is where kwdagger filed it,
+# not part of what it is. A bare `base_score` would resolve too, but both
+# nodes report that field, so it says less than it looks like it does.
+#
+# Qualify where the namespace is the meaning. `resolved_params` says this is
+# the path the node actually ran with rather than the one the matrix asked
+# for; `llama_predict.helm_runs_path` would match `metrics`, `params` and
+# `resolved_params` alike and quietly settle for whichever sorted first. Those
+# three agree today. The symbol is labelled for the resolved value, so it
+# should not depend on their continuing to.
+#
+# `aggregation_strategy` reduces across the recipe's evidence rows -- the 36
+# model-pair cells below. Reduction *within* a run belongs to a kwdagger
+# fan-in node, which reports its aggregate as a single node output for a
+# symbol like this one to read off.
+symbols:
+  llama_compare.base_score:
+    metadata:
+      display_name: "Average Exact Match"
+      display: True
+      define_metric:
+        objective: maximize
+        aggregation_strategy:
+          type: 'mean'
+
+  # Provenance, now that there is no corpus path to name: how many declared
+  # HELM runs this average was taken over. A path said where to look; this says
+  # what was actually used, which is the question a reader had anyway.
+  llama_predict.scored_runs:
+    metadata:
+      display_name: "HELM runs scored"
+      display: True
+
+kwdagger:
+  # MAGNET asks KWDagger aggregate for every available result row from this
+  # node in the shared result store. Its metrics appear as
+  # llama_compare.<field>, or metrics.llama_compare.<field> qualified, in the
+  # transitional Python claim above.
+  result_node: llama_compare
+
+  # Three nodes, and the first edge is the one that matters.
+  #
+  # `materialize_run` turns each MMLU run this comparison needs into an artifact
+  # of its own. `llama_predict` receives those artifacts as a gathered
+  # collection and scores them; nothing scans a directory, so the set of runs a
+  # verdict rests on is declared by the matrix, resolved when the pipeline is
+  # compiled, and recorded in the result.
+  #
+  # `llama_predict` is the same executable the legacy `pipeline:` card runs. It
+  # takes either a gather manifest or a corpus directory, so both cards share
+  # one implementation of the scoring rather than growing a second copy. That
+  # is why the score and the gap stay in separate nodes: `llama_predict` has to
+  # emit scores for the legacy card, and the claim wants the gap.
+  pipeline:
+    nodes:
+      # Reuse one cached HELM run per (model, subject), or compute it when the
+      # run is missing and a HELM deployment is available. Materializing by
+      # symlink keeps a reused cache single-copy.
+      materialize_run:
+        executable: "python -m magnet.examples.llama_consistency.materialize_run"
+        algo_params:
+          model: null
+          subject: null
+          precomputed_root: "./data/crfm-helm-public"
+          # `reuse_only` because it is the mode that works from a cache alone.
+          # A run that is not there stops the campaign and names itself, which
+          # beats averaging over whatever happened to be present.
+          #
+          # `compute_if_missing` runs HELM for a miss. It needs more than this
+          # card supplies: helm-run requires `--max-eval-instances`, and a
+          # computed run has to match the instance count of the precomputed
+          # ones it will be averaged with, or the mean silently mixes two
+          # different measurements. Set `max_eval_instances` alongside it.
+          mode: reuse_only
+        # The node's own directory is the artifact: it holds the run under
+        # benchmark_output/runs/<suite>/. DONE is what marks it complete.
+        out_paths:
+          out_dpath: "."
+          done_fname: DONE
+        primary_out_key: done_fname
+        # A materializer yields an artifact, not a measurement. Aggregate loads
+        # a result node's predecessors too, so say there is nothing to read
+        # rather than let the generic loader parse the DONE sentinel as JSON.
+        load_result: "magnet.examples.llama_consistency.materialize_run.load_kwdagger_result"
+
+      # Average exact_match across the gathered subjects for two models.
+      llama_predict:
+        executable: "python -m magnet.examples.llama_consistency.llama_predict"
+        in_paths: [run_dpaths]
+        algo_params:
+          base_model: null
+          comp_model: null
+          threshold: 0.1
+        out_paths:
+          results_fpath: results.json
+        primary_out_key: results_fpath
+        load_result: "magnet.examples.llama_consistency.llama_predict.load_kwdagger_result"
+
+      # Reduce the two scores to the gap the claim is about.
+      llama_compare:
+        executable: "python -m magnet.examples.llama_consistency.llama_compare"
+        in_paths: [scores_fpath]
+        out_paths:
+          out_fpath: comparison.json
+        primary_out_key: out_fpath
+        load_result: "magnet.examples.llama_consistency.llama_compare.load_kwdagger_result"
+
+  # A gather edge: many materialized runs, one collection-valued input.
+  #
+  # `group_by: []` gives every predict cell the whole declared corpus, and the
+  # cell picks its two models out of it. Grouping by model would not work: a
+  # cell needs runs for two different models, which is a self-join rather than
+  # a group.
+  #
+  # KWDagger hands the target a newline-delimited manifest of the source
+  # directories, so `--run_dpaths` names a file listing exactly what was used.
+    edges:
+      - src: materialize_run.out_dpath
+        dst: llama_predict.run_dpaths
+        gather:
+          group_by: []
+          order_by: [model, subject]
+          require: all_success
+      - llama_predict.results_fpath -> llama_compare.scores_fpath
+
+  # Two axes over runs to materialize, two over models to compare. The model
+  # lists are the same set: every model compared must have been materialized.
+  #
+  # The declared subjects have to exist in the cache. That is the cost of not
+  # globbing: the card names what it averages over, so it can name something
+  # that was never downloaded, and `reuse_only` says so rather than quietly
+  # averaging fewer runs.
+  #
+  # HELM-Lite carries five MMLU subjects, not MMLU's full 57:
+  #
+  #   abstract_algebra  college_chemistry  computer_security
+  #   econometrics      us_foreign_policy
+  #
+  # All five cover every model swept below -- four llama-2/65b in lite v1.0.0
+  # and both llama-3 in v1.2.0. Two are declared here to keep the DAG small;
+  # widening the list is what makes the average more representative. Confirm
+  # against a cache before adding to it:
+  #
+  #   ls data/crfm-helm-public/lite/benchmark_output/runs/*/ \
+  #     | sed -n 's/^mmlu:subject=\([^,]*\).*/\1/p' | sort -u
+  matrix:
+    materialize_run.model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
+    materialize_run.subject:
+      - abstract_algebra
+      - college_chemistry
+    llama_predict.base_model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b
+    llama_predict.comp_model:
+      - meta/llama-2-13b
+      - meta/llama-2-70b
+      - meta/llama-2-7b
+      - meta/llama-3-70b
+      - meta/llama-3-8b
+      - meta/llama-65b

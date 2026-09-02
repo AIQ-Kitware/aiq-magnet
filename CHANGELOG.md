@@ -5,12 +5,130 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## Unreleased
 
-### Fixed
 
-* Accept `depends` as an alias for `depends_on` in symbol dependencies.
+### Added
+
+* Added `magnet evaluate_new`, a kwdagger-only migration path that forwards selected `kwdagger schedule` controls directly: `--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and `--max_configs`. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
+* Added `magnet evaluate_legacy` as the explicit name for the historical evaluator; `magnet evaluate` remains its compatibility alias.
+* New evaluation recipes declare `kwdagger.result_node`: the node whose
+  accumulated KWDagger aggregate rows provide claim evidence. `evaluate_new`
+  requires it; the shared legacy schema leaves it optional for compatibility
+  with card parsing. `evaluate` / `evaluate_legacy` reject kwdagger execution
+  with a pointer to `evaluate_new`.
+* KWDagger aggregate rows reach claims with their native qualified namespace,
+  including `metrics.<node>.*`, `params.<node>.*`,
+  `resolved_params.<node>.*`, and available lineage/context fields. A card
+  symbol of the same leaf name can still be filled unqualified for the
+  transitional `define_metric` behavior.
+* `materialize_run` forwards the materializer's remaining parameters --
+  `max_eval_instances`, the HuggingFace and registration options, `num_threads`
+  and friends -- instead of dropping them. Without them `compute_if_missing`
+  was reachable but unusable.
+* The llama example's pipeline is
+  `materialize_run -> llama_predict -> llama_compare`. Each MMLU run it needs is
+  materialized as its own artifact and reaches the scoring node through a
+  kwdagger gather edge, so the runs a verdict rests on are declared by the
+  matrix rather than found by scanning a HELM cache directory. `llama_predict`
+  now takes either a gather manifest or a corpus directory, so the kwdagger
+  recipe and the legacy `pipeline:` card share one implementation of the HELM
+  scoring.
+* Fixed `_is_missing_aggregate_value` raising on a collection-valued aggregate
+  column, which no row carried before gather edges were used.
+* `magnet evaluate_new --print_commands` forwards cmd_queue's option of the
+  same name, so a run can be asked to show each job command. It defaults to
+  cmd_queue's `auto`, which prints them unless the queue is large enough to be
+  suppressed -- the case where asking explicitly is the point. Pairs with
+  `--dry_run` to read a campaign before running it.
+* `magnet evaluate_new --dry_run` schedules KWDagger with `run=0`: the matrix
+  still compiles and `requested_runs.json` reports the campaign in full, but
+  nothing is submitted and KWDagger writes a driver script instead. No evidence
+  is loaded and no claim is evaluated; the result is `NOT_EVALUATED` and no
+  `verdict.json` is written. The theory report still is, since it resolves from
+  the card before anything is scheduled.
+* `evaluate_new` resolves a recipe's `theory:` block and writes `theory.json`
+  into the run directory, as `evaluate_legacy` already did. Links resolve
+  before anything is scheduled, so a broken annotation or index fails before
+  jobs run. The theory-link examples are now kwdagger recipes on this path.
+* A short name -- a node-qualified or bare symbol, or a claim's node view --
+  ranges only over `metrics`, `params` and `resolved_params`. `machine`,
+  `resources`, `context` and the always-1 `specified` flags describe the run
+  rather than the result and stay reachable only by qualified name; this keeps
+  `machine.<node>.error`, which appears only when kwdagger's CPU probe fails,
+  from colliding with an error a node measured.
+* A Python claim can address an aggregate column by node alone --
+  `llama_compare.gap` -- as well as by its qualified name --
+  `metrics.llama_compare.gap`. The short form resolves wherever the node
+  reports that name once; agreeing columns across namespaces collapse to their
+  shared value, disagreeing ones raise and name the alternatives. Either
+  spelling is recorded as the qualified column. A declared symbol of the same
+  name as a node keeps precedence, so existing cards are unaffected.
+* A declared symbol can name its evidence column by node --
+  `llama_compare.base_score` -- the same spelling a claim uses. Short names
+  match on segment boundaries, so the bare names legacy cards carry keep
+  working and no name reaches across a partial segment. Where a short name
+  matches columns that disagree, filling still warns and proceeds, since a
+  symbol labels evidence rather than deciding a verdict.
+* The claim namespace object is introspectable: `dir()`, `keys()`, `items()`,
+  `values()`, `len()`, `in`, `[...]` indexing, and a repr that names its
+  location and children. Inspecting a view does not mark evidence as consumed.
+* A per-evidence claim record stores the source artifact, stable computation
+  cell, and qualified fields the claim consumed.
+* `requested_runs.json` records the current scheduling request separately from
+  evidence: new-submission/skipped/disabled state, attempt status, return
+  code, expected output, and whether that output is available. Failed or pending
+  execution does not itself falsify a claim.
+* New recipes can set `evidence.scope` to `all` (default) or `requested`.
+  `requested` still discovers results through KWDagger aggregate, then keeps
+  only available result-node computations requested by the current invocation;
+  cached/skipped requested outputs are included.
+* `evaluate_new` run bundles retain the visualization dashboard's existing
+  `card.yaml` / `log` / `results/*/verdict.json` / `verdict.json` contract.
+  The legacy `symbols` field in each per-evidence verdict is populated from
+  resolved recipe symbols plus the qualified KWDagger leaves consumed by the
+  claim, while the complete aggregate row remains available under `evidence`.
+  An empty `results/` directory is retained for zero-evidence snapshots.
+* `magnet evaluate_new --params` merges a YAML/JSON blob (or a file of one)
+  into a recipe's `kwdagger:` block, in the same language as `kwdagger
+  schedule --params`. The merged recipe is written to the run directory.
+
+### Deprecated
+
+* A card's `pipeline:` block. Prefer `kwdagger:` with a `result_node`. Its
+  semantics are unchanged and still supported; it now warns.
 
 ### Changed
 
+* Requires `kwdagger>=0.4.0`.
+* The replacement Python API now uses `NewEvaluationRecipe` for input,
+  `NewEvaluationCellResult` for a claim evaluated against one available
+  KWDagger aggregate row, and `NewEvaluationResultCard` for the aggregate
+  output. `NewEvaluationTask` is removed; claim evaluation is a direct
+  transformation from a recipe and available evidence into a cell result.
+* A cell's identity no longer depends on the values it measured, so a metric
+  that moves replaces its verdict instead of writing a second one beside it.
+* Under `evaluate_new`, node artifacts live in `<output>/_kwdagger`, shared
+  across card versions, so editing a card does not recompute unchanged nodes.
+  `<run>/kwdagger` links there for consumers that read a run. The legacy
+  evaluator keeps its historical per-run DAG layout.
+* Each `evaluate_new` invocation gets a distinct MAGNET run directory so its
+  requested-work snapshot is preserved. KWDagger computation artifacts remain
+  shared and reusable under `<output>/_kwdagger`.
+* `evaluate_new` discovers evidence with KWDagger's aggregate loader after
+  scheduling. The finite campaign requested by one invocation therefore does
+  not bound the result rows available to the claim; prior successful campaigns
+  remain visible in the shared result store.
+* `evaluate_new` resolves a relative kwdagger pipeline path against the card.
+* `evaluate_new` passes scheduling options directly to KWDagger; MAGNET no longer resolves queue backends, synthesizes queue names, or translates worker settings in `_kwdagger.py`.
+* The Llama kwdagger example embeds its declarative `nodes` / `edges`
+  pipeline directly in the card; the separate Python pipeline definition is
+  removed.
+
+### Fixed
+
+* The inline Llama kwdagger card addresses result fields through `metrics.llama_compare`, matching its declared `result_node`.
+* `--override` accepts list and quoted values; both raised `RepresenterError`
+  when the card was written back out.
+* Accept `depends` as an alias for `depends_on` in symbol dependencies.
 * Warn on unrecognized symbol-spec keys.
 
 ## Version 0.0.2 -- Released 2026-05-08

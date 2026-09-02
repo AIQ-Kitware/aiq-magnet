@@ -11,12 +11,13 @@ from itertools import product
 from math import comb
 
 import kwconf
+import ubelt as ub
 
 import magnet.theory as theory
 
 
 class CoinFlipCLI(kwconf.Config):
-    """
+    r"""
     Enumerate every sequence of flips and compare against the binomial law.
 
     Already a kwdagger node executable, so porting the card is a block of YAML
@@ -27,8 +28,6 @@ class CoinFlipCLI(kwconf.Config):
             --n_flips=10 --out_fpath=coin_flip.json
     """
 
-    __command__ = 'coin_flip'
-
     n_flips: int = kwconf.Value(10, help='number of fair flips to enumerate')
     out_fpath: str = kwconf.Value(
         'coin_flip.json', help='where to write the result',
@@ -38,13 +37,19 @@ class CoinFlipCLI(kwconf.Config):
     def main(cls, argv=True, **kwargs):
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
         n_flips = int(config['n_flips'])
-        payload = {
-            'n_flips': n_flips,
-            'outcomes': 2 ** n_flips,
-            'deviation': float(max_absolute_deviation(n_flips)),
+
+        data = {
+            'result': {
+                'metrics': {
+                    'n_flips': n_flips,
+                    'outcomes': 2 ** n_flips,
+                    'deviation': float(max_absolute_deviation(n_flips)),
+                },
+            },
         }
-        with open(config['out_fpath'], 'w') as file:
-            json.dump(payload, file, indent=2)
+        out_fpath = ub.Path(config['out_fpath'])
+        out_fpath.parent.ensuredir()
+        out_fpath.write_text(json.dumps(data, indent=2))
 
 @theory.tests('Examples.CoinFlip.Binomial')
 def enumerated_head_counts(n_flips: int) -> dict:

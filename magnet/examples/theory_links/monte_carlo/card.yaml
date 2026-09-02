@@ -1,3 +1,4 @@
+name: monte_carlo
 title: "Monte Carlo estimate of a known area ratio"
 
 description: |
@@ -32,70 +33,65 @@ links:
     url: "https://github.com/AIQ-Kitware/aiq-magnet"
     type: "software"
 
-# Under the kwdagger work, when it lands: one job per seed, which is what turns
-# a single estimate into a statement about the estimator. The pipeline can be
-# inline, so the whole port is this block.
-#
-#   kwdagger:
-#     pipeline:
-#       nodes:
-#         estimate:
-#           executable: 'python -m magnet.examples.theory_links.monte_carlo.experiment'
-#           out_paths: {out_fpath: 'monte_carlo.json'}
-#           primary_out_key: out_fpath
-#           algo_params:
-#             seed: 1
-#             samples: 20000
-#     result_node: estimate
-#     matrix:
-#       estimate.samples: 20000
-#       estimate.seed: [1, 2, 3, 4, 5]
-#
-#   evidence:
-#     - measures: metrics.estimate.error
-#       relation: {lt: 0.01}
-#       scope: "5 seeds at 20000 samples"
-#       relaxes: "finitely many samples; the theorem is a limit"
-#
-# The theory block below does not change.
-
 # Circle.lean contains both the exact area theorem and the asymptotic sampling
 # theorem. The latter exposes named premises that experiment.py accounts for
-# statically. Independence is deliberately left unaccounted.
+# statically. Independence is deliberately left unaccounted. None of that
+# changes under kwdagger: the annotations live in the code the node runs.
 theory:
   empirical_sources:
     - experiment.py
   indexes:
     - theory.yaml
 
+# One job per seed, which is what turns a single estimate into a statement
+# about the estimator.
+kwdagger:
+  result_node: estimate
+
+  pipeline:
+    nodes:
+      estimate:
+        executable: "python -m magnet.examples.theory_links.monte_carlo.experiment"
+        algo_params:
+          seed: 1
+          samples: 20000
+        out_paths:
+          out_fpath: monte_carlo.json
+        primary_out_key: out_fpath
+
+  matrix:
+    estimate.samples: 20000
+    estimate.seed: [1, 2, 3, 4, 5]
+
+# Judge this invocation's seeds, not every seed ever run.
+evidence:
+  scope: requested
+
+# One verdict per seed. The theorem is asymptotic and every cell here is
+# finite, so a passing verdict is evidence about the estimator at this sample
+# size rather than a test of the limit.
 claim:
   python: |
-    assert error < tolerance, (
-        f"estimate is off by {error:.5f}, over the {tolerance} tolerance"
+    assert estimate.error < tolerance, (
+        f"estimate is off by {estimate.error:.5f}, "
+        f"over the {tolerance} tolerance"
     )
-    assert error > 0, (
+    assert estimate.error > 0, (
         "a finite sample landing exactly on pi/4 would mean the estimator "
         "is not doing what this card says it does"
     )
 
 symbols:
-  seed:
-    type: int
-    value: 1
-
-  samples:
-    type: int
-    value: 20000
-
+  # The bound the claim tests against is the card's, not the pipeline's.
   tolerance:
     type: float
     value: 0.01
 
-  error:
-    type: float
-    depends_on:
-      - seed
-      - samples
-    python: |
-      from magnet.examples.theory_links.monte_carlo.experiment import estimation_error
-      error = estimation_error(seed, samples)
+  estimate.error:
+    metadata:
+      display_name: "Absolute error"
+      display: True
+      define_metric:
+        objective: minimize
+        aggregation_strategy:
+          type: 'mean'

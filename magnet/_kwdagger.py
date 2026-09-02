@@ -1,24 +1,31 @@
 """
-Bridge between an evaluation card and a kwdagger pipeline.
+Running a card's pipeline on kwdagger.
 
-A card can specify its pipeline in two ways: a ``pipeline:`` block, which
-:class:`GenericPipelineProcessor` turns into a kwdagger DAG, or a ``kwdagger:``
-block, which :class:`KWDaggerProcessor` passes through as a schedule spec.
+Everything that knows about DAGs, schedules and queues lives here, so
+:mod:`magnet.evaluation` deals in cards, symbols and claims.
 """
 import json
+import os
 from typing import Any, Dict, List, Tuple
 
 import ubelt as ub
 from kwdagger import Pipeline, ProcessNode
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
+from loguru import logger
+
+__all__ = [
+    'GenericPipelineProcessor',
+    'KWDaggerProcessor',
+]
 
 
 class GenericPipelineProcessor:
     """
     Handler for yaml-based pipeline specification
 
-    NOTE:
-        *possibly merge with KWDaggerProcessor*
+    Soft-deprecated: prefer a ``kwdagger:`` block with a ``result_node``.
+    Its semantics are kept -- one symbol set per instance, bound as bare names
+    -- since most cards still use it.
 
     Example:
         >>> from magnet._kwdagger import GenericPipelineProcessor
@@ -71,6 +78,7 @@ class GenericPipelineProcessor:
         self.pipeline = pipeline_def
         self.root_dpath = root_dpath
         self.dag = None
+        self.compiled_dag = None
         self.matrix = None
         self.symbols = {}
 
@@ -98,7 +106,8 @@ class GenericPipelineProcessor:
         self.dag.build_nx_graphs()
 
     def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
+        self, backend: str = 'serial', skip_existing: bool = True,
+        **kwargs: Any
     ) -> None:
         self.define_kwdagger()
 
@@ -110,35 +119,41 @@ class GenericPipelineProcessor:
             backend=backend,
             skip_existing=skip_existing,
             run=True,
+            **kwargs,
         )
 
-        dag, queue = build_schedule(kwd_config)
+        self.compiled_dag, self.queue = build_schedule(kwd_config)
 
     def collect_symbols(self) -> Dict[str, Any]:
         """
         Collect results (Evaluation Card 'symbols') in place of 'load_result' in the ProcessNode definition
+
+        Each configured instance is asked for its own artifact. Globbing the
+        root instead would also return the instances of whatever other card
+        versions share it.
         """
         if not self.symbols:
             self.dispatch()
 
-        # Glob all results json (only one node in pipeline)
-        paths = self.root_dpath.glob(
-            f'**/{self.dag.node_dict[next(iter(self.dag.node_dict))].out_paths["results_fpath"]}'
-        )
+        node_name = next(iter(self.dag.node_dict))
+        out_path = self.dag.node_dict[node_name].out_paths['results_fpath']
 
-        for symbol_resolution in paths:
-            symbols = json.load(open(symbol_resolution, 'r'))
-            parent_dir = symbol_resolution.parent.stem
-            if 'result' in symbols:
-                # assume all fields exist
-                for symbol in symbols['result']:
-                    # record all sweeps
-                    if parent_dir not in self.symbols:
-                        self.symbols[parent_dir] = {}
-
-                    self.symbols[parent_dir][symbol] = {
-                        'value': symbols['result'][symbol]
-                    }
+        for node in self.compiled_dag.nodes.values():
+            if node.name != node_name:
+                continue
+            fpath = node.final_node_dpath / out_path
+            if not fpath.exists():
+                continue
+            payload = json.loads(fpath.read_text())
+            # A node writes its values at the top level; `result` is the older
+            # nesting, still read so existing nodes keep working.
+            values = payload.get('result', payload)
+            for symbol, value in values.items():
+                if symbol.startswith('_'):
+                    continue
+                self.symbols.setdefault(node.process_id, {})[symbol] = {
+                    'value': value
+                }
 
         return self.symbols
 
@@ -158,87 +173,254 @@ class GenericPipelineProcessor:
                 node_cfg[k] = list(node_cfg[k].keys())
         return node_cfg, matrix
 
-
 class KWDaggerProcessor:
     """
-    Handler for full kwdagger pipeline specification
+    Adapter between a MAGNET recipe and kwdagger's experiment-runner APIs.
 
-    Example
+    Scheduling and evidence discovery are deliberately separate. ``schedule``
+    submits the finite experiment campaign requested by this invocation.
+    ``load_available_result_rows`` scans the shared kwdagger result store using
+    kwdagger's aggregate loader, so evidence is not limited to the processes
+    that happened to be scheduled by the current invocation.
+
+    The pipeline may be an importable Python pipeline, a YAML file path, or a
+    declarative ``nodes`` / ``edges`` mapping embedded directly in the recipe.
+
+    Example:
         >>> from magnet._kwdagger import KWDaggerProcessor
-        >>> from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
         >>> import kwutil
-        >>> # Example snippet of an Evaluation Card (related to GenericPipelineProcessor example)
         >>> example_cfg = kwutil.Yaml.coerce(
-            '''
-            kwdagger:
-              pipeline: magnet.examples.llama_consistency.pipelines.llama_pipeline()
-              matrix:
-                llama_predict.base_model: ["meta/llama-2-13b", "meta/llama-2-70b"]
-                llama_predict.comp_model:  ["meta/llama-2-7b", "meta/llama-3-70b"]
-            ''')
-        >>> root_dpath = "."
-        >>> kwdagger_def = example_cfg['kwdagger']
-        >>> pipeline = KWDaggerProcessor(kwdagger_def, root_dpath)
-        >>> #
-        >>> # Construct Two Node Pipeline (llama_predict -> claim)
-        >>> kwdagger_spec = ScheduleEvaluationConfig(params=pipeline.spec, run=False)
-        >>> dag, queue = build_schedule(kwdagger_spec)
-        ...
-        >>> dag.print_graphs()
-
-        Process Graph
-        ╙── llama_predict
-            ╽
-            claim_eval
-
-        IO Graph
-        ╙── llama_predict
-            ╽
-            results_fpath
-            ╽
-            symbols_fpath
-            ╽
-            claim_eval
-            ╽
-            verdict_fpath
-
-        >>> #
-        >>> # Parameters matrix
-        >>> pipeline.spec['matrix']
-        {'llama_predict.base_model': ['meta/llama-2-13b', 'meta/llama-2-70b'],
-        'llama_predict.comp_model': ['meta/llama-2-7b', 'meta/llama-3-70b']}
+        ...     '''
+        ...     kwdagger:
+        ...       result_node: compare
+        ...       pipeline:
+        ...         nodes:
+        ...           predict:
+        ...             executable: "python predict.py"
+        ...             algo_params: {model: null}
+        ...             out_paths: {result_fpath: result.json}
+        ...           compare:
+        ...             executable: "python compare.py"
+        ...             in_paths: [result_fpath]
+        ...             out_paths: {out_fpath: comparison.json}
+        ...         edges:
+        ...           - predict.result_fpath -> compare.result_fpath
+        ...       matrix:
+        ...         predict.model: [model-a, model-b]
+        ...     '''
+        ... )
+        >>> processor = KWDaggerProcessor(example_cfg['kwdagger'], '.')
+        >>> processor.result_node
+        'compare'
+        >>> sorted(processor.params['pipeline']['nodes'])
+        ['compare', 'predict']
+        >>> processor.params['pipeline']['edges']
+        ['predict.result_fpath -> compare.result_fpath']
     """
 
     def __init__(
-        self, pipeline_def: Dict[str, Any], root_dpath: ub.Path
+        self, kwdagger_config: Dict[str, Any], root_dpath: ub.Path
     ) -> None:
-        self.spec = pipeline_def
-        self.root_dpath = root_dpath
+        # ``result_node`` is a MAGNET-level declaration, not part of the
+        # ``kwdagger schedule --params`` payload.
+        self.params = {
+            k: v for k, v in kwdagger_config.items() if k != 'result_node'
+        }
+        self.result_node = kwdagger_config.get('result_node')
+        self.root_dpath = ub.Path(root_dpath)
         self.results = []
         self.symbols = []
+        self.request_dag = None
+        self.queue = None
 
-    def dispatch(
-        self, backend: str = 'serial', skip_existing: bool = True, **kwargs: Any
+    def schedule(
+        self, *, dry_run: bool = False, **schedule_options: Any
     ) -> None:
-        kwd_config = ScheduleEvaluationConfig(
-            params=self.spec,  # includes pipeline and additional params
-            root_dpath=self.root_dpath,
-            backend=backend,
-            skip_existing=skip_existing,
-            run=True,
-            **kwargs,
-        )
+        """Submit this invocation's requested experiment campaign.
 
-        self.dag, queue = build_schedule(kwd_config)
+        ``schedule_options`` uses kwdagger's own option names and semantics.
+        MAGNET supplies only the pipeline spec, artifact root, and ``run``.
+        The returned compiled graph is retained only to report the operational
+        state of this request; it is not used to decide what evidence exists.
+
+        ``dry_run`` schedules with ``run=0``. KWDagger still compiles the whole
+        matrix and hands back the graph, so the request is reported in full; it
+        writes a driver script rather than submitting anything.
+        """
+        kwd_config = ScheduleEvaluationConfig(
+            params=self.params,  # includes pipeline and matrix/grid controls
+            root_dpath=self.root_dpath,
+            run=not dry_run,
+            **schedule_options,
+        )
+        self.request_dag, self.queue = build_schedule(kwd_config)
+
+    def _coerce_aggregate_pipeline(self) -> Any:
+        """Configure the logical pipeline used by kwdagger aggregate loading."""
+        from kwdagger.pipeline import coerce_pipeline
+
+        if not self.result_node:
+            raise ValueError('recipe must declare kwdagger.result_node')
+
+        pipeline = coerce_pipeline(self.params['pipeline'])
+        pipeline.configure(config=None, root_dpath=self.root_dpath)
+        if self.result_node not in pipeline.node_dict:
+            available = sorted(pipeline.node_dict)
+            raise ValueError(
+                f'result_node {self.result_node!r} is not a node in the '
+                f'pipeline; available: {available}'
+            )
+        return pipeline
+
+    def load_available_result_rows(
+        self,
+        *,
+        io_workers: Any = 'avail',
+        cache_resolved_results: bool = True,
+    ) -> List[Dict[str, Any]]:
+        """Load all currently available evidence for ``result_node``.
+
+        This uses kwdagger's aggregate loader, which scans the shared result
+        root from the logical pipeline's output templates and reconstructs the
+        qualified result namespace (``metrics.*``, ``params.*``,
+        ``resolved_params.*``, ``context.*``, ``resources.*``, etc.). The
+        current request graph is intentionally irrelevant here: results from
+        prior campaigns remain evidence, while a currently pending or failed
+        request contributes no result row until it produces an artifact.
+
+        Returns:
+            A list of mappings with ``key`` (the computation/artifact identity),
+            ``artifact`` (the primary result path), and ``row`` (the complete
+            kwdagger aggregate row made available to a MAGNET claim).
+        """
+        import pandas as pd
+        from kwdagger.aggregate_loader import build_tables
+
+        pipeline = self._coerce_aggregate_pipeline()
+        tables_by_node = build_tables(
+            self.root_dpath,
+            pipeline,
+            io_workers,
+            [self.result_node],
+            cache_resolved_results=cache_resolved_results,
+        )
+        parts = tables_by_node.get(self.result_node)
+        if not parts:
+            return []
+
+        table = pd.concat(list(parts.values()), axis=1)
+        evidence = []
+        for raw_row in table.to_dict(orient='records'):
+            row = {}
+            for key, value in raw_row.items():
+                if _is_missing_aggregate_value(value):
+                    continue
+                if isinstance(value, os.PathLike):
+                    value = os.fspath(value)
+                elif type(value).__module__.startswith('numpy') and hasattr(
+                    value, 'item'
+                ):
+                    value = value.item()
+                row[key] = value
+
+            artifact = row.get('fpath')
+            if artifact is None:
+                continue
+            artifact = os.fspath(artifact)
+            row['fpath'] = artifact
+            evidence.append({
+                'key': ub.Path(artifact).parent.name,
+                'artifact': artifact,
+                'row': row,
+            })
+        evidence.sort(key=lambda item: item['artifact'])
+        return evidence
+
+    def inspect_requested_runs(self) -> List[Dict[str, Any]]:
+        """Describe execution state for this invocation's finite request.
+
+        These records are operational provenance only. They are kept separate
+        from aggregate evidence because a failed, disabled, skipped, queued, or
+        not-yet-started request says nothing by itself about the truth of a
+        MAGNET claim, and an older successful result may already exist for the
+        same computation.
+        """
+        if self.request_dag is None:
+            return []
+
+        named_jobs = getattr(self.queue, 'named_jobs', None) or {}
+        if not named_jobs:
+            named_jobs = {
+                getattr(job, 'name', None): job
+                for job in (getattr(self.queue, 'jobs', None) or [])
+                if getattr(job, 'name', None) is not None
+            }
+
+        records = []
+        for process_id, node in self.request_dag.nodes.items():
+            job = named_jobs.get(process_id)
+            expected = _primary_result_path(node)
+            output_available = bool(expected and expected.exists())
+
+            # Mirror kwdagger.pipeline.submit_jobs node-status vocabulary.
+            # build_schedule creates a fresh queue for this request, so a
+            # concrete process present in that queue is a new submission;
+            # enabled processes absent from it were skipped by KWDagger.
+            if not getattr(node, 'enabled', True):
+                schedule_status = 'disabled'
+            elif job is not None:
+                schedule_status = 'new_submission'
+            else:
+                schedule_status = 'skipped'
+
+            returncode = None
+            stat_fpath = getattr(job, 'stat_fpath', None) if job else None
+            if job is None:
+                attempt_status = 'not_attempted'
+            elif stat_fpath is None or not ub.Path(stat_fpath).exists():
+                attempt_status = 'not_started'
+            else:
+                stat = json.loads(ub.Path(stat_fpath).read_text())
+                returncode = stat.get('ret')
+                if returncode is None:
+                    attempt_status = 'running'
+                elif returncode == 0:
+                    attempt_status = 'passed'
+                elif returncode == 126:
+                    attempt_status = 'skipped'
+                else:
+                    attempt_status = 'failed'
+
+            record = {
+                'process_id': process_id,
+                'node': node.name,
+                'schedule_status': schedule_status,
+                'attempt_status': attempt_status,
+                'returncode': returncode,
+                'output_available': output_available,
+                'enabled': getattr(node, 'enabled', True),
+            }
+            if expected is not None:
+                record['expected_output'] = os.fspath(expected)
+            if stat_fpath is not None:
+                record['stat_fpath'] = os.fspath(stat_fpath)
+            log_fpath = getattr(job, 'log_fpath', None) if job else None
+            if log_fpath is not None:
+                record['log_fpath'] = os.fspath(log_fpath)
+            records.append(record)
+        return records
 
     def collect_results(self) -> Tuple[List[str], List[Any]]:
+        """Legacy result collector used by ``magnet evaluate``.
+
+        The legacy evaluator historically expected kwdagger pipelines to emit
+        ``verdict.json`` files containing ``result.status`` and
+        ``result.symbols``. Keep that behavior isolated here.
+        """
         if not self.results:
-            self.dispatch()
+            self.schedule(backend='serial', skip_existing=True)
 
-        # Glob all Claim node json files recursively
         paths = self.root_dpath.glob('**/verdict.json')
-
-        # Assumes {result: {status: value}} output format
         for claim_json in paths:
             claim_result = json.load(open(claim_json, 'r'))
             if 'result' in claim_result and 'status' in claim_result['result']:
@@ -247,3 +429,89 @@ class KWDaggerProcessor:
                 self.symbols.append(claim_result['result']['symbols'])
 
         return self.results, self.symbols
+
+
+def _is_missing_aggregate_value(value: Any) -> bool:
+    """Return True for dataframe missing-value sentinels, but not real None."""
+    if value is None:
+        return False
+    try:
+        import pandas as pd
+
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        return False
+    if isinstance(missing, bool):
+        return missing
+    if type(missing).__module__.startswith('numpy') and hasattr(missing, 'item'):
+        # `pd.isna` answers elementwise for a container, so a gathered
+        # collection-valued column comes back as an array. A container is not a
+        # missing scalar whatever its elements are.
+        if getattr(missing, 'size', 1) != 1:
+            return False
+        return bool(missing.item())
+    return False
+
+
+def _primary_result_path(node: Any) -> ub.Path | None:
+    """Return a concrete process's primary result path, when it has one."""
+    primary_out_key = getattr(node, 'primary_out_key', None)
+    if primary_out_key is None:
+        return None
+    final_out_paths = getattr(node, 'final_out_paths', None)
+    if final_out_paths is not None and primary_out_key in final_out_paths:
+        return ub.Path(final_out_paths[primary_out_key])
+    out_paths = getattr(node, 'out_paths', None) or {}
+    if primary_out_key not in out_paths:
+        return None
+    return ub.Path(node.final_node_dpath) / out_paths[primary_out_key]
+
+def _resolve_pipeline_path(
+    kwdagger_spec: Dict[str, Any], card_dpath: ub.Path
+) -> Dict[str, Any]:
+    """
+    Make a relative pipeline file path mean the same thing from any directory.
+
+    A card may name a pipeline file rather than inline the DAG or name a Python
+    callable. Such a path resolves against the card's directory, matching how
+    the theory block's formalization paths already work.
+
+    Args:
+        kwdagger_spec (Dict[str, Any]): the card's ``kwdagger`` block.
+        card_dpath (ub.Path): the directory holding the card.
+
+    Returns:
+        Dict[str, Any]: the spec, with any relative pipeline path made absolute.
+
+    Example:
+        >>> import ubelt as ub
+        >>> from magnet._kwdagger import _resolve_pipeline_path
+        >>> spec = {'pipeline': 'module.func()'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        'module.func()'
+        >>> spec = {'pipeline': {'nodes': {}}}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        {'nodes': {}}
+        >>> spec = {'pipeline': 'dag.yaml'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        '/cards/dag.yaml'
+        >>> spec = {'pipeline': '/abs/dag.yaml'}
+        >>> _resolve_pipeline_path(spec, ub.Path('/cards'))['pipeline']
+        '/abs/dag.yaml'
+    """
+    pipeline = kwdagger_spec.get('pipeline')
+    if not isinstance(pipeline, str):
+        return kwdagger_spec
+    if '::' in pipeline:
+        return kwdagger_spec
+    if pipeline.rsplit('.', 1)[-1].lower() not in {'yaml', 'yml', 'json'}:
+        return kwdagger_spec
+
+    path = ub.Path(pipeline)
+    if not path.is_absolute():
+        path = card_dpath / path
+
+    resolved = dict(kwdagger_spec)
+    resolved['pipeline'] = os.fspath(path)
+    return resolved
+

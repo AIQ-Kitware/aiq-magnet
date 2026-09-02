@@ -1,3 +1,4 @@
+name: coin_flip
 title: "Enumerated coin flips match the binomial law"
 
 description: |
@@ -29,54 +30,53 @@ links:
     url: "https://github.com/AIQ-Kitware/aiq-magnet"
     type: "software"
 
-# Under the kwdagger work, when it lands: one job per flip count, one verdict
-# each, and the enumeration cached so a re-run does not redo it. The pipeline
-# can be inline, so the whole port is this block.
-#
-#   kwdagger:
-#     pipeline:
-#       nodes:
-#         enumerate:
-#           executable: 'python -m magnet.examples.theory_links.coin_flip.experiment'
-#           out_paths: {out_fpath: 'coin_flip.json'}
-#           primary_out_key: out_fpath
-#           algo_params:
-#             n_flips: 10
-#     result_node: enumerate
-#     matrix:
-#       enumerate.n_flips: [8, 10, 12, 14]
-#
-#   evidence:
-#     - measures: metrics.enumerate.deviation
-#       relation: {eq: 0}
-#       scope: "every head count, exact rational arithmetic"
-#
-# The theory block below does not change: the annotation stays in the code the
-# node runs, and the link is read from source either way.
-
-# The statement is proved in CoinFlip.lean beside this file.
+# The statement is proved in CoinFlip.lean beside this file. The theory block
+# is unchanged by the port: the annotation lives in the code the node runs, and
+# the link is read from source either way.
 theory:
   empirical_sources:
     - experiment.py
   indexes:
     - theory.yaml
 
+# One job per flip count, one verdict each, and the enumeration cached in the
+# shared store so a re-run does not redo it.
+#
+# The node is named `enumeration`, not `enumerate`: a claim can address a node
+# by its bare name, and a node named for a Python builtin would shadow it.
+kwdagger:
+  result_node: enumeration
+
+  pipeline:
+    nodes:
+      enumeration:
+        executable: "python -m magnet.examples.theory_links.coin_flip.experiment"
+        algo_params:
+          n_flips: 10
+        out_paths:
+          out_fpath: coin_flip.json
+        primary_out_key: out_fpath
+
+  # Enumeration is exponential in n_flips, so this stays small on purpose.
+  matrix:
+    enumeration.n_flips: [8, 10, 12, 14]
+
+# Judge this invocation's flip counts, not every enumeration ever cached.
+evidence:
+  scope: requested
+
 claim:
   python: |
-    assert deviation == 0, (
-        f"enumeration departs from the binomial law by {deviation}"
+    assert enumeration.deviation == 0, (
+        f"enumeration departs from the binomial law by {enumeration.deviation}"
     )
 
 symbols:
-  n_flips:
-    type: int
-    value: 10
-
-  deviation:
-    type: float
-    depends_on:
-      - n_flips
-    python: |
-      from fractions import Fraction
-      from magnet.examples.theory_links.coin_flip.experiment import max_absolute_deviation
-      deviation = float(max_absolute_deviation(n_flips))
+  enumeration.deviation:
+    metadata:
+      display_name: "Max deviation from the binomial law"
+      display: True
+      define_metric:
+        objective: minimize
+        aggregation_strategy:
+          type: 'max'

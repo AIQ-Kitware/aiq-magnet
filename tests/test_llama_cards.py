@@ -1,10 +1,12 @@
+import json
 from importlib.resources import files
 
 import pytest
+import ubelt as ub
 
 from magnet.demo.helm_demodata import ensure_helm_llama_fixture_outputs
 from magnet.evaluation import EvaluationCard
-
+from magnet.evaluation_new import NewEvaluationRecipe
 
 LLAMA_MODELS = [
     'meta/llama-2-13b',
@@ -23,18 +25,26 @@ FAST_LLAMA_MODELS = [
     'meta/llama-3-70b',
 ]
 
-CARD_NAMES = [
-    'llama.yaml',
-    'llama_pipeline.yaml',
-    'llama_kwdagger.yaml',
+# The kwdagger recipe is an example rather than a card, and `evaluate_new`
+# runs it; the other two remain legacy cards run by `magnet evaluate`.
+CARDS = [
+    ('cards/llama.yaml', False),
+    ('cards/llama_pipeline.yaml', False),
+    ('examples/llama_consistency/llama_kwdagger.yaml', True),
 ]
 
 
-@pytest.mark.parametrize('card_name', CARD_NAMES)
-def test_llama_card_declares_full_matrix(tmp_path, card_name):
+def _load(card_relpath, use_new_evaluator, results_path):
+    card_path = files('magnet').joinpath(*card_relpath.split('/'))
+    card_cls = NewEvaluationRecipe if use_new_evaluator else EvaluationCard
+    return card_cls(card_path, results_path)
+
+
+@pytest.mark.parametrize('card_relpath,use_new_evaluator', CARDS)
+def test_llama_card_declares_full_matrix(
+        tmp_path, card_relpath, use_new_evaluator):
     """The shipped examples still declare the full 6x6 model sweep."""
-    card_path = files('magnet') / 'cards' / card_name
-    card = EvaluationCard(card_path, tmp_path / 'results')
+    card = _load(card_relpath, use_new_evaluator, tmp_path / 'results')
 
     base_models, comp_models = _card_model_matrix(card)
     assert base_models == LLAMA_MODELS
@@ -42,18 +52,47 @@ def test_llama_card_declares_full_matrix(tmp_path, card_name):
     assert len(base_models) * len(comp_models) == 36
 
 
-@pytest.mark.parametrize('card_name', CARD_NAMES)
-def test_llama_card(llama_helm_data, tmp_path, card_name):
+@pytest.mark.parametrize('card_relpath,use_new_evaluator', CARDS)
+def test_llama_card(
+        llama_helm_data, tmp_path, card_relpath, use_new_evaluator):
     data_path = llama_helm_data
     results_path = f'{tmp_path}/results'
-    card_path = files('magnet') / 'cards' / card_name
 
-    card = EvaluationCard(card_path, results_path)
+    card = _load(card_relpath, use_new_evaluator, results_path)
+    if use_new_evaluator:
+        assert card.evidence_scope == 'requested'
     override_path(card, str(data_path / 'lite' / 'benchmark_output'))
     _limit_model_matrix(card, FAST_LLAMA_MODELS)
 
-    assert card.evaluate() == 'FALSIFIED'
-    assert len(card.evaluations) == 4
+    expected_cells = len(FAST_LLAMA_MODELS) ** 2
+    if use_new_evaluator:
+        assert card.evaluate(backend='serial').result == 'FALSIFIED'
+        assert len(card.result_card.cell_results) == expected_cells
+        # The kwdagger recipe carries the same symbol metadata the legacy
+        # card does, so the dashboard contract is identical on both routes.
+        # The names differ: a legacy card has only a bare `base_score`, while
+        # a recipe says which node's, and qualifies by namespace as well where
+        # that is the meaning.
+        written = sorted(ub.Path(results_path).glob('*/symbol_metadata.json'))
+        assert len(written) == 1
+        assert json.loads(written[0].read_text()) == {
+            'llama_compare.base_score': {
+                'display_name': 'Average Exact Match',
+                'display': True,
+                'define_metric': {
+                    'objective': 'maximize',
+                    'aggregation_strategy': {'type': 'mean'},
+                },
+            },
+            'llama_predict.scored_runs': {
+                'display_name': 'HELM runs scored',
+                'display': True,
+            },
+        }
+        assert 'Average Exact Match' in card.result_card.metrics
+    else:
+        assert card.evaluate() == 'FALSIFIED'
+        assert len(card.evaluations) == expected_cells
 
 
 def _card_model_matrix(card):
@@ -84,6 +123,8 @@ def _limit_model_matrix(card, models):
         matrix = card.kwdagger['matrix']
         matrix['llama_predict.base_model'] = models
         matrix['llama_predict.comp_model'] = models
+        # Only materialize what the comparison actually needs.
+        matrix['materialize_run.model'] = models
     else:
         card.replace({'base_model': models, 'comp_model': models})
 
@@ -103,7 +144,18 @@ def override_path(card, corrected_path):
 
         card.pipeline['llama_predict']['executable'] = python_module
     elif card.has_kwdagger:
-        card.kwdagger['matrix']['llama_predict.helm_runs_path'] = corrected_path
+        # The recipe materializes runs out of a precomputed HELM root, so it
+        # takes the cache root rather than a benchmark_output directory.
+        matrix = card.kwdagger['matrix']
+        matrix['materialize_run.precomputed_root'] = str(
+            ub.Path(corrected_path).parent.parent
+        )
+        # The hermetic fixture carries these two subjects.
+        matrix['materialize_run.subject'] = ['abstract_algebra', 'anatomy']
+        # Never let a test reach for HELM: the fixture holds every run the
+        # trimmed matrix asks for, so a miss is a bug rather than a cue to
+        # compute one.
+        matrix['materialize_run.mode'] = 'reuse_only'
     else:
         card.replace({'helm_runs_path': corrected_path})
 

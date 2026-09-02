@@ -562,6 +562,20 @@ class MaterializeHelmRunConfig(kwconf.Config):
                 tokenizer_configs_fpath=config.tokenizer_configs_fpath,
             )
 
+            if config.max_eval_instances is None:
+                # helm-run requires -m/--max-eval-instances, so this would
+                # shell out only to fail on an argparse error. Say what is
+                # missing here instead. It is also identity-bearing: a computed
+                # run has to match the instance count of the precomputed runs
+                # it will sit beside, or a mean mixes two measurements.
+                raise ValueError(
+                    'no reusable run found and computing one needs '
+                    '`max_eval_instances`: helm-run requires it, and it must '
+                    'match the instance count of the precomputed runs this '
+                    'one will be compared with. Set it, or use '
+                    '`--mode=reuse_only` to fail on a cache miss instead.'
+                )
+
             logger.info('No reusable run found; running helm-run')
             run_helm(
                 requested_desc=config.run_entry,

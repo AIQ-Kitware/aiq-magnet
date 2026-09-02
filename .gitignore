@@ -10,3 +10,6 @@ docs/build/
 .coverage
 
 results
+evaluation_runs
+*.tar.gz
+data

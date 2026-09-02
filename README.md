@@ -228,10 +228,9 @@ An example demonstration is provided below (assuming you've downloaded helm-lite
 ```
 At least one pair of models in the llama family do not satisfy the assertion subject to the symbol values, therefore the claim is `FALSIFIED`.
 
-(NOTE: If to run the following command you need data from the helm-lite leaderboard, an example subset for this example can be downloaded to `/data/crfm-helm-public` using the following command:)
-```
-magnet download helm --download_dir ./data/crfm-helm-public --benchmark=lite --version=v1.0.0 --runs regex:mmlu.*model=.*llama.*
-```
+The Llama examples require MMLU results from more than one HELM-Lite release.
+See `magnet/examples/llama_consistency/README.md` for the exact incremental
+download commands and a `materialize_helm_run` reuse smoke test.
 
 Optionally, you could evaluate this card using the `magnet evaluate` command as follows:
 
@@ -290,7 +289,7 @@ magnet evaluate path/to/mycard.yaml
 ```
 
 #### Resolving Symbols as a Pipeline (kwdagger)
-In the example above, symbols are explicitly defined in Python as code blocks, values, or sweeps (list) of values. [kwdagger]([https://github.com/AIQ-Kitware/kwdagger) offers an alternative flexible approach to resolving symbols as pipelines of user scripts with a variety of backends (see [tutorials](https://github.com/AIQ-Kitware/kwdagger/tree/main/docs/source/manual/tutorials) for example definitions). MAGNET can dispatch these explicitly, by referencing a fully-defined pipeline, or generate from user-provided scaffolding in the Evaluation Card.
+In the example above, symbols are explicitly defined in Python as code blocks, values, or sweeps (list) of values. [kwdagger](https://github.com/AIQ-Kitware/kwdagger) offers an alternative flexible approach to resolving symbols as pipelines of user scripts with a variety of backends (see [tutorials](https://github.com/AIQ-Kitware/kwdagger/tree/main/docs/source/manual/tutorials) for example definitions). MAGNET can dispatch these explicitly, by referencing a fully-defined pipeline, or generate from user-provided scaffolding in the Evaluation Card.
 
 The example python module (`magnet/examples/llama_consistency`) represents how a user may structure their code for testing the claim seen in `magnet/cards/llama.yaml`. Each potential 'node', or script, of a pipeline satisfies the following conditions:
  1. defines a Python class with key, value (input, output) arguments
@@ -329,48 +328,106 @@ symbols: # define any remaining values
 ```
 Example output can be observed by running the example card `llama_pipeline.yaml`:
 ```
-magnet evaluate magnet/cards/llama_pipeline.yaml --results_path './results'
+magnet evaluate magnet/cards/llama_pipeline.yaml --output_path './results'
 ```
-A subdirectory for each unique sweep will be created in `{results_path}`.
+A subdirectory for each unique sweep will be created in `{output_path}`.
 
 
 #### Explicit kwdagger Pipeline (llama_consistency example)
-Alternatively, for users that want the most flexibility an Evaluation Card can be populated with a reference to an existing `kwdagger` pipeline. An example two-node pipeline is defined in `magnet/examples/llama_consistency/pipelines.py`. There, the output filepaths of `llama_predict.py` are connected as input paths to `claim.py`. This circumvents the existing `Claim` resolution process by defining a node to aggregate the symbols. An example card is available in `magnet/cards/llama_kwdagger.yaml`.
+For new cards, prefer a declarative `kwdagger` pipeline. The pipeline can live
+in a separate YAML file, but small pipelines are often clearer inline in the
+card. `magnet/examples/llama_consistency/llama_kwdagger.yaml` is a two-node
+example: `llama_predict` writes model scores and `llama_compare` consumes that
+artifact and writes the comparison used by the card.
 
-The format of an Evaluation Card that references a `kwdagger` pipeline is similar to above, but instead of `pipeline`, the key to populate is `kwdagger`. 
+The pipeline is the standard kwdagger YAML `nodes` / `edges` form. MAGNET adds
+`result_node` to select the KWDagger aggregate rows used as claim evidence.
+KWDagger owns result loading and qualified namespaces such as
+`metrics.<result_node>.<field>`, `params.<node>.<field>`, and
+`resolved_params.<node>.<field>`.
 
-```
- ...
-# Same fields as original example card above with claim
-...
+```yaml
+claim:
+  python: |
+    assert metrics.second_node.score < 0.1
+
 kwdagger:
-  # pipeline definition
-  pipeline: 'importable.python.path.pipeline_definition()'
-  # node specific parameters
-  matrix:
-      first_node.dataset_name:
-          - unique_benchmark
-      first_node.model_name:
-          - openai/gpt-4o
-          - meta/llama-3.3-70b
-      second_node.epsilon: 0.01
-...
-```
-Example output for a kwdagger card be observed by running the example `llama_kwdagger.yaml`:
-```
-magnet evaluate magnet/cards/llama_kwdagger.yaml --results_path './results_kwdagger'
-```
-A results file for each unique sweep of parameters will be created in a subdirectory of `{results_path}/{node_name}/.`.
+  result_node: second_node
+  pipeline:
+    nodes:
+      first_node:
+        executable: 'python -m package.first_node'
+        algo_params:
+          model_name: null
+        out_paths:
+          result_fpath: result.json
+        primary_out_key: result_fpath
 
-Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield `FALSIFIED` cards with output similar to below: 
+      second_node:
+        executable: 'python -m package.second_node'
+        in_paths: [input_fpath]
+        out_paths:
+          result_fpath: result.json
+        primary_out_key: result_fpath
+
+    edges:
+      - first_node.result_fpath -> second_node.input_fpath
+
+  matrix:
+    first_node.model_name:
+      - openai/gpt-4o
+      - meta/llama-3.3-70b
+```
+
+The example directory also contains a README with the exact HELM-Lite download, single-run materialization, and execution commands.
+
+Run the Llama example with the kwdagger-native evaluator:
+
+```
+magnet evaluate_new magnet/examples/llama_consistency/llama_kwdagger.yaml \
+    --output_path './results_kwdagger' \
+    --backend serial
+```
+
+`evaluate_new` first submits the finite matrix requested by this invocation, then
+uses KWDagger aggregate to discover currently available `result_node` rows from
+the shared result store. A recipe can select `evidence.scope: all` (the default)
+to evaluate all accumulated rows, or `evidence.scope: requested` to evaluate
+only rows corresponding to result-node computations requested by that
+invocation. Cached/skipped requested computations still qualify when their
+output exists. The run's `requested_runs.json` records execution state
+separately; execution failure does not count as a falsified claim.
+
+During the migration, `magnet evaluate_legacy` names the historical evaluator and
+`magnet evaluate` remains its compatibility alias. Both reject recipes with a
+`kwdagger:` block and point to `magnet evaluate_new`. `magnet evaluate_new` is
+the cleaner kwdagger-only path: execution parameters are passed directly with
+`--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and
+`--max_configs` using KWDagger schedule semantics. Legacy `pipeline:`
+computation or symbol sweeps are rejected. See the example README for the
+complete setup, recomputation, and materialization commands.
+
+Although varying slightly in methods, successful runs of `llama.yaml`, `llama_pipeline.yaml`, and `llama_kwdagger.yaml` should all yield a `FALSIFIED` aggregate result with output similar to below:
 ```
 ================================
-Settings Evaluated: 36
+Evidence Scope: requested
+Available Evidence Rows: 36 (discovered: 36)
   Verified:     0.61
   Falsified:    0.39
   Inconclusive: 0.00
 ================================
 ```
+
+`evaluate_new` keeps the existing MAGNET dashboard run-bundle contract:
+`card.yaml`, `log`, `results/*/verdict.json`, and aggregate `verdict.json`.
+Each per-evidence verdict retains the legacy `status`, `output`, `symbols`, and
+`timestamp` fields. For the new evaluator, `symbols` contains resolved recipe
+symbols plus the qualified KWDagger leaves actually consumed by the claim, so
+the existing dashboard can display the concrete experiment inputs without a
+new parser. The complete aggregate row is also recorded under `evidence`, and
+the aggregate verdict records the evidence scope and request summary. The
+`results/` directory is created even when no evidence is available.
+
 ### Downloading HELM results
 
 We provide a utility to download precomputed HELM results. 

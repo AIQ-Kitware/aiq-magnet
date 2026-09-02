@@ -1,6 +1,7 @@
 import json
 
 import pytest
+import yaml
 
 from magnet.evaluation import EvaluationCard, Symbol, Symbols
 
@@ -27,6 +28,17 @@ symbols:
     python: |
       score = x
 """
+
+
+def test_legacy_override_uses_plain_python_yaml_types(tmp_path):
+    card_fpath = tmp_path / 'card.yaml'
+    card_fpath.write_text(TEST_CARD_TEXT)
+    card = EvaluationCard(card_fpath, tmp_path / 'results', validate='off')
+
+    card.replace('x: [1, "two"]')
+
+    dumped = yaml.safe_dump(card.original_card)
+    assert 'two' in dumped
 
 
 def test_evaluation_preserves_metrics(tmp_path):
