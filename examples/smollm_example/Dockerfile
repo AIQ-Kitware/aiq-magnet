@@ -14,7 +14,9 @@
 # something has been layered the wrong way round.
 #
 # The build context is the magnet repository root, so `pip install` sees the
-# sources. Nothing from the host is baked in beyond that.
+# sources and the COPY picks up `examples/` as well -- this example lives beside
+# magnet rather than inside it, so it is not installed by `pip install .` and has
+# to be put on the path itself. Nothing from the host is baked in beyond that.
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -24,6 +26,10 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /opt/magnet
 COPY . /opt/magnet
 RUN pip install .
+
+# The example is a package beside magnet, not part of it, exactly as a team's
+# own repository would be. `python -m smollm_example.cli.*` finds it here.
+ENV PYTHONPATH=/opt/magnet/examples
 
 # A node command is run with `-w "$PWD"` and its working directory bind-mounted
 # at the same absolute path it has on the host, so kwdagger's absolute output

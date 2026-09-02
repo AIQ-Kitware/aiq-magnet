@@ -22,7 +22,7 @@ from kwdagger.pipeline import coerce_pipeline
 
 from magnet import containers, leasing
 from magnet.containers import ContainerSettings
-from magnet.examples.smollm_example.cli.compare_answers import compare
+from smollm_example.cli.compare_answers import compare
 from magnet.leasing import LeaseSettings
 
 import shlex as _shlex
@@ -30,9 +30,30 @@ import sys as _sys
 #: On the host route a bare ``python`` renders as this interpreter (magnet.containers.host_interpreter).
 HOST_PY = _shlex.quote(_sys.executable)
 
+#: `examples/`, so a subprocess can `python -m smollm_example.cli.*`. pytest
+#: puts it on *this* process's path via `pythonpath` in pyproject.toml; a child
+#: needs it in the environment, which is what `run.sh` does for a real run.
+EXAMPLES_DPATH = str(ub.Path(__file__).parent.parent / 'examples')
+
+
+def _child_env(**overrides):
+    import os
+
+    env = dict(os.environ)
+    env['PYTHONPATH'] = os.pathsep.join(
+        [EXAMPLES_DPATH, *([env['PYTHONPATH']] if env.get('PYTHONPATH') else [])]
+    )
+    for key, value in overrides.items():
+        if value is None:
+            env.pop(key, None)
+        else:
+            env[key] = value
+    return env
+
+
 CARD_FPATH = (
     ub.Path(__file__).parent.parent
-    / 'magnet/examples/smollm_example/smollm_kwdagger.yaml'
+    / 'examples/smollm_example/smollm_kwdagger.yaml'
 )
 IMAGE = 'aiq-eval-node:latest'
 
@@ -100,7 +121,7 @@ def test_the_card_carries_no_wiring(card):
     file is the claim, the evidence scope and the sweep.
     """
     assert card['kwdagger']['pipeline'] == (
-        'magnet.examples.smollm_example.pipeline.smollm_pipeline()')
+        'smollm_example.pipeline.smollm_pipeline()')
     text = CARD_FPATH.read_text()
     for restated in ('out_paths', 'in_paths', 'algo_params', 'executable'):
         assert restated not in text, restated
@@ -147,7 +168,7 @@ def test_it_runs_on_the_host_when_nothing_is_configured(card):
     command = nodes['ask'].command
     assert 'docker run' not in command
     assert 'infer-stack run' not in command
-    assert command.startswith(HOST_PY + ' -m magnet.examples.smollm_example')
+    assert command.startswith(HOST_PY + ' -m smollm_example')
 
 
 # --- what the example computes ---------------------------------------------
@@ -188,9 +209,9 @@ def stub_server():
 
 def _run(module, dpath, **kwargs):
     args = [f'--{k}={v}' for k, v in kwargs.items()]
-    env = {**dict(__import__('os').environ), 'OPENAI_BASE_URL': dpath['url']}
+    env = _child_env(OPENAI_BASE_URL=dpath['url'])
     proc = subprocess.run(
-        [sys.executable, '-m', f'magnet.examples.smollm_example.cli.{module}',
+        [sys.executable, '-m', f'smollm_example.cli.{module}',
          *args],
         capture_output=True, text=True, env=env,
     )
@@ -236,17 +257,15 @@ def test_the_three_nodes_run_end_to_end(tmp_path, stub_server):
 def test_a_missing_lease_says_so_rather_than_failing_per_request(tmp_path):
     """Without OPENAI_BASE_URL there is no server; one clear error beats N
     connection refusals."""
-    import os
-
-    env = {k: v for k, v in os.environ.items() if k != 'OPENAI_BASE_URL'}
+    env = _child_env(OPENAI_BASE_URL=None)
     items_fpath = ub.Path(tmp_path) / 'items.json'
     subprocess.run(
-        [sys.executable, '-m', 'magnet.examples.smollm_example.cli.make_items',
+        [sys.executable, '-m', 'smollm_example.cli.make_items',
          f'--out_fpath={items_fpath}', '--n_items=1'],
         check=True, capture_output=True, env=env,
     )
     proc = subprocess.run(
-        [sys.executable, '-m', 'magnet.examples.smollm_example.cli.ask_model',
+        [sys.executable, '-m', 'smollm_example.cli.ask_model',
          '--endpoint=smol-135', f'--items_fpath={items_fpath}',
          f'--out_fpath={ub.Path(tmp_path) / "answers.json"}'],
         capture_output=True, text=True, env=env,

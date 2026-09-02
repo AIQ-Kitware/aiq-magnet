@@ -89,7 +89,7 @@ kwdagger:
   # Each node's inputs, outputs and parameters come from its CLI's own kwconf
   # declaration, so they are not restated here. What is left in this file is
   # what a card is actually for: the claim, the evidence, and the sweep.
-  pipeline: "magnet.examples.smollm_example.pipeline.smollm_pipeline()"
+  pipeline: "smollm_example.pipeline.smollm_pipeline()"
 
   # The two smallest SmolLM2 instruct checkpoints, named by catalog alias
   # rather than by model. Which weights those resolve to, and whether they are

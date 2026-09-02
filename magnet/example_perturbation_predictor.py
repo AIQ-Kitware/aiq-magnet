@@ -15,6 +15,7 @@ class ExamplePerturbationPredictor(RunPredictor):
     Class to demonstrate a stat prediction algorithm based on strength of perturbation
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:sklearn)
         >>> from magnet.example_perturbation_predictor import *  # NOQA
         >>> import magnet
         >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)

@@ -2,7 +2,7 @@
 The DAG: three nodes, one gather edge, and which of them holds a model.
 
 The scaffolding half of this example. Everything that talks to a file or an
-endpoint lives in :mod:`magnet.examples.smollm_example.cli`; this module says
+endpoint lives in :mod:`smollm_example.cli`; this module says
 only how those programs are wired together and where each one runs.
 
 Written in Python rather than declared in the card for one reason: a leasing
@@ -25,11 +25,11 @@ import kwdagger
 from magnet.containers import ContainerYamlProcessNode
 from magnet.leasing import LeasedYamlProcessNode
 
-from magnet.examples.smollm_example.cli.ask_model import AskModelCLI
-from magnet.examples.smollm_example.cli.compare_answers import (
+from smollm_example.cli.ask_model import AskModelCLI
+from smollm_example.cli.compare_answers import (
     CompareAnswersCLI,
 )
-from magnet.examples.smollm_example.cli.make_items import MakeItemsCLI
+from smollm_example.cli.make_items import MakeItemsCLI
 
 __all__ = ['Items', 'Ask', 'Compare', 'smollm_pipeline']
 
@@ -38,7 +38,7 @@ class Items(ContainerYamlProcessNode):
     """Write the dummy dataset. Needs no model, so it holds no GPU."""
 
     name = 'items'
-    executable = 'python -m magnet.examples.smollm_example.cli.make_items'
+    executable = 'python -m smollm_example.cli.make_items'
     params = MakeItemsCLI
 
 
@@ -55,7 +55,7 @@ class Ask(LeasedYamlProcessNode):
     """
 
     name = 'ask'
-    executable = 'python -m magnet.examples.smollm_example.cli.ask_model'
+    executable = 'python -m smollm_example.cli.ask_model'
     params = AskModelCLI
     endpoint_params = ('endpoint',)
 
@@ -64,7 +64,7 @@ class Compare(ContainerYamlProcessNode):
     """Reduce every endpoint's answers. Needs no model either."""
 
     name = 'compare'
-    executable = 'python -m magnet.examples.smollm_example.cli.compare_answers'
+    executable = 'python -m smollm_example.cli.compare_answers'
     params = CompareAnswersCLI
 
 
@@ -76,7 +76,7 @@ def smollm_pipeline() -> kwdagger.Pipeline:
         kwdagger.Pipeline: ``items -> ask (per endpoint) -> compare``.
 
     Example:
-        >>> from magnet.examples.smollm_example.pipeline import smollm_pipeline
+        >>> from smollm_example.pipeline import smollm_pipeline
         >>> dag = smollm_pipeline()
         >>> sorted(dag.node_dict)
         ['ask', 'compare', 'items']

@@ -40,12 +40,14 @@ class HelmOutputs(ub.NiceRepr):
     Class to represent and explore helm outputs
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import HelmOutputs
         >>> self = HelmOutputs.demo(method='fixture')
         >>> suite_names = [s.path.name for s in self.suites()]
         >>> run_names = self.list_run_specs(suite='*')
         >>> summary = self.summarize()
         ...
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> print(f'suite_names = {ub.urepr(suite_names, nl=1)}')
         >>> print(f'run_names = {ub.urepr(run_names, nl=1)}')
         >>> print(f'summary = {ub.urepr(summary, nl=1)}')
@@ -68,6 +70,7 @@ class HelmOutputs(ub.NiceRepr):
         }
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # xdoctest: +REQUIRES(module:xdev)
         >>> from magnet.backends.helm.helm_outputs import HelmOutputs
         >>> self = HelmOutputs.demo(method='fixture')
@@ -132,6 +135,7 @@ class HelmOutputs(ub.NiceRepr):
             HelmOutputs
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmOutputs.demo(method='fixture')
             >>> assert HelmOutputs.coerce(self) is self, 'check inplace return'
@@ -163,6 +167,7 @@ class HelmOutputs(ub.NiceRepr):
             Path: the path ending with benchmark_output
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmOutputs.demo(method='fixture')
             >>> root = self.root_dir.parent
@@ -278,11 +283,13 @@ class HelmSuite(ub.NiceRepr):
     Represents a single suite in a set of benchmark outputs.
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
         >>> root_dir = HelmOutputs.demo(method='fixture').root_dir
         >>> self = HelmSuite(root_dir / 'runs/my-suite')
         >>> print(self)
         <HelmSuite(my-suite)>
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> print(self.runs())
         <HelmRuns(4)>
     """
@@ -312,6 +319,7 @@ class HelmSuite(ub.NiceRepr):
             HelmSuite
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmSuite.demo()
             >>> assert HelmSuite.coerce(self) is self, 'check inplace return'
@@ -358,12 +366,15 @@ class HelmSuites(ub.NiceRepr):
         :class:`HelmRuns`
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
         >>> self = HelmSuites.demo()
         >>> print(self)
         <HelmSuites(1)...>
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> list(self)
         [<HelmSuite(my-suite)...>]
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> runs = self.runs()
         >>> print(runs)
         <HelmRuns(4)>
@@ -412,6 +423,7 @@ class HelmSuites(ub.NiceRepr):
             HelmSuites
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> suites = HelmOutputs.demo(method='fixture').suites()
             >>> paths = [s.path for s in suites]
@@ -460,6 +472,7 @@ class HelmSuites(ub.NiceRepr):
                 directories (i.e. parent directories of runs).
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> root_dir = HelmOutputs.demo(method='fixture').root_dir
             >>> #
@@ -532,6 +545,7 @@ class HelmSuites(ub.NiceRepr):
             HelmRuns
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> suites = HelmSuites.demo()
             >>> runs = suites.runs()
@@ -558,10 +572,12 @@ class HelmRuns(ub.NiceRepr):
         :class:`HelmRun`
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
         >>> self = HelmRuns.demo()
         >>> print(self)
         <HelmRuns(4)>
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> self.per_instance_stats()
         >>> self.run_spec()
         >>> self.scenario_state()
@@ -603,6 +619,7 @@ class HelmRuns(ub.NiceRepr):
             HelmRuns
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmRuns.demo()
             >>> assert HelmRuns.coerce(self) is self, 'check inplace return'
@@ -635,6 +652,7 @@ class HelmRuns(ub.NiceRepr):
                 helm runs.
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> root_dir = HelmOutputs.demo(method='fixture').root_dir
             >>> #
@@ -726,6 +744,7 @@ class _HelmRunJsonView:
         This can use different json backends, but orjson is fastest
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
         >>> self = HelmRun.demo().json
         >>> per_instance_stats = self.per_instance_stats()
@@ -746,6 +765,7 @@ class _HelmRunJsonView:
         A json view for a list of :class:`PerInstanceStats` objects
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmRun.demo().json
             >>> print(self.per_instance_stats())
@@ -757,6 +777,7 @@ class _HelmRunJsonView:
         A json view of :class:`RunSpec` objects
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmRun.demo().json
             >>> print(self.run_spec())
@@ -768,6 +789,7 @@ class _HelmRunJsonView:
         A json view of a :class:`Scenario` object
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmRun.demo().json
             >>> print(self.scenario())
@@ -779,6 +801,7 @@ class _HelmRunJsonView:
         A json view of a :class:`ScenarioState` object
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmRun.demo().json
             >>> print(self.scenario_state())
@@ -790,6 +813,7 @@ class _HelmRunJsonView:
         A json view of a :class:`Stat` object
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmRun.demo().json
             >>> print(self.stats())
@@ -803,6 +827,7 @@ class _HelmRunDataclassView:
     loader methods.
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
         >>> self = HelmRun.demo().dataclass
         >>> per_instance_stats = list(self.per_instance_stats())
@@ -917,6 +942,7 @@ class _HelmRunMsgspecView:
     often load much faster.
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
         >>> self = HelmRun.demo().msgspec
         >>> per_instance_stats = self.per_instance_stats()
@@ -975,6 +1001,7 @@ class _HelmRunMsgspecView:
             xdoctest -m magnet.backends.helm.helm_outputs _HelmRunMsgspecView.scenario_state
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> run = HelmRun.demo()
             >>> self = run.msgspec
@@ -1005,6 +1032,7 @@ class _HelmRunDataFrameView:
     from its loader methods.
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *  # NOQA
         >>> self = HelmRun.demo().dataframe
         >>> per_instance_stats = self.per_instance_stats()
@@ -1025,6 +1053,7 @@ class _HelmRunDataFrameView:
         Dataframe representation of :class:`PerInstanceStats`
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *  # NOQA
             >>> self = HelmRun.demo()
             >>> table = (self.per_instance_stats())
@@ -1059,6 +1088,7 @@ class _HelmRunDataFrameView:
         Dataframe representation of :class:`RunSpec`
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *
             >>> self = HelmRun.demo()
             >>> table = (self.run_spec())
@@ -1079,6 +1109,7 @@ class _HelmRunDataFrameView:
         Dataframe representation of :class:`ScenarioState`
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *
             >>> self = HelmRun.demo()
             >>> table = (self.scenario_state())
@@ -1106,6 +1137,7 @@ class _HelmRunDataFrameView:
         Dataframe representation of :class:`Stat`
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> from magnet.backends.helm.helm_outputs import *
             >>> self = HelmRun.demo()
             >>> table = (self.stats())
@@ -1153,10 +1185,12 @@ class HelmRun(ub.NiceRepr):
         .. [HelmTutorial] https://crfm-helm.readthedocs.io/en/v0.3.0/tutorial/
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import *
         >>> self = HelmRun.demo()
         >>> print(self)
         <HelmRun(mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2)>
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # Dataframe objects
         >>> per_instance_stats_df = self.per_instance_stats()
         >>> stats_df = self.stats()

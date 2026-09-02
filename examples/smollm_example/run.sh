@@ -15,7 +15,13 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repo="$(cd "$here/../../.." && pwd)"
+examples="$(cd "$here/.." && pwd)"
+repo="$(cd "$examples/.." && pwd)"
+
+# This example lives beside magnet, not inside it -- it is a *consumer* of
+# magnet, the way a team's own repository is, and it is imported the same way:
+# by being on the path. `pipeline.py` and the node commands both need it.
+export PYTHONPATH="$examples${PYTHONPATH:+:$PYTHONPATH}"
 
 catalog="$here/catalog-mock.yaml"
 container=0
@@ -37,7 +43,15 @@ if [[ "$container" == 1 ]]; then
     # Mount the working directory at its own absolute path: kwdagger bakes
     # absolute output paths into every command, so keeping them identical means
     # nothing has to be rewritten and a path in a log is one you can open.
-    container_args=(--container_image="$image" --container_mounts="$PWD")
+    container_args=(
+        --container_image="$image"
+        --container_mounts="$PWD"
+        # PYTHONPATH is captured by value into the rendered command, and the
+        # host path it names does not exist in the image -- the example is
+        # COPYed in and already on the image's path. Clear it rather than let
+        # a broken host path shadow that.
+        --container_env='{"PYTHONPATH": "/opt/magnet/examples"}'
+    )
 fi
 
 # One-time host setup, not a per-run step: infer-stack needs to know how it

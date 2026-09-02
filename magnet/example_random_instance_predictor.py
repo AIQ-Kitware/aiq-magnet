@@ -10,6 +10,7 @@ class ExampleRandomInstancePredictor(InstancePredictor):
     Class to demonstrate a random per-instance stat prediction algorithm
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.example_random_instance_predictor import *  # NOQA
         >>> import magnet
         >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)

@@ -398,6 +398,7 @@ class MaterializeHelmRunConfig(kwconf.Config):
             dict: manifest information (also written to disk).
 
         Example:
+            >>> # xdoctest: +REQUIRES(module:helm)
             >>> # This doctest is illustrative only; it requires helm-run installed.
             >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)
             >>> from magnet.backends.helm.cli.materialize_helm_run import MaterializeHelmRunConfig
@@ -652,13 +653,16 @@ def parse_run_entry_description(desc: str) -> tuple[str, dict[str, object]]:
         desc (str): has the format <class_name>:<key>=<value>,<key>=<value>
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.cli.materialize_helm_run import *  # NOQA
         >>> parse_run_entry_description("mmlu:subject=philosophy,model=openai/gpt2")
         ('mmlu', {'subject': 'philosophy', 'model': 'openai/gpt2'})
 
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> parse_run_entry_description("ifeval:model=openai_gpt2")
         ('ifeval', {'model': 'openai_gpt2'})
 
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # Values may contain ':' (e.g. AWS model ids like ':0')
         >>> parse_run_entry_description("ifeval:model=amazon_nova-premier-v1:0")
         ('ifeval', {'model': 'amazon_nova-premier-v1:0'})
@@ -688,6 +692,7 @@ def canonicalize_requested_tokens(
         openai/gpt2 -> openai_gpt2
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> canonicalize_requested_tokens({'model': 'openai/gpt2', 'subject': 'philosophy'})
         {'model': 'openai_gpt2', 'subject': 'philosophy'}
     """
@@ -704,6 +709,7 @@ def _split_run_dir_tokens(run_dir_name: str) -> tuple[str, list[str]]:
     Split a run directory name into (benchmark, [token_str, ...]).
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> _split_run_dir_tokens("mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2")
         ('mmlu', ['subject=philosophy', 'method=multiple_choice_joint', 'model=openai_gpt2'])
     """
@@ -724,9 +730,11 @@ def parse_run_name_to_kv(run_name: str) -> tuple[str, dict[str, object]]:
         Values may contain ':' (e.g. amazon_nova-premier-v1:0).
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> parse_run_name_to_kv("ewok:domain=physical_interactions,model=meta_llama-3-8b-chat")
         ('ewok', {'domain': 'physical_interactions', 'model': 'meta_llama-3-8b-chat'})
 
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> parse_run_name_to_kv("ifeval:model=amazon_nova-premier-v1:0")
         ('ifeval', {'model': 'amazon_nova-premier-v1:0'})
     """
@@ -779,10 +787,13 @@ def canonicalize_kv(kv: dict[str, object], benchmark: str | None = None) -> dict
           ``subset``).
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> canonicalize_kv({'model': 'meta/llama-3-8b-chat'})
         {'model': 'meta_llama-3-8b-chat'}
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> canonicalize_kv({'model_deployment': 'kubeai/qwen-small'})
         {'model_deployment': 'kubeai_qwen-small'}
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> canonicalize_kv({'subject': 'all'}, benchmark='mmlu_pro')
         {'subset': 'all'}
     """
@@ -894,17 +905,21 @@ def run_dir_matches_requested(
     - candidate may contain extra tokens (HELM defaults / normalization)
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> req = "ewok:domain=physical_interactions,model=meta/llama-3-8b-chat"
         >>> cand = "ewok:domain=physical_interactions,model=meta_llama-3-8b-chat"
         >>> run_dir_matches_requested(cand, req)
         True
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> requested = "mmlu:subject=philosophy,model=openai/gpt2"
         >>> run_dir_matches_requested("mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2", requested)
         True
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> run_dir_matches_requested("mmlu:subject=anatomy,method=multiple_choice_joint,model=openai_gpt2", requested)
         False
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> run_dir_matches_requested("ifeval:model=openai_gpt2", requested)
         False
     """
@@ -1007,6 +1022,7 @@ def match_score(run_dir_name: str, requested_desc: str) -> tuple[int, int, str]:
     - Finally tie-break by lexicographic name
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> requested = "mmlu:subject=philosophy,model=openai/gpt2"
         >>> a = "mmlu:subject=philosophy,model=openai_gpt2"
         >>> b = "mmlu:subject=philosophy,method=multiple_choice_joint,model=openai_gpt2"
@@ -1045,6 +1061,7 @@ def infer_num_instances(run_dir: Path) -> int | None:
     2) scenario_state.json (only if it contains an obvious per-instance list)
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # xdoctest: +SKIP
         >>> suite_path = Path('/data/crfm-helm-public/capabilities/benchmark_output/runs/v1.12.0/')
         >>> run_name = 'gpqa:subset=gpqa_main,use_chain_of_thought=true,use_few_shot=false,model=amazon_nova-premier-v1:0'
@@ -1089,6 +1106,7 @@ def is_complete_run_dir(
     - per_instance_stats.json (often needed by downstream analysis)
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # doctest: +SKIP
         >>> is_complete_run_dir(Path('.../mmlu:...'))
         True
@@ -1177,6 +1195,7 @@ def find_best_precomputed_run(
         MatchResult or None
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # xdoctest: +SKIP
         >>> from pathlib import Path
         >>> from magnet.backends.helm.cli.materialize_helm_run import (
@@ -1185,6 +1204,7 @@ def find_best_precomputed_run(
         >>> root = Path('/data/crfm-helm-public')
         >>> assert root.exists(), 'CRFM_HELM_PUBLIC is set but /data/crfm-helm-public is missing'
 
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # Pick any existing run directory under the public bundle.
         >>> # Layout (as you described):
         >>> #   /data/crfm-helm-public/<suite>/benchmark_output/runs/<version>/<run_name>
@@ -1193,6 +1213,7 @@ def find_best_precomputed_run(
         >>> chosen = run_dirs[0]
         >>> requested_desc = chosen.name
 
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # Sanity: ensure the run looks complete enough for reuse.
         >>> # We don't *require* per_instance_stats here because some suites/versions
         >>> # might omit it.
@@ -1205,6 +1226,7 @@ def find_best_precomputed_run(
         >>> assert result.run_name == requested_desc
         >>> assert Path(result.run_dir).name == requested_desc
 
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> # If we can infer the number of evaluated instances, test the filter.
         >>> n = infer_num_instances(Path(result.run_dir))
         >>> if n is not None:

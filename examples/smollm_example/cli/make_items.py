@@ -7,7 +7,7 @@ Single-digit addition is enough to have a right answer, a wrong answer and a
 non-answer, which is all the comparison downstream needs.
 
 CommandLine:
-    python -m magnet.examples.smollm_example.cli.make_items \
+    python -m smollm_example.cli.make_items \
         --n_items=8 --out_fpath=items.json
 """
 
@@ -32,7 +32,7 @@ def build_items(n_items: int, seed: int) -> list:
         list: dicts with ``id``, ``prompt`` and ``expected``.
 
     Example:
-        >>> from magnet.examples.smollm_example.cli.make_items import (
+        >>> from smollm_example.cli.make_items import (
         ...     build_items)
         >>> items = build_items(3, seed=0)
         >>> len(items)

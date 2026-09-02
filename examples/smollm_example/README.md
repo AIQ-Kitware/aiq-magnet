@@ -53,7 +53,7 @@ Being inside is also what lets the container inherit `OPENAI_BASE_URL` and
 test -e answers.json || \
 infer-stack run --endpoint smol-135 --ttl 8h --queue ${SLURM_JOB_GPUS:+...} -- \
     docker run --rm --network host -v /repo:/repo -e OPENAI_BASE_URL ... <image> \
-        python -m magnet.examples.smollm_example.cli.ask_model --endpoint=smol-135 ...
+        python -m smollm_example.cli.ask_model --endpoint=smol-135 ...
 ```
 
 Cache guard outermost, so a node whose output already exists neither leases nor
@@ -128,13 +128,18 @@ Once 0.4.1 lands, `pipeline.py` can go and the card can say it directly:
 ask:
   class: magnet.leasing.LeasedYamlProcessNode
   endpoint_params: [endpoint]
-  executable: "python -m magnet.examples.smollm_example.cli.ask_model"
+  executable: "python -m smollm_example.cli.ask_model"
 ```
 
 Nothing in `cli/` changes when it does. `tests/test_yaml_container_nodes.py`
 pins that destination and skips itself on a kwdagger that cannot do it yet.
 
 ## Files
+
+This example lives in `examples/` beside magnet, not inside the package — it is
+a *consumer* of magnet, the way a team's own repository is, and it is imported
+the same way: by being on the path. `run.sh` arranges that, and the image COPYs
+it in. Nothing here ships in the magnet wheel.
 
 Scaffolding and executables are separate on purpose. Everything in `cli/` is an
 ordinary command-line program — reads files, talks to an endpoint, writes JSON

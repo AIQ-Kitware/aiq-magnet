@@ -1,6 +1,6 @@
 # Real endpoints for the SmolLM example: vLLM, on a GPU.
 #
-#   INFER_STACK_CATALOG=magnet/examples/smollm_example/catalog.yaml
+#   INFER_STACK_CATALOG=examples/smollm_example/catalog.yaml
 #
 # The aliases match catalog-mock.yaml beside this file exactly, which is the
 # point: the card names `smol-135` and `smol-360` and never learns which of the
