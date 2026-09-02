@@ -18,6 +18,11 @@ from magnet._kwdagger import _check_container_settings_apply
 from magnet.containers import ContainerYamlProcessNode
 from magnet.leasing import LeasedYamlProcessNode
 
+import shlex as _shlex
+import sys as _sys
+#: On the host route a bare ``python`` renders as this interpreter (magnet.containers.host_interpreter).
+HOST_PY = _shlex.quote(_sys.executable)
+
 IMAGE = 'aiq-eval-node:latest'
 
 CONTAINER_CLASS = 'magnet.containers.ContainerYamlProcessNode'
@@ -98,7 +103,7 @@ def test_it_is_inert_until_an_image_is_named():
     """The same card must run on the host during development."""
     command = _node(_spec(CONTAINER_CLASS)).command
     assert 'docker run' not in command
-    assert command.startswith('python -m pkg.work')
+    assert command.startswith(HOST_PY + ' -m pkg.work')
 
 
 def test_the_declarative_extras_survive():

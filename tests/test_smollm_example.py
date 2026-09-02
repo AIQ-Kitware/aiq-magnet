@@ -25,6 +25,11 @@ from magnet.containers import ContainerSettings
 from magnet.examples.smollm_example.cli.compare_answers import compare
 from magnet.leasing import LeaseSettings
 
+import shlex as _shlex
+import sys as _sys
+#: On the host route a bare ``python`` renders as this interpreter (magnet.containers.host_interpreter).
+HOST_PY = _shlex.quote(_sys.executable)
+
 CARD_FPATH = (
     ub.Path(__file__).parent.parent
     / 'magnet/examples/smollm_example/smollm_kwdagger.yaml'
@@ -142,7 +147,7 @@ def test_it_runs_on_the_host_when_nothing_is_configured(card):
     command = nodes['ask'].command
     assert 'docker run' not in command
     assert 'infer-stack run' not in command
-    assert command.startswith('python -m magnet.examples.smollm_example')
+    assert command.startswith(HOST_PY + ' -m magnet.examples.smollm_example')
 
 
 # --- what the example computes ---------------------------------------------

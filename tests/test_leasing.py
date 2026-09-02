@@ -15,6 +15,11 @@ from magnet.leasing import (
     leasing_is_enabled,
 )
 
+import shlex as _shlex
+import sys as _sys
+#: On the host route a bare ``python`` renders as this interpreter (magnet.containers.host_interpreter).
+HOST_PY = _shlex.quote(_sys.executable)
+
 
 class Infer(LeasedProcessNode):
     name = 'infer'
@@ -69,7 +74,7 @@ def test_the_node_leases_the_models_it_names():
 
 def test_a_model_free_node_holds_nothing():
     node = _node(Analyse, {'metric': 'auroc'})
-    assert node.command.startswith('python -m pkg.analyse')
+    assert node.command.startswith(HOST_PY + ' -m pkg.analyse')
     assert 'infer-stack' not in node.command
 
 
@@ -108,7 +113,7 @@ def test_leasing_is_off_inside_an_outer_lease(monkeypatch):
     node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None})
     monkeypatch.setenv(INSIDE_LEASE_ENVVAR, 'lease-abc123')
     assert not leasing_is_enabled(node)
-    assert node.command.startswith('python -m pkg.infer')
+    assert node.command.startswith(HOST_PY + ' -m pkg.infer')
 
 
 def test_explicit_opt_out(monkeypatch):
@@ -124,7 +129,7 @@ def test_leasing_is_off_unless_asked_for(monkeypatch):
     node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None},
                  enabled=False)
     assert not leasing_is_enabled(node)
-    assert node.command.startswith('python -m pkg.infer')
+    assert node.command.startswith(HOST_PY + ' -m pkg.infer')
 
 
 def test_it_is_still_an_ordinary_kwdagger_node():

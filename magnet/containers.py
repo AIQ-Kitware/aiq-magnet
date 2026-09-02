@@ -45,6 +45,7 @@ TODO:
 from __future__ import annotations
 
 import os
+import sys
 from typing import Any
 import shlex
 
@@ -59,6 +60,7 @@ __all__ = [
     'ContainerSettings',
     'apply_settings',
     'containerization_is_enabled',
+    'host_interpreter',
     'container_prefix',
     'forwarded_env',
     'LEASE_ENV',
@@ -252,6 +254,40 @@ def declared_env(node: Any = None) -> dict:
     return resolved
 
 
+def host_interpreter(command: str) -> str:
+    """
+    Render a leading bare ``python`` as the interpreter that runs the node.
+
+    ``python`` in a node's executable means "the interpreter that will run
+    this node": inside an image that is the image's own, on PATH; on the host
+    it is this process's, because a cmd_queue worker does not inherit the
+    orchestrator's virtualenv and a bare ``python -m ...`` dies with
+    "python: not found" before the node starts. The substitution happens at
+    render time, on the node, so a pipeline never has to guess at
+    construction which route the run will take. (Three pipelines used to
+    guess by calling :func:`containerization_is_enabled` with no node while
+    building their DAG; once settings moved onto the nodes that answer was
+    always "host", and their containers were handed a path that did not
+    exist inside them.)
+
+    Only the first word is touched, and only when it is exactly ``python``.
+
+    Example:
+        >>> from magnet.containers import host_interpreter
+        >>> import sys, shlex
+        >>> host_interpreter('python -m pkg.work --x=1') == (
+        ...     shlex.quote(sys.executable) + ' -m pkg.work --x=1')
+        True
+        >>> host_interpreter('python3 -m pkg.work')
+        'python3 -m pkg.work'
+        >>> host_interpreter('/usr/bin/python -m pkg.work')
+        '/usr/bin/python -m pkg.work'
+    """
+    if command == 'python' or command.startswith(('python ', 'python\t', 'python\n', 'python \\')):
+        return shlex.quote(sys.executable) + command[len('python'):]
+    return command
+
+
 def containerization_is_enabled(node: Any = None) -> bool:
     """
     Whether node commands should be wrapped in ``docker run``.
@@ -384,6 +420,8 @@ class ContainerProcessNode(kwdagger.ProcessNode):
         base = kwdagger.ProcessNode.command.fget(self)  # type: ignore[attr-defined]
         if containerization_is_enabled(self):
             base = container_prefix(self) + ' \\\n    ' + base
+        else:
+            base = host_interpreter(base)
         return self._wrap_command(base)
 
 

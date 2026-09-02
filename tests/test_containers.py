@@ -16,6 +16,11 @@ from magnet.containers import (
 from magnet import leasing
 from magnet.leasing import INSIDE_LEASE_ENVVAR, LeasedProcessNode
 
+import shlex as _shlex
+import sys as _sys
+#: On the host route a bare ``python`` renders as this interpreter (magnet.containers.host_interpreter).
+HOST_PY = _shlex.quote(_sys.executable)
+
 IMAGE = 'aiq-eval-node:latest'
 
 
@@ -63,7 +68,7 @@ def _leased(enabled=True):
 def test_nodes_run_on_the_host_unless_an_image_is_named():
     node = _node(Work, {'task': 't'})
     assert not containerization_is_enabled(node)
-    assert node.command.startswith('python -m pkg.work')
+    assert node.command.startswith(HOST_PY + ' -m pkg.work')
 
 
 def test_the_command_runs_in_the_image():
@@ -204,3 +209,17 @@ def test_pythonpath_is_captured_not_left_bare(monkeypatch):
     monkeypatch.setenv('PYTHONPATH', '/repo:/repo/ta1/thing')
     command = _node(Work, {'task': 't'}, _on()).command
     assert '-e PYTHONPATH=/repo:/repo/ta1/thing' in command
+
+
+def test_bare_python_means_the_interpreter_that_runs_the_node():
+    """On the host the orchestrator's interpreter runs the node; in an image
+    the image's does. A pipeline writes ``python`` and never has to guess
+    which at construction."""
+    import shlex
+    import sys
+    node = Work()
+    assert node.command.startswith(shlex.quote(sys.executable) + ' -m pkg.work')
+    node.container_image = IMAGE
+    assert node.command.startswith('docker run')
+    assert ' \\\n    python -m pkg.work' in node.command
+    assert sys.executable not in node.command
