@@ -231,6 +231,21 @@ class NewEvaluationCLI(kwconf.Config):
         ),
     )
 
+    evidence_scope: str | None = kwconf.Value(
+        None,
+        parser=str,
+        help=(
+            "Which accumulated result rows the claim sees: `all` (every row "
+            "the result store holds for this recipe, whoever produced it) or "
+            "`requested` (only rows for result-node computations this "
+            "invocation asked for, cached or fresh). Unset, the card's own "
+            "`evidence.scope` applies, default `all`. A runner whose verdict "
+            "must describe this invocation passes `requested`: otherwise an "
+            "artifact left in the root by an earlier, superseded grid keeps "
+            "voting."
+        ),
+    )
+
     provenance: str | None = kwconf.Value(
         None,
         parser=str,
@@ -301,6 +316,8 @@ class NewEvaluationCLI(kwconf.Config):
         )
         if args.params is not None:
             recipe.apply_params(args.params)
+        if args.evidence_scope:
+            recipe.set_evidence_scope(args.evidence_scope)
 
         schedule_options = {
             key: args[key]
@@ -711,6 +728,35 @@ class NewEvaluationRecipe(EvaluationCard):
         self.original_card['kwdagger'] = self.kwdagger
         self.result_card: NewEvaluationResultCard | None = None
         self._run_hash_cached: str | None = None
+
+    def set_evidence_scope(self, scope: str) -> None:
+        """
+        Override the card's ``evidence.scope`` for this invocation.
+
+        The card says what evidence a claim may see in general; an invocation
+        may narrow that to the rows it requested, so that its verdict
+        describes its own work rather than everything the result store has
+        accumulated under this recipe. Widening from ``requested`` to ``all``
+        is also allowed, and is the caller's decision to make.
+
+        Example:
+            >>> from magnet.evaluation_new import NewEvaluationRecipe
+            >>> import pytest
+            >>> recipe = NewEvaluationRecipe.__new__(NewEvaluationRecipe)
+            >>> recipe.original_card = {'evidence': {}}
+            >>> recipe.set_evidence_scope('requested')
+            >>> recipe.evidence_scope
+            'requested'
+            >>> with pytest.raises(ValueError):
+            ...     recipe.set_evidence_scope('some')
+        """
+        scope = str(scope or '').strip()
+        if scope not in {'all', 'requested'}:
+            raise ValueError(
+                f'evidence scope must be `all` or `requested`; got {scope!r}')
+        evidence = dict(self.original_card.get('evidence') or {})
+        evidence['scope'] = scope
+        self.original_card['evidence'] = evidence
 
     def apply_params(self, params: Any) -> None:
         """Merge kwdagger-style params into this recipe's execution block."""
