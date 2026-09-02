@@ -37,20 +37,19 @@ class Infer(LeasedProcessNode):
 
 
 @pytest.fixture(autouse=True)
-def _leasing_on(monkeypatch):
+def _clean_env(monkeypatch):
     monkeypatch.delenv(leasing.INSIDE_LEASE_ENVVAR, raising=False)
     # Poisoned on purpose: nothing may be interpolated at render time.
     monkeypatch.setenv('SLURM_JOB_GPUS', '7')
-    containers.configure()
-    leasing.configure(True)
-    yield
-    containers.configure()
-    leasing.configure(False)
 
 
-def _command():
+def _command(allowed_gpus=True):
     node = Infer()
     node.configure({'model_id': 'm'})
+    node.apply_settings(containers.ContainerSettings())
+    node.apply_lease_settings(
+        leasing.LeaseSettings(enabled=True, allowed_gpus=allowed_gpus)
+    )
     return node.command
 
 
@@ -139,8 +138,7 @@ def test_it_survives_being_quoted_into_a_job_script(tmp_path):
 
 
 def test_it_can_be_turned_off():
-    leasing.configure(True, allowed_gpus=False)
-    argv = _argv(_command(), {'SLURM_JOB_GPUS': '0,1'})
+    argv = _argv(_command(allowed_gpus=False), {'SLURM_JOB_GPUS': '0,1'})
     assert not [a for a in argv if 'allowed_gpus' in a]
 
 

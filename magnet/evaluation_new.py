@@ -287,20 +287,6 @@ class NewEvaluationCLI(kwconf.Config):
         if args.params is not None:
             recipe.apply_params(args.params)
 
-        # Execution environment. Passed configuration, so it comes from these
-        # arguments rather than from the ambient environment -- which also
-        # means the record of an invocation says what it ran in.
-        containers.configure(
-            image=args['container_image'],
-            mounts=args['container_mounts'],
-            docker_args=args['container_docker_args'],
-            forward_env=args['container_forward_env'],
-        )
-        leasing.configure(
-            enabled=bool(args['per_node_leasing']),
-            allowed_gpus=bool(args['lease_allowed_gpus']),
-        )
-
         schedule_options = {
             key: args[key]
             for key in [
@@ -314,6 +300,24 @@ class NewEvaluationCLI(kwconf.Config):
         }
         schedule_options['tmux_workers'] = resolve_tmux_workers(
             args['tmux_workers']
+        )
+        # Execution environment. Passed configuration, so it comes from these
+        # arguments rather than from the ambient environment -- which also
+        # means the record of an invocation says what it ran in. It travels
+        # with the request and is written onto the DAG's nodes when it is
+        # scheduled, so nothing here changes process state: two evaluations in
+        # one interpreter cannot see or disturb each other's.
+        schedule_options['container_settings'] = (
+            containers.ContainerSettings.coerce(
+                image=args['container_image'],
+                mounts=args['container_mounts'],
+                docker_args=args['container_docker_args'],
+                forward_env=args['container_forward_env'],
+            )
+        )
+        schedule_options['lease_settings'] = leasing.LeaseSettings(
+            enabled=bool(args['per_node_leasing']),
+            allowed_gpus=bool(args['lease_allowed_gpus']),
         )
         recipe.evaluate(
             verbose=bool(args.verbose),

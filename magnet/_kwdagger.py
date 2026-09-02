@@ -235,7 +235,12 @@ class KWDaggerProcessor:
         self.queue = None
 
     def schedule(
-        self, *, dry_run: bool = False, **schedule_options: Any
+        self,
+        *,
+        dry_run: bool = False,
+        container_settings: Any = None,
+        lease_settings: Any = None,
+        **schedule_options: Any,
     ) -> None:
         """Submit this invocation's requested experiment campaign.
 
@@ -247,17 +252,42 @@ class KWDaggerProcessor:
         ``dry_run`` schedules with ``run=0``. KWDagger still compiles the whole
         matrix and hands back the graph, so the request is reported in full; it
         writes a driver script rather than submitting anything.
+
+        ``container_settings`` and ``lease_settings`` say where this
+        invocation's work runs. They are written onto the nodes here rather
+        than read from process state when a command renders, so two pipelines
+        in one process can differ and a rendered command is explainable from
+        its node alone.
         """
+        from magnet import containers, leasing
+
+        # Build the DAG once and hand the same object to build_schedule.
+        # coerce_pipeline returns a Pipeline unchanged, so the nodes configured
+        # here are the nodes that render commands -- which they were not when
+        # this built a throwaway pipeline to inspect and let build_schedule
+        # construct its own.
+        pipeline = coerce_pipeline(self.params['pipeline'])
+
+        container_settings = (
+            container_settings or containers.ContainerSettings()
+        )
+        lease_settings = lease_settings or leasing.LeaseSettings()
+        containers.apply_settings(pipeline, container_settings)
+        leasing.apply_settings(pipeline, lease_settings)
+
+        # Before anything is submitted: an execution setting that cannot reach
+        # a single node is a failed invocation, not a default.
+        _check_container_settings_apply(pipeline, container_settings)
+
         kwd_config = ScheduleEvaluationConfig(
-            params=self.params,  # includes pipeline and matrix/grid controls
+            # includes pipeline and matrix/grid controls. The configured
+            # Pipeline object goes in place of the spec; self.params keeps the
+            # spec, because the aggregate path builds its own pipeline for
+            # reading results and has no business inheriting execution settings.
+            params=dict(self.params, pipeline=pipeline),
             root_dpath=self.root_dpath,
             run=not dry_run,
             **schedule_options,
-        )
-        # Before anything is submitted: an execution setting that cannot reach
-        # a single node is a failed invocation, not a default.
-        _check_container_settings_apply(
-            coerce_pipeline(self.params['pipeline'])
         )
         self.request_dag, self.queue = build_schedule(kwd_config)
 
@@ -459,7 +489,9 @@ def _is_missing_aggregate_value(value: Any) -> bool:
     return False
 
 
-def _check_container_settings_apply(pipeline: Any) -> None:
+def _check_container_settings_apply(
+    pipeline: Any, settings: Any = None
+) -> None:
     """
     Refuse to run when ``--container_image`` would do nothing.
 
@@ -477,7 +509,9 @@ def _check_container_settings_apply(pipeline: Any) -> None:
     """
     from magnet import containers
 
-    if not containers.current_settings().image:
+    if settings is None:
+        settings = containers.ContainerSettings()
+    if not settings.image:
         return
 
     node_dict = getattr(pipeline, 'node_dict', None) or {}
@@ -499,7 +533,7 @@ def _check_container_settings_apply(pipeline: Any) -> None:
         return
 
     raise ValueError(
-        f'--container_image={containers.current_settings().image!r} was given, '
+        f'--container_image={settings.image!r} was given, '
         f'but no node in this pipeline can be containerized, so nothing would '
         f'run in the image and the results would look exactly like a '
         f'containerized run. Nodes: {inert}.\n'

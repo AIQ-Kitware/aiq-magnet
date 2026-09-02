@@ -32,15 +32,6 @@ class Infer(LeasedYamlProcessNode):
     endpoint_params = ('model_id',)
 
 
-@pytest.fixture(autouse=True)
-def _clean_settings():
-    containers.configure()
-    leasing.configure(False)
-    yield
-    containers.configure()
-    leasing.configure(False)
-
-
 def _spec(node_class=None, **extra):
     node = {
         'executable': 'python -m pkg.work',
@@ -54,8 +45,23 @@ def _spec(node_class=None, **extra):
     return {'nodes': {'work': node}}
 
 
-def _node(spec, config={'task': 't'}):
+def _settings(image=IMAGE, mounts='/repo'):
+    return containers.ContainerSettings.coerce(image=image, mounts=mounts)
+
+
+def _node(spec, config={'task': 't'}, settings=None, lease=None):
+    """One node out of a built DAG, carrying this test's execution settings.
+
+    Settings are applied to the pipeline, not to the node, because that is how
+    they arrive in a real run: MAGNET never constructs these nodes -- kwdagger's
+    loader does, from the class the card names -- so the DAG is the only place
+    it can reach them.
+    """
     pipeline = coerce_pipeline(spec)
+    containers.apply_settings(
+        pipeline, settings or containers.ContainerSettings()
+    )
+    leasing.apply_settings(pipeline, lease or leasing.LeaseSettings())
     node = pipeline.node_dict['work']
     node.configure(config)
     return node
@@ -75,14 +81,12 @@ def test_a_plain_yaml_node_still_cannot_containerize():
     Not an aspiration to fix in place: a card that names no class keeps the
     behaviour it has today, which is what makes this addition safe.
     """
-    containers.configure(image=IMAGE, mounts='/repo')
-    command = _node(_spec()).command
+    command = _node(_spec(), settings=_settings()).command
     assert 'docker run' not in command
 
 
 def test_a_declarative_node_runs_in_the_image():
-    containers.configure(image=IMAGE, mounts='/repo')
-    command = _node(_spec(CONTAINER_CLASS)).command
+    command = _node(_spec(CONTAINER_CLASS), settings=_settings()).command
     assert command.startswith('docker run --rm ')
     assert f' {IMAGE} ' in command
     assert 'python -m pkg.work' in command
@@ -125,8 +129,6 @@ def test_metrics_metadata_survives():
 def test_the_lease_stays_outside_the_container():
     """Acquiring a lease needs the host daemon and ledger; consuming the
     endpoint happens inside. Documented in magnet.containers."""
-    containers.configure(image=IMAGE, mounts='/repo')
-    leasing.configure(True)
     spec = {
         'nodes': {
             'work': {
@@ -138,7 +140,10 @@ def test_the_lease_stays_outside_the_container():
             }
         }
     }
-    command = _node(spec, {'model_id': 'qwen3-8b'}).command
+    command = _node(
+        spec, {'model_id': 'qwen3-8b'},
+        settings=_settings(), lease=leasing.LeaseSettings(enabled=True),
+    ).command
     assert command.index('infer-stack run') < command.index('docker run')
 
 
@@ -165,9 +170,8 @@ def _pipeline(*node_classes):
 def test_an_image_that_reaches_no_node_is_an_error():
     """The defect this guard exists for: a green run that containerized
     nothing produces evidence indistinguishable from the real thing."""
-    containers.configure(image=IMAGE, mounts='/repo')
     with pytest.raises(ValueError) as excinfo:
-        _check_container_settings_apply(_pipeline(None, None))
+        _check_container_settings_apply(_pipeline(None, None), _settings())
     message = str(excinfo.value)
     # The message has to carry the fix, not just the complaint.
     assert 'ContainerYamlProcessNode' in message
@@ -176,19 +180,21 @@ def test_an_image_that_reaches_no_node_is_an_error():
 
 def test_no_image_means_no_opinion():
     """Running on the host is the default, not a degraded mode."""
-    _check_container_settings_apply(_pipeline(None, None))
+    _check_container_settings_apply(_pipeline(None, None), _settings(image=''))
 
 
 def test_an_image_every_node_can_use_is_fine():
-    containers.configure(image=IMAGE, mounts='/repo')
-    _check_container_settings_apply(_pipeline(CONTAINER_CLASS, CONTAINER_CLASS))
+    _check_container_settings_apply(
+        _pipeline(CONTAINER_CLASS, CONTAINER_CLASS), _settings()
+    )
 
 
 def test_a_mixed_dag_warns_but_runs(caplog):
     """Legitimate: an analysis step may belong on the host beside a
     containerized model step. Say which nodes stay behind; do not refuse."""
-    containers.configure(image=IMAGE, mounts='/repo')
-    _check_container_settings_apply(_pipeline(CONTAINER_CLASS, None))
+    _check_container_settings_apply(
+        _pipeline(CONTAINER_CLASS, None), _settings()
+    )
 
 
 def test_the_guard_runs_before_anything_is_submitted(monkeypatch):
@@ -200,7 +206,6 @@ def test_the_guard_runs_before_anything_is_submitted(monkeypatch):
         _kwdagger, 'build_schedule',
         lambda config: submitted.append(config) or (None, None),
     )
-    containers.configure(image=IMAGE, mounts='/repo')
     processor = _kwdagger.KWDaggerProcessor(
         {'result_node': 'n0',
          'pipeline': {'nodes': {'n0': {
@@ -209,5 +214,5 @@ def test_the_guard_runs_before_anything_is_submitted(monkeypatch):
         '.',
     )
     with pytest.raises(ValueError):
-        processor.schedule()
+        processor.schedule(container_settings=_settings())
     assert submitted == []

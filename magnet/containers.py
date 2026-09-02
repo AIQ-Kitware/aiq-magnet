@@ -29,12 +29,13 @@ rather than as Python -- from :class:`ContainerYamlProcessNode`, named in the
 node's ``class`` key.
 
 TODO:
-    Inject the wrapper at DAG compile time instead. MAGNET knows the whole DAG
-    and the invocation's settings before anything is scheduled, so a card could
-    ask for containerized execution without any of its nodes naming an
-    execution class: the pipeline would describe the work and the card would
-    describe where it runs. Two things point the same way. A card that names no
-    container class today is silently *not* containerized however it was
+    Substitute the node class at DAG compile time, so a card need not name an
+    execution class at all: the pipeline would describe the work and the card
+    would describe where it runs. :func:`apply_settings` is already the hook --
+    it holds every node and the invocation's settings, before anything renders
+    a command -- so what is left is swapping the class there rather than only
+    configuring the instance. Two things point the same way. A card that names
+    no container class today is silently *not* containerized however it was
     invoked, which is a green run that proves nothing. And the environment
     capture below (:data:`DEFAULT_CAPTURED_ENV`) is correct and needed on the
     host path too, where a cmd_queue tmux worker inherits just as little, but is
@@ -56,8 +57,7 @@ __all__ = [
     'ContainerProcessNode',
     'ContainerYamlProcessNode',
     'ContainerSettings',
-    'configure',
-    'current_settings',
+    'apply_settings',
     'containerization_is_enabled',
     'container_prefix',
     'forwarded_env',
@@ -65,19 +65,20 @@ __all__ = [
     'DEFAULT_CAPTURED_ENV',
 ]
 
-#: Process-wide container settings. Empty by default, which is what makes an
-#: uncontainerized run the same path with nothing prepended rather than a
-#: fallback. Populated from CLI arguments by :func:`configure`; a node that
-#: declares its own image, mounts or environment still wins over it.
-#:
-#: This is configuration a caller passes in, so it arrives as a CLI argument.
-#: It used to be read from MAGNET_NODE_* environment variables, which hid where
-#: a value came from and could not be seen in the record of an invocation.
-
 
 @dataclasses.dataclass(frozen=True)
 class ContainerSettings:
-    """What to run node commands in, when the node does not say."""
+    """
+    What to run node commands in, for nodes that do not say.
+
+    One invocation's answer to "where does this run", built from CLI arguments
+    and handed to :func:`apply_settings`, which writes it onto the nodes that
+    did not declare their own. Nothing reads it afterwards: by the time a
+    command renders, every value it needs is on the node.
+
+    Empty by default, which is what makes an uncontainerized run the same path
+    with nothing prepended rather than a fallback.
+    """
 
     #: Image to run node commands in. Empty => run on the host.
     image: str = ''
@@ -96,47 +97,67 @@ class ContainerSettings:
     #: no business knowing what those variables are called.
     forward_env: tuple[str, ...] = ()
 
+    @classmethod
+    def coerce(
+        cls,
+        image: str = '',
+        mounts: Any = (),
+        docker_args: str = '',
+        forward_env: Any = (),
+    ) -> 'ContainerSettings':
+        """
+        Build settings from CLI argument values.
 
-_SETTINGS = ContainerSettings()
+        Example:
+            >>> from magnet.containers import ContainerSettings
+            >>> ContainerSettings.coerce(image=' magnet:latest ',
+            ...                          mounts='/repo')
+            ContainerSettings(image='magnet:latest', mounts=('/repo',), ...)
+        """
+        return cls(
+            image=str(image or '').strip(),
+            mounts=tuple(_coerce_name_list(mounts)),
+            docker_args=str(docker_args or ''),
+            forward_env=tuple(_coerce_name_list(forward_env)),
+        )
 
 
-def configure(
-    image: str = '',
-    mounts: Any = (),
-    docker_args: str = '',
-    forward_env: Any = (),
-) -> ContainerSettings:
+def apply_settings(pipeline: Any, settings: ContainerSettings) -> None:
     """
-    Set the process-wide container settings, and return them.
+    Write an invocation's settings onto the nodes that did not declare
+    their own.
 
-    Called once from the CLI before a pipeline is scheduled. Node commands are
-    rendered in this process, so a process-wide value is enough to reach them;
-    what matters is that it came from an argument rather than the ambient
-    environment.
+    Called once, after the DAG is built and before anything renders a command.
+    This is the whole reason a node can be configured at all: kwdagger owns node
+    construction -- for a declarative card it is kwdagger's YAML loader that
+    instantiates the class the card names -- so MAGNET has no constructor to
+    pass anything to, and ``command`` is a property that takes no arguments. The
+    DAG is the one place MAGNET holds every node, so it is where configuration
+    is applied.
+
+    Nodes that are not containerizable are skipped rather than refused; naming
+    them is :func:`magnet._kwdagger._check_container_settings_apply`'s job.
+
+    Args:
+        pipeline: the built pipeline whose nodes will render commands.
+        settings: this invocation's defaults.
 
     Example:
-        >>> from magnet.containers import configure, current_settings
-        >>> before = current_settings()
-        >>> configure(image='magnet:latest', mounts='/repo')
-        ContainerSettings(image='magnet:latest', mounts=('/repo',), ...)
-        >>> current_settings().image
+        >>> from kwdagger.pipeline import coerce_pipeline
+        >>> from magnet.containers import ContainerSettings, apply_settings
+        >>> spec = {'nodes': {'work': {
+        ...     'class': 'magnet.containers.ContainerYamlProcessNode',
+        ...     'executable': 'python -m pkg.work',
+        ...     'out_paths': {'results_fpath': 'results.json'}}}}
+        >>> pipeline = coerce_pipeline(spec)
+        >>> settings = ContainerSettings.coerce(image='magnet:latest')
+        >>> apply_settings(pipeline, settings)
+        >>> pipeline.node_dict['work'].container_image
         'magnet:latest'
-        >>> _ = configure(**{f.name: getattr(before, f.name)
-        ...                  for f in dataclasses.fields(before)})
     """
-    global _SETTINGS
-    _SETTINGS = ContainerSettings(
-        image=str(image or '').strip(),
-        mounts=tuple(_coerce_name_list(mounts)),
-        docker_args=str(docker_args or ''),
-        forward_env=tuple(_coerce_name_list(forward_env)),
-    )
-    return _SETTINGS
-
-
-def current_settings() -> ContainerSettings:
-    """The container settings in effect for this process."""
-    return _SETTINGS
+    for node in (getattr(pipeline, 'node_dict', None) or {}).values():
+        if isinstance(node, ContainerProcessNode):
+            node.apply_settings(settings)
 
 
 def _coerce_name_list(raw: Any) -> list[str]:
@@ -173,43 +194,38 @@ DEFAULT_CAPTURED_ENV = (
 DEFAULT_FORWARDED_ENV = LEASE_ENV + DEFAULT_CAPTURED_ENV
 
 
-def forwarded_env() -> list[str]:
+def forwarded_env(node: Any = None) -> list[str]:
     """
-    Variable names to forward into the container, in a stable order.
+    Variable names to forward into this node's container, in a stable order.
 
     Returns:
-        list[str]: :data:`DEFAULT_FORWARDED_ENV` followed by whatever
-            :attr:`ContainerSettings.forward_env` adds, deduplicated.
+        list[str]: :data:`DEFAULT_FORWARDED_ENV` followed by whatever the node
+            adds, deduplicated.
 
     Example:
-        >>> from magnet.containers import configure, forwarded_env
-        >>> before = configure(forward_env='MY_FACTORY,MY_URL')
-        >>> names = forwarded_env()
+        >>> from magnet.containers import ContainerProcessNode, forwarded_env
+        >>> node = ContainerProcessNode(name='n', executable='true')
+        >>> node.container_forward_env = ('MY_FACTORY', 'MY_URL')
+        >>> names = forwarded_env(node)
         >>> names[0], names[-2:]
         ('OPENAI_BASE_URL', ['MY_FACTORY', 'MY_URL'])
-        >>> _ = configure()
     """
     names = list(DEFAULT_FORWARDED_ENV)
-    for chunk in current_settings().forward_env:
-        if chunk not in names:
+    for chunk in (getattr(node, 'container_forward_env', None) or ()):
+        chunk = str(chunk).strip()
+        if chunk and chunk not in names:
             names.append(chunk)
     return names
 
 
 def node_image(node: Any = None) -> str:
-    """The image for this node: its own declaration, else the process-wide one."""
-    declared = getattr(node, 'container_image', None)
-    if declared:
-        return str(declared).strip()
-    return current_settings().image
+    """The image this node's command runs in, empty when it runs on the host."""
+    return str(getattr(node, 'container_image', None) or '').strip()
 
 
 def node_mounts(node: Any = None) -> list[str]:
     """Host paths to bind-mount at their own absolute paths."""
-    declared = getattr(node, 'container_mounts', None)
-    if declared:
-        return _coerce_name_list(declared)
-    return list(current_settings().mounts)
+    return _coerce_name_list(getattr(node, 'container_mounts', None))
 
 
 def declared_env(node: Any = None) -> dict:
@@ -224,12 +240,10 @@ def declared_env(node: Any = None) -> dict:
     result): a name that is not set yet can only be a job-time value.
     """
     names: list[str] = list(DEFAULT_CAPTURED_ENV)
-    for source in (getattr(node, 'container_forward_env', None) or (),
-                   current_settings().forward_env):
-        for name in source:
-            name = str(name).strip()
-            if name and name not in names and name not in LEASE_ENV:
-                names.append(name)
+    for name in (getattr(node, 'container_forward_env', None) or ()):
+        name = str(name).strip()
+        if name and name not in names and name not in LEASE_ENV:
+            names.append(name)
 
     resolved: dict = {name: os.environ.get(name) or None for name in names}
     # An explicit mapping on the node wins over the environment.
@@ -243,7 +257,8 @@ def containerization_is_enabled(node: Any = None) -> bool:
     Whether node commands should be wrapped in ``docker run``.
 
     Returns:
-        bool: true when the node or the process settings name an image.
+        bool: true when the node names an image, either its own or the one
+            :func:`apply_settings` gave it.
     """
     return bool(node_image(node))
 
@@ -252,9 +267,8 @@ def container_prefix(node: Any = None) -> str:
     """The ``docker run`` invocation node commands are appended to.
 
     Args:
-        node: the node being rendered, when it declares its own image, mounts
-            or environment. Falls back to the process-wide
-            :class:`ContainerSettings`.
+        node: the node being rendered. Every value comes off it -- its own
+            declaration, or what :func:`apply_settings` wrote there.
 
     Returns:
         str: everything up to and including the image name.
@@ -297,7 +311,8 @@ def container_prefix(node: Any = None) -> str:
             parts += ['-e', name]
         else:
             parts += ['-e', shlex.quote(f'{name}={value}')]
-    parts += shlex.split(current_settings().docker_args)
+    docker_args = getattr(node, 'container_docker_args', None)
+    parts += shlex.split(str(docker_args or ''))
     parts.append(image)
     return ' '.join(parts)
 
@@ -306,16 +321,17 @@ class ContainerProcessNode(kwdagger.ProcessNode):
     """
     A :class:`kwdagger.ProcessNode` whose command runs in a container.
 
-    Inert unless an image is named, by the node or by :func:`configure`, so
-    the same pipeline runs on the host during development and in a pinned image
-    for a real run.
+    Inert unless an image is named -- by the node itself, or by
+    :func:`apply_settings` on behalf of the invocation -- so the same pipeline
+    runs on the host during development and in a pinned image for a real run.
 
-    A node may declare its own container settings instead of inheriting the
-    process-wide MAGNET_NODE_* variables, which are a property of one
-    invocation rather than of the step.
+    Every value the command needs lives on the node by the time it renders.
+    A node that declares its own keeps it; :func:`apply_settings` fills the
+    rest in. That is what lets two pipelines in one process differ, and what
+    keeps a rendered command explainable from the node alone.
     """
 
-    #: Image for this node's command. None => the process-wide setting.
+    #: Image for this node's command. Empty => run on the host.
     container_image: Any = None
     #: Host paths bind-mounted at their own absolute paths.
     container_mounts: Any = None
@@ -323,6 +339,40 @@ class ContainerProcessNode(kwdagger.ProcessNode):
     container_env: Any = None
     #: Names whose values are captured from the environment at render time.
     container_forward_env: Any = ()
+    #: Extra ``docker run`` arguments, shell-split into the prefix.
+    container_docker_args: Any = None
+
+    def apply_settings(self, settings: ContainerSettings) -> None:
+        """
+        Adopt an invocation's settings for anything this node did not declare.
+
+        A node's own declaration is a property of the step and always wins.
+        ``forward_env`` is the exception: it accumulates, because the node and
+        the invocation are naming different variables for the same reason, and
+        neither has grounds to drop the other's. Idempotent, so applying twice
+        is the same as applying once.
+
+        Example:
+            >>> from magnet.containers import ContainerProcessNode
+            >>> from magnet.containers import ContainerSettings
+            >>> node = ContainerProcessNode(name='n', executable='true')
+            >>> node.container_image = 'declared:latest'
+            >>> settings = ContainerSettings.coerce(image='other:latest')
+            >>> node.apply_settings(settings)
+            >>> node.container_image
+            'declared:latest'
+        """
+        if not self.container_image:
+            self.container_image = settings.image
+        if not self.container_mounts:
+            self.container_mounts = list(settings.mounts)
+        if not self.container_docker_args:
+            self.container_docker_args = settings.docker_args
+        names = list(self.container_forward_env or ())
+        for name in settings.forward_env:
+            if name not in names:
+                names.append(name)
+        self.container_forward_env = tuple(names)
 
     def _wrap_command(self, command: str) -> str:
         """Hook for subclasses that add another layer (see
@@ -363,8 +413,9 @@ class ContainerYamlProcessNode(ContainerProcessNode, YamlProcessNode):
     from both is the fix rather than an alias. Containerized execution and
     declarative readout were mutually exclusive before this class existed.
 
-    Still inert unless an image is named -- by the node or by :func:`configure`
-    -- so the same card runs on the host during development.
+    Still inert unless an image is named -- by the node or by
+    :func:`apply_settings` -- so the same card runs on the host during
+    development.
     """
 
 

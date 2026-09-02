@@ -34,38 +34,40 @@ class Infer(LeasedProcessNode):
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
+    # Only the ambient variable needs clearing. Execution settings live on the
+    # node each test builds, so there is no process state to reset.
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    containers.configure()
-    leasing.configure(False)
-    yield
-    containers.configure()
-    leasing.configure(False)
 
 
-def _node(cls, config):
+def _node(cls, config, settings=None, lease=None):
+    """A configured node carrying this test's execution settings."""
     node = cls()
     node.configure(config)
+    node.apply_settings(settings or containers.ContainerSettings())
+    if lease is not None:
+        node.apply_lease_settings(lease)
     return node
 
 
-def _on(monkeypatch, *, image=IMAGE, mounts='/repo'):
-    settings = containers.current_settings()
-    containers.configure(
-        image=image,
-        mounts=mounts,
-        docker_args=settings.docker_args,
-        forward_env=settings.forward_env,
+def _on(*, image=IMAGE, mounts='/repo', **kwargs):
+    """The container settings a containerized invocation would supply."""
+    return containers.ContainerSettings.coerce(
+        image=image, mounts=mounts, **kwargs
     )
 
 
+def _leased(enabled=True):
+    return leasing.LeaseSettings(enabled=enabled)
+
+
 def test_nodes_run_on_the_host_unless_an_image_is_named():
-    assert not containerization_is_enabled()
-    assert _node(Work, {'task': 't'}).command.startswith('python -m pkg.work')
+    node = _node(Work, {'task': 't'})
+    assert not containerization_is_enabled(node)
+    assert node.command.startswith('python -m pkg.work')
 
 
-def test_the_command_runs_in_the_image(monkeypatch):
-    _on(monkeypatch)
-    command = _node(Work, {'task': 't'}).command
+def test_the_command_runs_in_the_image():
+    command = _node(Work, {'task': 't'}, _on()).command
     assert command.startswith('docker run --rm ')
     assert command.rstrip().endswith('--task=t')
     # The image name immediately precedes the command it runs.
@@ -76,43 +78,36 @@ def test_the_command_runs_in_the_image(monkeypatch):
 def test_the_repo_is_mounted_at_its_own_path(monkeypatch):
     """kwdagger bakes absolute paths into every command; they have to
     resolve to the same files inside the container."""
-    _on(monkeypatch, mounts='/a/repo:/b/data')
-    command = _node(Work, {'task': 't'}).command
+    command = _node(Work, {'task': 't'}, _on(mounts='/a/repo:/b/data')).command
     assert '-v /a/repo:/a/repo' in command
     assert '-v /b/data:/b/data' in command
 
 
-def test_artifacts_are_not_root_owned(monkeypatch):
+def test_artifacts_are_not_root_owned():
     import os
 
-    _on(monkeypatch)
-    assert f'--user {os.getuid()}:{os.getgid()}' in _node(Work, {'task': 't'}).command
+    command = _node(Work, {'task': 't'}, _on()).command
+    assert f'--user {os.getuid()}:{os.getgid()}' in command
 
 
-def test_the_endpoint_env_is_forwarded_by_name(monkeypatch):
+def test_the_endpoint_env_is_forwarded_by_name():
     """By name, not by value: the lease sets it at job time, long after
     this command string was rendered."""
-    _on(monkeypatch)
-    command = _node(Work, {'task': 't'}).command
+    command = _node(Work, {'task': 't'}, _on()).command
     assert '-e OPENAI_BASE_URL' in command
     assert '-e OPENAI_API_KEY' in command
     assert 'OPENAI_BASE_URL=' not in command
 
 
-def test_a_pipelines_own_variables_are_forwarded_on_request(monkeypatch):
+def test_a_pipelines_own_variables_are_forwarded_on_request():
     """MAGNET must not need to know what an evaluation calls its settings."""
-    _on(monkeypatch)
-    containers.configure(
-        image=containers.current_settings().image,
-        mounts=containers.current_settings().mounts,
-        forward_env='SOME_BACKEND_FACTORY,SOME_URL',
-    )
-    command = _node(Work, {'task': 't'}).command
+    settings = _on(forward_env='SOME_BACKEND_FACTORY,SOME_URL')
+    command = _node(Work, {'task': 't'}, settings).command
     assert '-e SOME_BACKEND_FACTORY' in command
     assert '-e SOME_URL' in command
 
 
-def test_the_defaults_are_generic(monkeypatch):
+def test_the_defaults_are_generic():
     """Nothing evaluation-specific may be baked into the default set.
 
     A generic framework naming one evaluation's variables is a design smell
@@ -133,28 +128,24 @@ def test_the_lease_wraps_the_container_not_the_other_way_round(monkeypatch):
     Inside-out would mean a container reaching for the host's daemon; and
     being inside is what lets the container inherit the endpoint env.
     """
-    _on(monkeypatch)
-    leasing.configure(True)
-    command = _node(Infer, {'model_id': 'qwen'}).command
+    command = _node(Infer, {'model_id': 'qwen'}, _on(), _leased()).command
     assert command.index('infer-stack run') < command.index('docker run')
 
 
-def test_either_layer_works_alone(monkeypatch):
-    leasing.configure(True)
-    leased_only = _node(Infer, {'model_id': 'qwen'}).command
+def test_either_layer_works_alone():
+    leased_only = _node(Infer, {'model_id': 'qwen'}, lease=_leased()).command
     assert leased_only.startswith('infer-stack run')
     assert 'docker run' not in leased_only
 
-    leasing.configure(False)
-    _on(monkeypatch)
-    boxed_only = _node(Infer, {'model_id': 'qwen'}).command
+    boxed_only = _node(
+        Infer, {'model_id': 'qwen'}, _on(), _leased(enabled=False)
+    ).command
     assert boxed_only.startswith('docker run')
     assert 'infer-stack run' not in boxed_only
 
 
-def test_it_is_still_an_ordinary_kwdagger_node(monkeypatch):
-    _on(monkeypatch)
-    node = _node(Work, {'task': 't'})
+def test_it_is_still_an_ordinary_kwdagger_node():
+    node = _node(Work, {'task': 't'}, _on())
     assert isinstance(node, kwdagger.ProcessNode)
     # Where a node runs must not change what it computes.
     assert 'docker' not in str(node.algo_id)
@@ -169,14 +160,9 @@ def test_a_declared_variables_value_is_captured_not_forwarded(monkeypatch):
     configuration forwards nothing and the node silently falls back to a
     default.
     """
-    _on(monkeypatch)
-    containers.configure(
-        image=containers.current_settings().image,
-        mounts=containers.current_settings().mounts,
-        forward_env='SOME_BACKEND_FACTORY',
-    )
     monkeypatch.setenv('SOME_BACKEND_FACTORY', 'pkg.mod:factory')
-    command = _node(Work, {'task': 't'}).command
+    settings = _on(forward_env='SOME_BACKEND_FACTORY')
+    command = _node(Work, {'task': 't'}, settings).command
     assert '-e SOME_BACKEND_FACTORY=pkg.mod:factory' in command
 
 
@@ -187,27 +173,25 @@ def test_a_lease_variable_is_never_captured_even_when_set(monkeypatch):
     leased; baking it in would freeze the wrong URL over the one
     ``infer-stack run`` writes at job time.
     """
-    _on(monkeypatch)
     monkeypatch.setenv('OPENAI_BASE_URL', 'http://stale-orchestrator/v1')
-    command = _node(Work, {'task': 't'}).command
+    command = _node(Work, {'task': 't'}, _on()).command
     assert '-e OPENAI_BASE_URL' in command
     assert 'stale-orchestrator' not in command
 
 
-def test_a_node_may_declare_its_own_container_settings(monkeypatch):
-    """A node's own image, mounts and env override the process-wide ones."""
-    _on(monkeypatch)
+def test_a_node_may_declare_its_own_container_settings():
+    """A node's own image, mounts and env override the invocation's."""
 
     class Declared(Work):
         container_image = 'other:tag'
         container_mounts = ['/a', '/b']
         container_env = {'SOME_BACKEND_FACTORY': 'node.declared:factory'}
 
-    command = _node(Declared, {'task': 't'}).command
+    command = _node(Declared, {'task': 't'}, _on()).command
     assert 'other:tag' in command
     assert '-v /a:/a' in command and '-v /b:/b' in command
     assert '-e SOME_BACKEND_FACTORY=node.declared:factory' in command
-    # The process-wide image is overridden, not appended to.
+    # The invocation's image is overridden, not appended to.
     assert 'aiq-eval-node:latest' not in command
 
 
@@ -217,7 +201,6 @@ def test_pythonpath_is_captured_not_left_bare(monkeypatch):
     Left as a bare name it arrives empty in a cmd_queue tmux worker that did
     not inherit it, and every import inside the node fails.
     """
-    _on(monkeypatch)
     monkeypatch.setenv('PYTHONPATH', '/repo:/repo/ta1/thing')
-    command = _node(Work, {'task': 't'}).command
+    command = _node(Work, {'task': 't'}, _on()).command
     assert '-e PYTHONPATH=/repo:/repo/ta1/thing' in command

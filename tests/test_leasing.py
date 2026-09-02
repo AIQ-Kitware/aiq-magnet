@@ -32,20 +32,18 @@ class Analyse(LeasedProcessNode):
 
 
 @pytest.fixture(autouse=True)
-def _leasing_on(monkeypatch):
+def _clean_env(monkeypatch):
+    # Only the ambient variable needs clearing. Leasing is a property of the
+    # node each test builds, so nothing persists between tests.
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    # Both settings are process-wide, so unlike a monkeypatched environment
-    # variable they persist across tests unless put back deliberately.
-    containers.configure()
-    leasing.configure(True)
-    yield
-    containers.configure()
-    leasing.configure(False)
 
 
-def _node(cls, config):
+def _node(cls, config, enabled=True):
+    """A configured node that leases unless the test says otherwise."""
     node = cls()
     node.configure(config)
+    node.apply_settings(containers.ContainerSettings())
+    node.apply_lease_settings(leasing.LeaseSettings(enabled=enabled))
     return node
 
 
@@ -107,26 +105,25 @@ def test_the_lease_waits_rather_than_failing_when_busy():
 
 
 def test_leasing_is_off_inside_an_outer_lease(monkeypatch):
-    leasing.configure(True)
-    monkeypatch.setenv(INSIDE_LEASE_ENVVAR, 'lease-abc123')
-    assert not leasing_is_enabled()
     node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None})
+    monkeypatch.setenv(INSIDE_LEASE_ENVVAR, 'lease-abc123')
+    assert not leasing_is_enabled(node)
     assert node.command.startswith('python -m pkg.infer')
 
 
 def test_explicit_opt_out(monkeypatch):
     # e.g. a run against OpenRouter, which infer-stack does not manage.
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    leasing.configure(False)
-    assert not leasing_is_enabled()
+    node = _node(Infer, {'model_id': 'm'}, enabled=False)
+    assert not leasing_is_enabled(node)
 
 
 def test_leasing_is_off_unless_asked_for(monkeypatch):
     """A card pointed at an unmanaged server must keep working untouched."""
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
-    leasing.configure(False)
-    assert not leasing_is_enabled()
-    node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None})
+    node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None},
+                 enabled=False)
+    assert not leasing_is_enabled(node)
     assert node.command.startswith('python -m pkg.infer')
 
 

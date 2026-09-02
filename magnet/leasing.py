@@ -21,14 +21,17 @@ was actually given, since infer-stack otherwise plans against every card it can
 see -- which on a host without a device cgroup is all of them, not the ones this
 job was allocated. See :data:`GPU_ALLOW_LIST_EXPANSION`.
 
-Opt-in via ``--per_node_leasing``. Off by default because plenty of
-legitimate runs point at a server infer-stack does not manage.
+Opt-in via ``--per_node_leasing``, which reaches the nodes through
+:class:`LeaseSettings` and :func:`apply_settings`. Off by default because
+plenty of legitimate runs point at a server infer-stack does not manage.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import shlex
+from typing import Any
 
 from kwdagger.yaml_pipeline import YamlProcessNode
 
@@ -37,67 +40,92 @@ from magnet.containers import ContainerProcessNode
 __all__ = [
     'LeasedProcessNode',
     'LeasedYamlProcessNode',
-    'configure',
+    'LeaseSettings',
+    'apply_settings',
     'leasing_is_enabled',
     'slurm_gpu_allow_list',
     'INSIDE_LEASE_ENVVAR',
     'GPU_ALLOW_LIST_EXPANSION',
 ]
 
-#: Whether each node's command renders inside its own lease. **Opt-in**, set
-#: from a CLI argument by :func:`configure`. Off by default because plenty of
-#: legitimate runs point at a server infer-stack does not manage -- OpenRouter,
-#: a hand-started mock, a colleague's shared vLLM -- and for those, rendering
-#: an ``infer-stack run`` prefix would turn a working card into one that fails
-#: looking up an endpoint that was never in a catalog.
-_ENABLED = False
 
-#: Whether to emit ``--allowed_gpus``. Unlike leasing itself this defaults ON:
-#: off Slurm the flag renders to nothing at all, and under Slurm its absence is
-#: a correctness bug. The hatch exists for a site whose Slurm reports indices
-#: that do not match the ones the container runtime sees.
-_ALLOWED_GPUS = True
-
-
-def configure(enabled: bool = False, allowed_gpus: bool = True) -> bool:
+@dataclasses.dataclass(frozen=True)
+class LeaseSettings:
     """
-    Set whether nodes lease their own endpoints, and return the setting.
+    One invocation's answer to whether nodes lease their own endpoints.
 
-    Args:
-        enabled: render each node's command inside its own lease.
-        allowed_gpus: confine a leased node to its Slurm allocation.
+    Built from CLI arguments and handed to :func:`apply_settings`, which writes
+    it onto the leasable nodes. Nothing reads it afterwards: by the time a
+    command renders, the node carries what it needs.
 
-    Called from the CLI before scheduling. This is passed configuration, so it
-    arrives as an argument rather than from the environment; contrast
+    This is passed configuration, so it arrives as an argument; contrast
     :data:`INSIDE_LEASE_ENVVAR`, which is a fact about the surrounding process
-    that only infer-stack can state.
+    that only infer-stack can state, and is therefore still read from the
+    environment where it is needed.
+    """
+
+    #: Render each node's command inside its own lease. **Opt-in**, off by
+    #: default because plenty of legitimate runs point at a server infer-stack
+    #: does not manage -- OpenRouter, a hand-started mock, a colleague's shared
+    #: vLLM -- and for those, rendering an ``infer-stack run`` prefix would turn
+    #: a working card into one that fails looking up an endpoint that was never
+    #: in a catalog.
+    enabled: bool = False
+
+    #: Whether to emit ``--allowed_gpus``. Unlike leasing itself this defaults
+    #: ON: off Slurm the flag renders to nothing at all, and under Slurm its
+    #: absence is a correctness bug. The hatch exists for a site whose Slurm
+    #: reports indices that do not match the ones the container runtime sees.
+    allowed_gpus: bool = True
+
+
+def apply_settings(pipeline: Any, settings: LeaseSettings) -> None:
+    """
+    Write an invocation's leasing settings onto the nodes that can lease.
+
+    The counterpart of :func:`magnet.containers.apply_settings`, applied at the
+    same point and for the same reason: the DAG is the one place MAGNET holds
+    every node, and ``command`` is a property with nowhere to pass an argument.
 
     Example:
-        >>> from magnet.leasing import configure, leasing_is_enabled
-        >>> configure(True)
+        >>> from kwdagger.pipeline import coerce_pipeline
+        >>> from magnet.leasing import LeaseSettings, apply_settings
+        >>> spec = {'nodes': {'infer': {
+        ...     'class': 'magnet.leasing.LeasedYamlProcessNode',
+        ...     'executable': 'python -m pkg.infer',
+        ...     'out_paths': {'results_fpath': 'results.json'}}}}
+        >>> pipeline = coerce_pipeline(spec)
+        >>> apply_settings(pipeline, LeaseSettings(enabled=True))
+        >>> pipeline.node_dict['infer'].lease_enabled
         True
-        >>> leasing_is_enabled()
-        True
-        >>> configure(False)
-        False
     """
-    global _ENABLED, _ALLOWED_GPUS
-    _ENABLED = bool(enabled)
-    _ALLOWED_GPUS = bool(allowed_gpus)
-    return _ENABLED
+    for node in (getattr(pipeline, 'node_dict', None) or {}).values():
+        if isinstance(node, LeasedProcessNode):
+            node.apply_lease_settings(settings)
+
 
 #: Exported by ``infer-stack run``. Its presence means we are already inside
 #: someone else's lease, which holds every endpoint it named, so acquiring
 #: again per node is pure overhead.
 INSIDE_LEASE_ENVVAR = 'INFER_STACK_LEASE_ID'
 
-def leasing_is_enabled() -> bool:
-    """Whether rendered commands should bracket themselves in a lease.
+
+def leasing_is_enabled(node: Any = None) -> bool:
+    """Whether this node's command should bracket itself in a lease.
 
     Requires an explicit opt-in, and stays off inside an outer lease so the
     two styles cannot nest by accident.
+
+    Example:
+        >>> from magnet.leasing import LeasedProcessNode, leasing_is_enabled
+        >>> node = LeasedProcessNode(name='n', executable='true')
+        >>> leasing_is_enabled(node)
+        False
+        >>> node.lease_enabled = True
+        >>> leasing_is_enabled(node)
+        True
     """
-    if not _ENABLED:
+    if not getattr(node, 'lease_enabled', False):
         return False
     return not os.environ.get(INSIDE_LEASE_ENVVAR)
 
@@ -127,25 +155,26 @@ GPU_ALLOW_LIST_EXPANSION = (
 )
 
 
-def slurm_gpu_allow_list() -> str:
+def slurm_gpu_allow_list(node: Any = None) -> str:
     """
     Shell text confining infer-stack to the GPUs this job was allocated.
 
     Returns:
-        str: :data:`GPU_ALLOW_LIST_EXPANSION`, or empty when configured off.
+        str: :data:`GPU_ALLOW_LIST_EXPANSION`, or empty when the node was
+            configured without it.
 
     Example:
-        >>> from magnet.leasing import configure, slurm_gpu_allow_list
-        >>> configure(True, allowed_gpus=False)
+        >>> from magnet.leasing import LeasedProcessNode, slurm_gpu_allow_list
+        >>> node = LeasedProcessNode(name='n', executable='true')
+        >>> slurm_gpu_allow_list(node).startswith('${SLURM_JOB_GPUS')
         True
-        >>> slurm_gpu_allow_list()
+        >>> node.lease_allowed_gpus = False
+        >>> slurm_gpu_allow_list(node)
         ''
-        >>> _ = configure(True)
-        >>> slurm_gpu_allow_list().startswith('${SLURM_JOB_GPUS')
-        True
-        >>> _ = configure(False)
     """
-    return GPU_ALLOW_LIST_EXPANSION if _ALLOWED_GPUS else ''
+    if not getattr(node, 'lease_allowed_gpus', True):
+        return ''
+    return GPU_ALLOW_LIST_EXPANSION
 
 
 class LeasedProcessNode(ContainerProcessNode):
@@ -171,12 +200,36 @@ class LeasedProcessNode(ContainerProcessNode):
         lease_queue (bool): wait for capacity rather than failing when the GPUs
             are busy. On by default -- with a DAG scheduling more jobs than the
             box has GPUs, busy is the normal case.
+        lease_enabled (bool): whether this node leases at all. Written by
+            :func:`apply_settings` from the invocation; a node may also set it
+            outright.
+        lease_allowed_gpus (bool): whether to confine the lease to the job's
+            Slurm allocation. See :data:`GPU_ALLOW_LIST_EXPANSION`.
     """
 
     endpoint_params: tuple[str, ...] = ()
     lease_ttl: str | None = '8h'
     lease_timeout: str | int | None = 1800
     lease_queue: bool = True
+    lease_enabled: bool = False
+    lease_allowed_gpus: bool = True
+
+    def apply_lease_settings(self, settings: LeaseSettings) -> None:
+        """
+        Adopt an invocation's leasing settings.
+
+        Distinct from
+        :meth:`~magnet.containers.ContainerProcessNode.apply_settings` because a
+        leased node is also a containerized one and takes both, from two
+        separate settings objects.
+
+        Unlike the container settings there is no "the node already declared
+        one" case to respect: leasing is a property of the invocation, not of
+        the step. A card cannot ask to be leased, because whether a lease can be
+        acquired at all depends on the catalog the run points at.
+        """
+        self.lease_enabled = bool(settings.enabled)
+        self.lease_allowed_gpus = bool(settings.allowed_gpus)
 
     def resolve_endpoints(self) -> list[str]:
         """Catalog aliases this node's job needs, deduplicated, order kept.
@@ -205,7 +258,7 @@ class LeasedProcessNode(ContainerProcessNode):
         the container inherits OPENAI_BASE_URL / OPENAI_API_KEY from the lease
         with no extra plumbing.
         """
-        if not leasing_is_enabled():
+        if not leasing_is_enabled(self):
             return command
         names = self.resolve_endpoints()
         if not names:
@@ -237,7 +290,7 @@ class LeasedProcessNode(ContainerProcessNode):
         # cgroup is ever created and `nvidia-smi -L` inside a 2-GPU allocation
         # lists all four. infer-stack takes its inventory from that list, two
         # nodes place servers on the same card, and one dies with CUDA OOM.
-        allow_list = slurm_gpu_allow_list()
+        allow_list = slurm_gpu_allow_list(self)
         if allow_list:
             parts += [allow_list]
         # Everything after `--` is the command; without it a command starting
