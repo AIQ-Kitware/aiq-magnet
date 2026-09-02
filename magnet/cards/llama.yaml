@@ -51,6 +51,7 @@ symbols:
   base_score:
     metadata:
       display_name: "Average Exact Match"
+      kind: 'metric'
       display: True
       define_metric:
         objective: maximize
@@ -65,7 +66,7 @@ symbols:
 
   comp_model:
     metadata:
-      kind: "model"
+      kind: 'model'
       display: True
     sweep:
       - meta/llama-2-13b
@@ -86,7 +87,7 @@ symbols:
   helm_runs_path:
     metadata:
       display_name: "HELM Data Path"
-      kind: "dataset"
+      kind: 'dataset'
       display: True
     type: str
     value: './data/crfm-helm-public/lite/benchmark_output'

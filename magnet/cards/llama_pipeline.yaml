@@ -63,11 +63,12 @@ symbols:
     value: 0.1
   comp_model:
     metadata:
-      kind: "model"
+      kind: 'model'
       display: True
   base_score:
     metadata:
       display_name: "Average Exact Match"
+      kind: 'metric'
       display: True
       define_metric:
         objective: 'maximize'
@@ -76,6 +77,6 @@ symbols:
   helm_runs_path:
     metadata:
       display_name: "HELM Data Path"
-      kind: "dataset"
+      kind: 'dataset'
       display: True
 
