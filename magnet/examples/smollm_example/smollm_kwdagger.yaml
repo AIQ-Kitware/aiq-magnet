@@ -1,0 +1,142 @@
+name: smollm_example
+title: "Two SmolLM endpoints answer a dummy dataset"
+
+description: |
+  A minimal card whose subject is the execution machinery, not a measurement.
+
+  Two SmolLM2 models -- the 135M and 360M instruct checkpoints, the smallest
+  ungated chat models worth serving -- are each asked the same eight
+  single-digit addition questions, and the answers are compared.
+
+  Nothing here is a benchmark. The questions are generated from a seed, the
+  claim is about whether every question came back, and the interesting number
+  (how often the two models agree) is reported without being claimed about.
+  Run this against a simulator and the answers are random text: the coverage
+  claim still holds, and it is exactly the claim that fails when leasing or
+  containerization is broken.
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - leasing
+  - containers
+  - smollm
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+  - title: "SmolLM2-135M-Instruct"
+    url: "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct"
+    type: "model"
+  - title: "SmolLM2-360M-Instruct"
+    url: "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct"
+    type: "model"
+
+# What this example actually establishes: both endpoints came up, held a
+# model for the length of their own job, and answered everything they were
+# asked. A broken lease fails this. A container that cannot reach the gateway
+# fails this. A model that is bad at arithmetic does not.
+claim:
+  python: |
+    c = compare
+    assert c.coverage == 1.0, (
+        f"{c.endpoints}: only {c.coverage:.0%} of items came back")
+
+evidence:
+  scope: requested
+
+symbols:
+  compare.agreement:
+    metadata:
+      display_name: "Cross-model agreement"
+      display: True
+      define_metric:
+        objective: maximize
+        aggregation_strategy:
+          type: 'mean'
+
+  compare.coverage:
+    metadata:
+      display_name: "Items answered by every endpoint"
+      display: True
+
+kwdagger:
+  result_node: compare
+
+  # Three nodes, and the middle one is the point.
+  #
+  # `items` and `compare` need no model, so they never lease -- they hold no
+  # GPU while they run. `ask` declares `endpoint` as an endpoint parameter, so
+  # each of its two cells acquires only the model it is about to use and
+  # releases it when its own job ends. Wrapping the whole evaluation in one
+  # lease would instead hold both models from the first node to the last.
+  #
+  # Every node names a container class. A node that does not cannot be
+  # containerized, and `--container_image` would be accepted and never read.
+  pipeline:
+    nodes:
+      # The dummy dataset, written once and read by both endpoints.
+      items:
+        class: magnet.examples.smollm_example.nodes.PlainStep
+        executable: "python -m magnet.examples.smollm_example.make_items"
+        algo_params:
+          n_items: 8
+          seed: 0
+        out_paths:
+          out_fpath: items.json
+        primary_out_key: out_fpath
+
+      # The leased node. `endpoint` is an ordinary algo_param, so the matrix
+      # sweeps it like any other axis -- and because the class declares it in
+      # `endpoint_params`, its value is also the catalog alias each cell
+      # leases.
+      ask:
+        class: magnet.examples.smollm_example.nodes.AskModel
+        executable: "python -m magnet.examples.smollm_example.ask_model"
+        in_paths: [items_fpath]
+        algo_params:
+          endpoint: null
+          max_tokens: 16
+          temperature: 0.0
+        out_paths:
+          out_fpath: answers.json
+        primary_out_key: out_fpath
+
+      # Reduce both endpoints' answers to the two numbers above.
+      compare:
+        class: magnet.examples.smollm_example.nodes.PlainStep
+        executable: "python -m magnet.examples.smollm_example.compare_answers"
+        in_paths: [answer_fpaths]
+        out_paths:
+          out_fpath: comparison.json
+        primary_out_key: out_fpath
+
+    # `group_by: []` gives the single compare cell every endpoint's answers.
+    # kwdagger hands it a newline-delimited manifest, so the comparison names
+    # exactly what it read rather than globbing a directory.
+    edges:
+      - items.out_fpath -> ask.items_fpath
+      - src: ask.out_fpath
+        dst: compare.answer_fpaths
+        gather:
+          group_by: []
+          order_by: [endpoint]
+          require: all_success
+
+  # The two smallest SmolLM2 instruct checkpoints, named by catalog alias
+  # rather than by model. Which weights those resolve to, and whether they are
+  # served by vLLM on a GPU or by a simulator on a laptop, is the catalog's
+  # business -- see the two beside this file.
+  matrix:
+    ask.endpoint:
+      - smol-135
+      - smol-360

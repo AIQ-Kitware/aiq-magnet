@@ -1,0 +1,68 @@
+# The same two aliases, served by a simulator, so the example runs on a host
+# with no GPU and no model weights.
+#
+#   docker pull ghcr.io/llm-d/llm-d-inference-sim:v0.9.0
+#   INFER_STACK_CATALOG=magnet/examples/smollm_example/catalog-mock.yaml
+#
+# `runtime.simulator` is what marks these as simulator deployments: it switches
+# the rendered command to the simulator's own CLI, drops the GPU requirement to
+# zero, and disables the curl-based healthcheck the distroless image cannot
+# run. Readiness is still a real generation over HTTP.
+#
+# What comes back is random text from a sentence bank, so `agreement` and
+# `exact_rate` are meaningless here and the card claims about neither. The
+# `coverage` claim is exactly as meaningful as against real weights: it asks
+# whether every request was answered, which is a question about leasing, the
+# container and the gateway.
+models:
+  smol135: {source: hf://HuggingFaceTB/SmolLM2-135M-Instruct}
+  smol360: {source: hf://HuggingFaceTB/SmolLM2-360M-Instruct}
+
+endpoints:
+  smol-135:
+    engine: vllm
+    model: smol135
+    runtime:
+      image: ghcr.io/llm-d/llm-d-inference-sim:v0.9.0
+      max_model_len: 2048
+      max_num_seqs: 8
+      simulator:
+        kind: llm-d-sim
+        mode: random
+        # Fixed, so two rehearsals produce the same transcript. Still nonsense,
+        # but repeatable nonsense, which is what makes a diff of two runs
+        # readable.
+        seed: 20260902
+        # Non-zero on purpose: a client that assumes the first token is instant
+        # fails here rather than in production.
+        time_to_first_token: 120ms
+        inter_token_latency: 8ms
+        startup_duration: 10s
+    reclaim: {policy: stop}
+
+  # Observed, and worth knowing before reading a number off a mock run: both
+  # endpoints return the SAME canned sequence for the same prompts, seed
+  # regardless (the two below differ, and the transcripts still match). So
+  # `agreement` comes out 1.0 here -- a number that looks like a finding and
+  # is an artifact of the fixture.
+  #
+  # That is the whole reason the card claims about `coverage` and not about
+  # `agreement`. Coverage asks whether every request was answered, which is a
+  # question about leasing, the container and the gateway, and is exactly as
+  # meaningful here as against real weights. Agreement asks something about
+  # the models, and this catalog has no models in it.
+  smol-360:
+    engine: vllm
+    model: smol360
+    runtime:
+      image: ghcr.io/llm-d/llm-d-inference-sim:v0.9.0
+      max_model_len: 2048
+      max_num_seqs: 8
+      simulator:
+        kind: llm-d-sim
+        mode: random
+        seed: 20260903
+        time_to_first_token: 120ms
+        inter_token_latency: 8ms
+        startup_duration: 10s
+    reclaim: {policy: stop}

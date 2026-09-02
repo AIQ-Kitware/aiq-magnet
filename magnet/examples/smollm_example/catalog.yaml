@@ -1,0 +1,38 @@
+# Real endpoints for the SmolLM example: vLLM, on a GPU.
+#
+#   INFER_STACK_CATALOG=magnet/examples/smollm_example/catalog.yaml
+#
+# The aliases match catalog-mock.yaml beside this file exactly, which is the
+# point: the card names `smol-135` and `smol-360` and never learns which of the
+# two catalogs answered. Switching between a simulator and real weights is an
+# environment variable, not an edit.
+#
+# Both are tiny on purpose. This example validates leasing and containers, not
+# model quality, so `--enforce-eager` (skipping torch.compile and CUDA graph
+# capture, which dominate vLLM startup regardless of model size) and a small
+# max_model_len are the right trade.
+models:
+  smol135: {source: hf://HuggingFaceTB/SmolLM2-135M-Instruct}
+  smol360: {source: hf://HuggingFaceTB/SmolLM2-360M-Instruct}
+
+endpoints:
+  smol-135:
+    engine: vllm
+    model: smol135
+    runtime:
+      max_model_len: 2048
+      gpu_memory_utilization: 0.2
+      extra_args: ['--enforce-eager']
+    # `stop` returns the GPU when the lease ends. With two endpoints and one
+    # card the DAG holds each only for its own job, which is the behaviour this
+    # example exists to show; `keep-warm` would hide it.
+    reclaim: {policy: stop}
+
+  smol-360:
+    engine: vllm
+    model: smol360
+    runtime:
+      max_model_len: 2048
+      gpu_memory_utilization: 0.2
+      extra_args: ['--enforce-eager']
+    reclaim: {policy: stop}
