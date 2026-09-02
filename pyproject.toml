@@ -107,6 +107,7 @@ package-data.magnet = [
   "examples/theory_links/*/*.md",
   "examples/smollm_example/*.yaml",
   "examples/smollm_example/*.md",
+  "examples/smollm_example/*.sh",
 ]
 packages.find.namespaces = true
 packages.find.include = [ "magnet*" ]

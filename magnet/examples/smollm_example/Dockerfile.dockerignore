@@ -1,0 +1,8 @@
+.git
+.tox
+*.egg-info
+build
+dist
+htmlcov
+**/__pycache__
+**/*.pyc
