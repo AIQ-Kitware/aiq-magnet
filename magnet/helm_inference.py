@@ -1,6 +1,8 @@
 import contextlib
 import os
 
+from magnet.exceptions import require_optional
+require_optional('helm', 'helm', 'the HELM-backed inference engine')
 from helm.common.request import Request
 from helm.common.request import RequestResult, GeneratedOutput
 from helm.common.authentication import Authentication

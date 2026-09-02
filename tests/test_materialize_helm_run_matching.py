@@ -1,3 +1,5 @@
+import pytest
+pytest.importorskip('helm', reason="needs the helm extra: pip install 'aiq-magnet[helm]'")  # noqa: E402
 from magnet.backends.helm.cli.materialize_helm_run import run_dir_matches_requested
 
 

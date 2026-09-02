@@ -56,6 +56,7 @@ DEFAULT_TMUX_WORKERS = 8
 
 __all__ = [
     'ClaimResultNamespace',
+    'coerce_provenance',
     'derive_recipe_name',
     'detected_gpu_count',
     'resolve_tmux_workers',
@@ -230,6 +231,20 @@ class NewEvaluationCLI(kwconf.Config):
         ),
     )
 
+    provenance: str | None = kwconf.Value(
+        None,
+        parser=str,
+        help=(
+            'YAML/JSON mapping, or a path to one, recorded verbatim under '
+            '`provenance` in verdict.json: what produced this run -- the '
+            'execution substrate, and the kind of inference endpoint the '
+            'nodes talked to (a served model, a simulator, a replayed '
+            'fixture). A run against a simulator writes the same shape of '
+            'result as a real one; this is what tells them apart, and it '
+            'travels with the verdict rather than beside it.'
+        ),
+    )
+
     verbose: bool = kwconf.Value(
         False, isflag=True, help='Verbose log output', group='logging'
     )
@@ -321,6 +336,7 @@ class NewEvaluationCLI(kwconf.Config):
         )
         recipe.evaluate(
             verbose=bool(args.verbose),
+            provenance=coerce_provenance(args['provenance']),
             **schedule_options,
         )
         recipe.summarize()
@@ -625,6 +641,9 @@ class NewEvaluationResultCard:
     requested_work: Dict[str, Any] = field(default_factory=dict)
     evidence_scope: str = 'all'
     evidence_discovered: int = 0
+    #: What produced this run, as the caller described it: substrate and
+    #: endpoint kind. Opaque to MAGNET, written to the verdict unchanged.
+    provenance: Dict[str, Any] | None = None
 
     @property
     def cell_result_ids(self) -> List[str]:
@@ -645,6 +664,8 @@ class NewEvaluationResultCard:
             record['requested_work'] = self.requested_work
         if self.metrics:
             record['metrics'] = self.metrics
+        if self.provenance:
+            record['provenance'] = self.provenance
         return record
 
 
@@ -750,11 +771,37 @@ class NewEvaluationRecipe(EvaluationCard):
     def evaluate(
         self,
         verbose: bool = False,
+        provenance: Dict[str, Any] | None = None,
         **schedule_options: Any,
     ) -> NewEvaluationResultCard:
         return evaluate_new_recipe(
-            self, verbose=verbose, **schedule_options
+            self, verbose=verbose, provenance=provenance, **schedule_options
         )
+
+
+def coerce_provenance(raw: Any) -> Dict[str, Any] | None:
+    """
+    Accept a mapping, a YAML/JSON string, or a path to one; return a dict.
+
+    Example:
+        >>> from magnet.evaluation_new import coerce_provenance
+        >>> coerce_provenance(None) is None
+        True
+        >>> coerce_provenance('{endpoint_kind: mock}')
+        {'endpoint_kind': 'mock'}
+        >>> coerce_provenance({'a': 1})
+        {'a': 1}
+    """
+    if raw is None or raw == '':
+        return None
+    if isinstance(raw, dict):
+        return dict(raw)
+    value = kwutil.Yaml.coerce(raw, backend='pyyaml')
+    if not isinstance(value, dict):
+        raise ValueError(
+            f'provenance must be a mapping; got {type(value).__name__}'
+        )
+    return value
 
 
 def _claim_execution_hash(symbols: Symbols, measured: set[str]) -> str:
@@ -1099,10 +1146,12 @@ def evaluate_new_recipe(
     recipe: NewEvaluationRecipe,
     *,
     verbose: bool = False,
+    provenance: Dict[str, Any] | None = None,
     **schedule_options: Any,
 ) -> NewEvaluationResultCard:
     """Schedule requested work, then evaluate the claim over available evidence."""
     _check_new_evaluation_recipe(recipe)
+    provenance = coerce_provenance(provenance)
 
     # Resolve static theory references before scheduling anything. A broken
     # annotation or index should fail before jobs run, not after.
@@ -1174,6 +1223,7 @@ def evaluate_new_recipe(
             cell_results=[],
             requested_work=requested_work,
             evidence_scope=recipe.evidence_scope,
+            provenance=provenance,
         )
         recipe.result_card = result_card
         recipe.claim.status = 'NOT_EVALUATED'
@@ -1268,6 +1318,7 @@ def evaluate_new_recipe(
         requested_work=requested_work,
         evidence_scope=recipe.evidence_scope,
         evidence_discovered=len(discovered_evidence_rows),
+        provenance=provenance,
     )
 
     with safer.open(

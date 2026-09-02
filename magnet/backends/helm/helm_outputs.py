@@ -9,6 +9,8 @@ import pandas as pd
 import kwutil
 import dacite
 
+from magnet.exceptions import require_optional
+require_optional('helm', 'helm', 'the HELM output loaders')
 from helm.benchmark.adaptation.scenario_state import ScenarioState
 from helm.benchmark.run_spec import RunSpec
 from helm.benchmark.metrics.statistic import Stat

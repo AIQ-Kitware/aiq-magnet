@@ -1,3 +1,5 @@
+import pytest
+pytest.importorskip('helm', reason="needs the helm extra: pip install 'aiq-magnet[helm]'")  # noqa: E402
 import importlib
 import inspect
 import pkgutil

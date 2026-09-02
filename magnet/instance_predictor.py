@@ -1,6 +1,8 @@
 import rich
 from rich.markup import escape
 import pandas as pd
+from magnet.exceptions import require_optional
+require_optional('helm', 'helm', 'instance predictors read HELM per-instance stats')
 from helm.benchmark.metrics.statistic import Stat
 
 from magnet.predictor import Predictor

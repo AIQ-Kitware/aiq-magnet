@@ -7,6 +7,24 @@ This early version of the MAGNET package is intended to provide a look into how 
 
 **IMPORTANT:** As this is a preliminary release, interfaces are subject to change.
 
+## Installing
+
+The base package is the card and claim machinery, the theory annotations,
+and kwdagger execution with containers. Anything that reads HELM output or
+leases inference endpoints is an extra, so a team whose card is a kwdagger
+pipeline over its own artifacts does not pull torch to run it:
+
+```bash
+pip install aiq-magnet              # cards, claims, theory, kwdagger, containers
+pip install 'aiq-magnet[helm]'      # + HELM output loaders, predictors, materialize, demo data (crfm-helm, torch)
+pip install 'aiq-magnet[leasing]'   # + infer-stack, for --per_node_leasing
+pip install 'aiq-magnet[optional]'  # helm + leasing + plotly (what [optional] always meant)
+pip install 'aiq-magnet[all]'       # everything, plus the test tools
+```
+
+Importing a HELM-backed module without the extra raises
+``MissingOptionalDependency`` naming the extra to install.
+
 ## Developer Quick Start
 
 Quick start: install and run tests
@@ -14,7 +32,7 @@ Quick start: install and run tests
 ```bash
 uv venv --python 3.11 --seed .venv-311-magnet
 source .venv-311-magnet/bin/activate
-uv pip install .[tests]
+uv pip install '.[all]'
 pytest
 ```
 

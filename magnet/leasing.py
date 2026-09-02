@@ -266,6 +266,22 @@ class LeasedProcessNode(ContainerProcessNode):
         return self._lease_prefix(names) + ' \\\n    ' + command
 
     def _lease_prefix(self, names: list[str]) -> str:
+        # The prefix is shell text run later, on a host that may not be this
+        # one, so this is a courtesy check, not a guarantee: it catches the
+        # common case where the environment rendering the DAG is the one that
+        # will run it and infer-stack was never installed (the `leasing`
+        # extra). Without it the failure is a bare `infer-stack: command not
+        # found` in a job log, after the DAG has been submitted.
+        import shutil
+        import sys
+        from pathlib import Path
+        beside_python = Path(sys.executable).parent / 'infer-stack'
+        if shutil.which('infer-stack') is None and not beside_python.exists():
+            from magnet.exceptions import MissingOptionalDependency
+            raise MissingOptionalDependency(
+                "per-node leasing renders an `infer-stack run` prefix, but "
+                "no `infer-stack` executable is on PATH. Install it with: "
+                "pip install 'aiq-magnet[leasing]'")
         # ONE --endpoint with a comma-separated list. `infer-stack run` takes a
         # single string, so repeating the flag does not accumulate -- the last
         # one silently wins and every other model goes unleased, which stays

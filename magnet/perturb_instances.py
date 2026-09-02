@@ -3,6 +3,8 @@ import os
 import json
 from typing import List, Dict, Any
 
+from magnet.exceptions import require_optional
+require_optional('helm', 'helm', 'HELM perturbations')
 from helm.common.general import asdict_without_nones
 from helm.benchmark.run_expander import PERTURBATION_SPECS_DICT
 from helm.benchmark.augmentations.perturbation import (

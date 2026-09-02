@@ -2,6 +2,8 @@ import json
 from typing import List, Dict, Any
 
 import dacite
+from magnet.exceptions import require_optional
+require_optional('helm', 'helm', 'HELM scenarios')
 from helm.benchmark.scenarios.scenario import (
     Scenario,
     Instance,
