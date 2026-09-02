@@ -58,6 +58,7 @@ class MetricSymbolSchema(BaseModel):
     aggregation_strategy: MetricAggregationStrategySchema
 
 class SymbolMetadataSchema(BaseModel):
+    kind: Literal["model", "dataset", "metric"] | None = None
     display: bool | None = None
     display_name: str | None = None
     define_metric: MetricSymbolSchema | None = None
