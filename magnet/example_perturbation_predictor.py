@@ -1,6 +1,9 @@
 import argparse
 
-from sklearn.linear_model import LinearRegression
+from magnet.exceptions import require_optional
+require_optional('sklearn', 'helm', 'the perturbation predictor\'s linear fit')
+
+from sklearn.linear_model import LinearRegression  # noqa: E402
 import pandas as pd
 
 from magnet.predictor import RunPredictor, RunPrediction
