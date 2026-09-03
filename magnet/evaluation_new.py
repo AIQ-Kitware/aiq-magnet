@@ -1182,9 +1182,6 @@ def evaluate_new_recipe(
     processor = KWDaggerProcessor(
         recipe.kwdagger, root_dpath=recipe.kwdagger_dpath
     )
-    result_node = processor.result_node
-    if result_node is None:
-        raise ValueError('recipe must declare kwdagger.result_node')
 
     # Scheduling is one finite operational request. It may add new results to
     # the shared kwdagger store, reuse results that already exist, or leave
@@ -1237,6 +1234,9 @@ def evaluate_new_recipe(
     # KWDagger aggregate discovers the available result store independently of
     # this request. The recipe may then use the request as an optional filter;
     # the compiled schedule is never the result-discovery mechanism.
+    result_node = processor.result_node
+    if result_node is None:
+        raise ValueError('recipe must declare kwdagger.result_node')
     discovered_evidence_rows = processor.load_available_result_rows()
     evidence_rows = _select_evidence_rows(
         discovered_evidence_rows,
