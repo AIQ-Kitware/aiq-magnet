@@ -4,17 +4,19 @@
 ./run.sh
 ```
 
-That is the whole workflow. It runs on a laptop with no GPU, no model weights
-and nothing downloaded first: the endpoints are simulated, and the container
-image for them is pulled on demand.
+That is the whole workflow. By default it serves the real SmolLM2 135M and
+360M checkpoints with vLLM on an NVIDIA GPU, and runs the MAGNET node commands
+inside the example container.
 
 ```bash
-./run.sh --gpu          # the same card, real SmolLM2 weights served by vLLM
-./run.sh --container    # run the node commands in a container too
-./run.sh --dry_run=1    # compile the campaign without running it
+./run.sh --mock                    # GPU-free simulator; nodes stay containerized
+./run.sh --no-container            # real models, but run node commands on the host
+./run.sh --mock --no-container     # simulator plus host node commands
+./run.sh --dry_run=1               # compile using the default GPU/container mode
 ```
 
-The flags combine; anything else goes through to `magnet evaluate_new`.
+`--mock` and `--no-container` are independent and combine. Anything else goes
+through to `magnet evaluate_new`.
 
 `run.sh` expects `magnet` and `infer-stack` to already be installed in the
 active environment. Installing MAGNET with its leasing extra provides both:
@@ -23,8 +25,13 @@ active environment. Installing MAGNET with its leasing extra provides both:
 pip install 'aiq-magnet[leasing]'
 ```
 
+The default path also requires a usable NVIDIA GPU visible to `nvidia-smi` and
+Docker for the node container. `run.sh` checks both before scheduling anything.
+Use `--mock` when no GPU is available, and `--no-container` when the node
+commands should run directly on the host.
+
 Then infer-stack needs one machine-level backend choice. `run.sh` checks this
-before scheduling anything and prints the command if it is missing:
+before building or scheduling anything and prints the command if it is missing:
 
 ```bash
 infer-stack config init --yes --backend compose
@@ -84,10 +91,11 @@ reads.
 
 ## Containers
 
-`./run.sh --container` builds the `Dockerfile` beside this file and runs every
-node command inside it. Built rather than named, because an image tag that
-exists on the machine that built it is exactly the kind of thing that does not
-travel.
+`./run.sh` builds the `Dockerfile` beside this file and runs every node command
+inside it by default. `./run.sh --no-container` opts out and runs those commands
+on the host instead. The image is built rather than named, because an image tag
+that exists on the machine that built it is exactly the kind of thing that does
+not travel.
 
 The image is small — a slim Python base plus MAGNET's core, no GPU and no
 weights — because parsing HELM output and leasing endpoints are both extras
@@ -97,18 +105,18 @@ all that reaches inside is `OPENAI_BASE_URL` and `OPENAI_API_KEY`, and the node
 talks to that endpoint over plain HTTP. If the image ever needs infer-stack,
 something has been layered the wrong way round.
 
-Observed with `--container` on the guest VM: four containerized node cells, two
-leases, and the leases only on `ask`.
+Observed with the default container mode on the guest VM: four containerized
+node cells, two leases, and the leases only on `ask`.
 
 ## Simulated or real
 
 The two catalogs beside this file declare **the same two aliases**, which is
 the demonstration: the card names `smol-135` and `smol-360` and never learns
-which one answered. `run.sh` picks `catalog-mock.yaml`; `--gpu` picks
-`catalog.yaml`. Switching between a simulator and real weights is a catalog,
-not an edit.
+which one answered. `run.sh` picks `catalog.yaml`; `--mock` picks
+`catalog-mock.yaml`. Switching between real weights and a simulator is a
+catalog choice, not an edit to the card.
 
-Observed on the guest VM (2026-09-02, simulated, no GPU):
+Observed on the guest VM (2026-09-02, `--mock`, no GPU):
 
 ```
 RESULT:      VERIFIED
@@ -157,7 +165,7 @@ kwdagger, containers or leases.
 | | |
 |---|---|
 | `run.sh` | the whole workflow |
-| `Dockerfile` | the image `--container` builds: slim Python plus MAGNET core |
+| `Dockerfile` | the node image `run.sh` builds by default: slim Python plus MAGNET core |
 | `smollm_kwdagger.yaml` | the card: claim, evidence scope, sweep |
 | `pipeline.py` | the DAG: three nodes, one gather edge, which one leases |
 | `cli/make_items.py` | the dummy dataset, generated from a seed |

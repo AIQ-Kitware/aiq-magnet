@@ -198,7 +198,62 @@ def test_run_sh_checks_commands_without_invoking_them(tmp_path):
     _write_executable(bindir / 'infer-stack', infer_stack_script)
     _write_executable(
         bindir / 'python',
-        f'#!/bin/sh\necho "python:$*" >> {calls}\nexit 0\n',
+        '#!/bin/sh\n'
+        f'printf "python:catalog=%s args=%s\\n" "$INFER_STACK_CATALOG" "$*" >> {calls}\n'
+        'exit 0\n',
+    )
+
+    env = _child_env()
+    env['PATH'] = f'{bindir}:/usr/bin:/bin'
+    run_sh = CARD_FPATH.parent / 'run.sh'
+    proc = subprocess.run(
+        ['bash', run_sh, '--mock', '--no-container', '--dry_run=1'],
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    invoked = calls.read_text().splitlines()
+    assert not any(line.startswith('magnet:') for line in invoked)
+    assert 'infer-stack:status' in invoked
+    python_call = next(line for line in invoked if line.startswith('python:'))
+    assert 'catalog-mock.yaml' in python_call
+    assert '--container_image=' not in python_call
+    assert '--per_node_leasing ' in python_call + ' '
+    assert '--per_node_leasing=1' not in python_call
+
+
+def test_run_sh_defaults_to_gpu_and_container(tmp_path):
+    """The zero-flag path selects real weights and containerized node commands."""
+    bindir = ub.Path(tmp_path) / 'bin'
+    bindir.mkdir()
+    calls = ub.Path(tmp_path) / 'calls.txt'
+
+    _write_executable(
+        bindir / 'magnet',
+        f'#!/bin/sh\necho "magnet:$*" >> {calls}\nexit 97\n',
+    )
+    _write_executable(
+        bindir / 'infer-stack',
+        '#!/bin/sh\n'
+        f'printf "infer-stack:%s\\n" "$*" >> {calls}\n'
+        'if [ "$1" = status ]; then printf "backend: compose\\n"; exit 0; fi\n'
+        'exit 98\n',
+    )
+    _write_executable(
+        bindir / 'nvidia-smi',
+        '#!/bin/sh\n'
+        f'printf "nvidia-smi:%s\\n" "$*" >> {calls}\n'
+        'if [ "$1" = -L ]; then printf "GPU 0: Fake GPU (UUID: GPU-fake)\\n"; exit 0; fi\n'
+        'exit 2\n',
+    )
+    _write_executable(
+        bindir / 'docker',
+        f'#!/bin/sh\nprintf "docker:%s\\n" "$*" >> {calls}\nexit 0\n',
+    )
+    _write_executable(
+        bindir / 'python',
+        '#!/bin/sh\n'
+        f'printf "python:catalog=%s args=%s\\n" "$INFER_STACK_CATALOG" "$*" >> {calls}\n'
+        'exit 0\n',
     )
 
     env = _child_env()
@@ -210,11 +265,49 @@ def test_run_sh_checks_commands_without_invoking_them(tmp_path):
     )
     assert proc.returncode == 0, proc.stderr
     invoked = calls.read_text().splitlines()
-    assert not any(line.startswith('magnet:') for line in invoked)
-    assert 'infer-stack:status' in invoked
+    assert 'nvidia-smi:-L' in invoked
+    assert any(line.startswith('docker:build ') for line in invoked)
     python_call = next(line for line in invoked if line.startswith('python:'))
-    assert '--per_node_leasing ' in python_call + ' '
-    assert '--per_node_leasing=1' not in python_call
+    assert 'catalog.yaml' in python_call
+    assert 'catalog-mock.yaml' not in python_call
+    assert '--container_image=magnet-smollm-example:latest' in python_call
+    assert '--container_mounts=' in python_call
+
+
+def test_run_sh_default_requires_a_gpu(tmp_path):
+    """Real-model mode fails before backend/build work when no GPU is usable."""
+    bindir = ub.Path(tmp_path) / 'bin'
+    bindir.mkdir()
+    calls = ub.Path(tmp_path) / 'calls.txt'
+
+    _write_executable(bindir / 'magnet', '#!/bin/sh\nexit 97\n')
+    _write_executable(
+        bindir / 'infer-stack',
+        f'#!/bin/sh\necho "infer-stack:$*" >> {calls}\nprintf "backend: compose\\n"\n',
+    )
+    _write_executable(
+        bindir / 'nvidia-smi',
+        f'#!/bin/sh\necho "nvidia-smi:$*" >> {calls}\nexit 1\n',
+    )
+    _write_executable(
+        bindir / 'python',
+        f'#!/bin/sh\necho "python:$*" >> {calls}\nexit 0\n',
+    )
+
+    env = _child_env()
+    env['PATH'] = f'{bindir}:/usr/bin:/bin'
+    run_sh = CARD_FPATH.parent / 'run.sh'
+    proc = subprocess.run(
+        ['bash', run_sh, '--no-container', '--dry_run=1'],
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 1
+    assert 'No usable NVIDIA GPU was detected' in proc.stderr
+    assert './run.sh --mock' in proc.stderr
+    invoked = calls.read_text().splitlines()
+    assert 'nvidia-smi:-L' in invoked
+    assert not any(line.startswith('infer-stack:') for line in invoked)
+    assert not any(line.startswith('python:') for line in invoked)
 
 
 def test_run_sh_reports_all_missing_commands(tmp_path):

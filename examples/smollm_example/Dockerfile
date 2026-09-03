@@ -1,6 +1,7 @@
 # The image this example's node commands run in.
 #
-#   ./run.sh --container        builds this and uses it
+#   ./run.sh                    builds this and uses it by default
+#   ./run.sh --no-container     skips it and runs node commands on the host
 #
 # Small on purpose. MAGNET's core is cards, claims and kwdagger execution --
 # `pip install .` with no extras -- so this is a slim Python base plus about
