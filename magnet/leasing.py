@@ -10,7 +10,9 @@ from __future__ import annotations
 import dataclasses
 import os
 import shlex
-from typing import Any
+from collections.abc import Mapping
+
+from kwdagger import Pipeline
 
 
 __all__ = [
@@ -32,9 +34,9 @@ class LeaseSettings:
     #: Restrict leased nodes to the GPUs allocated by Slurm.
     allowed_gpus: bool = True
 
-    def apply(self, pipeline: Any) -> None:
+    def apply(self, pipeline: Pipeline) -> None:
         """Apply these invocation settings to every leasable node in a DAG."""
-        for node in (getattr(pipeline, 'node_dict', None) or {}).values():
+        for node in pipeline.node_dict.values():
             if isinstance(node, LeaseCapability):
                 node.apply_lease_settings(self)
 
@@ -76,6 +78,9 @@ class LeaseCapability:
     endpoint aliases. Override :meth:`resolve_lease_endpoints` when aliases are
     derived differently.
     """
+
+    # Supplied by kwdagger.ProcessNode in concrete compositions.
+    final_config: Mapping[str, object] | None
 
     endpoint_params: tuple[str, ...] = ()
     lease_ttl: str | None = '8h'

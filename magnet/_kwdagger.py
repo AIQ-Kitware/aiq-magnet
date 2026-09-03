@@ -6,13 +6,29 @@ Everything that knows about DAGs, schedules and queues lives here, so
 """
 import json
 import os
-from typing import Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple, TypedDict, Unpack
 
 import ubelt as ub
 from kwdagger import Pipeline, ProcessNode
 from kwdagger.pipeline import coerce_pipeline
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
+
+if TYPE_CHECKING:
+    from magnet.containers import ContainerSettings
+    from magnet.leasing import LeaseSettings
+
+
+class KWDaggerScheduleOptions(TypedDict, total=False):
+    """KWDagger scheduler options exposed by the new evaluator."""
+
+    backend: str
+    tmux_workers: int
+    skip_existing: bool
+    cache: bool
+    max_configs: int | None
+    print_commands: bool | str
+    queue_name: str
 
 __all__ = [
     'GenericPipelineProcessor',
@@ -136,6 +152,8 @@ class GenericPipelineProcessor:
         if not self.symbols:
             self.dispatch()
 
+        assert self.dag is not None
+        assert self.compiled_dag is not None
         node_name = next(iter(self.dag.node_dict))
         out_path = self.dag.node_dict[node_name].out_paths['results_fpath']
 
@@ -220,14 +238,14 @@ class KWDaggerProcessor:
     """
 
     def __init__(
-        self, kwdagger_config: Dict[str, Any], root_dpath: ub.Path
+        self, kwdagger_config: Dict[str, Any], root_dpath: str | os.PathLike[str]
     ) -> None:
         # ``result_node`` is a MAGNET-level declaration, not part of the
         # ``kwdagger schedule --params`` payload.
         self.params = {
             k: v for k, v in kwdagger_config.items() if k != 'result_node'
         }
-        self.result_node = kwdagger_config.get('result_node')
+        self.result_node: str | None = kwdagger_config.get('result_node')
         self.root_dpath = ub.Path(root_dpath)
         self.results = []
         self.symbols = []
@@ -238,9 +256,9 @@ class KWDaggerProcessor:
         self,
         *,
         dry_run: bool = False,
-        container_settings: Any = None,
-        lease_settings: Any = None,
-        **schedule_options: Any,
+        container_settings: 'ContainerSettings | None' = None,
+        lease_settings: 'LeaseSettings | None' = None,
+        **schedule_options: Unpack[KWDaggerScheduleOptions],
     ) -> None:
         """Submit this invocation's requested experiment campaign.
 
@@ -490,7 +508,7 @@ def _is_missing_aggregate_value(value: Any) -> bool:
 
 
 def _check_container_settings_apply(
-    pipeline: Any, settings: Any = None
+    pipeline: Pipeline, settings: 'ContainerSettings | None' = None
 ) -> None:
     """
     Refuse to run when ``--container_image`` would do nothing.
@@ -514,7 +532,7 @@ def _check_container_settings_apply(
     if not settings.image:
         return
 
-    node_dict = getattr(pipeline, 'node_dict', None) or {}
+    node_dict = pipeline.node_dict
     inert = sorted(
         name for name, node in node_dict.items()
         if not isinstance(node, containers.ContainerCapability)

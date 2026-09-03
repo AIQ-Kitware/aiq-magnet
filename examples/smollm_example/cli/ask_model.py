@@ -15,15 +15,24 @@ CommandLine:
             --out_fpath=answers.json
 """
 
+from __future__ import annotations
+
 import json
 import os
 import re
 import time
 import urllib.error
 import urllib.request
+from typing import TypedDict, cast
 
 import kwconf
 import ubelt as ub
+
+from smollm_example.cli._types import (
+    AnswerRecord,
+    AnswersPayload,
+    ItemsPayload,
+)
 
 __all__ = ['served_model_name', 'ask_one', 'AskModelCLI']
 
@@ -32,6 +41,18 @@ __all__ = ['served_model_name', 'ask_one', 'AskModelCLI']
 #: every request would otherwise fail one at a time with a connection error.
 BASE_URL_ENVVAR = 'OPENAI_BASE_URL'
 API_KEY_ENVVAR = 'OPENAI_API_KEY'
+
+
+class _ChatMessage(TypedDict, total=False):
+    content: str
+
+
+class _ChatChoice(TypedDict, total=False):
+    message: _ChatMessage
+
+
+class _ChatResponse(TypedDict, total=False):
+    choices: list[_ChatChoice]
 
 
 def served_model_name(alias: str) -> str:
@@ -64,8 +85,15 @@ def served_model_name(alias: str) -> str:
     return os.environ.get(f'INFER_STACK_ENDPOINT_{slug}') or alias
 
 
-def ask_one(base_url, api_key, model, prompt, max_tokens, temperature,
-            timeout):
+def ask_one(
+    base_url: str,
+    api_key: str,
+    model: str,
+    prompt: str,
+    max_tokens: int,
+    temperature: float,
+    timeout: float,
+) -> tuple[str, float, str]:
     """
     One chat completion, returning the text and how long it took.
 
@@ -93,7 +121,10 @@ def ask_one(base_url, api_key, model, prompt, max_tokens, temperature,
     started = time.monotonic()
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.loads(response.read().decode('utf-8'))
+            payload = cast(
+                _ChatResponse,
+                json.loads(response.read().decode('utf-8')),
+            )
     except (urllib.error.URLError, TimeoutError, OSError) as ex:
         return '', time.monotonic() - started, f'{type(ex).__name__}: {ex}'
     except json.JSONDecodeError as ex:
@@ -123,9 +154,9 @@ def _normalize(text: str) -> str:
 class AskModelCLI(kwconf.Config):
     """Ask one leased endpoint every question in the dataset."""
 
-    endpoint: str = kwconf.Value(
+    endpoint: str | None = kwconf.Value(
         None, help='catalog alias this node leased; also the model asked')
-    items_fpath: str = kwconf.Value(
+    items_fpath: str | None = kwconf.Value(
         None, help='dataset written by make_items',
         tags=['in_path'])
     max_tokens: int = kwconf.Value(16, help='cap on the reply length')
@@ -136,7 +167,9 @@ class AskModelCLI(kwconf.Config):
         tags=['out_path', 'primary'])
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(
+        cls, argv: bool | list[str] = True, **kwargs: object
+    ) -> None:
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
 
         base_url = os.environ.get(BASE_URL_ENVVAR)
@@ -157,10 +190,13 @@ class AskModelCLI(kwconf.Config):
         model = served_model_name(alias)
         api_key = os.environ.get(API_KEY_ENVVAR, '')
 
-        items = json.loads(
-            ub.Path(config['items_fpath']).read_text())['items']
+        items_payload = cast(
+            ItemsPayload,
+            json.loads(ub.Path(config['items_fpath']).read_text()),
+        )
+        items = items_payload['items']
 
-        answers = []
+        answers: list[AnswerRecord] = []
         for item in items:
             text, elapsed, error = ask_one(
                 base_url, api_key, model, item['prompt'],
@@ -179,7 +215,7 @@ class AskModelCLI(kwconf.Config):
         answered = [a for a in answers if a['answer']]
         exact = [a for a in answered if a['normalized'] == a['expected']]
         total = len(answers) or 1
-        payload = {
+        payload: AnswersPayload = {
             'result': {'metrics': {
                 'endpoint': alias,
                 'served_model': model,

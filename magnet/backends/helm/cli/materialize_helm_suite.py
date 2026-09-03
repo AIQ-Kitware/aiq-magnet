@@ -25,11 +25,30 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING, TypedDict, cast
 
 import kwconf
 import ubelt as ub
 from loguru import logger
+
+if TYPE_CHECKING:
+    from magnet.backends.helm.cli.download_helm_results import HelmRemoteStore
+
+
+class ManifestMember(TypedDict):
+    source: str
+    how: str
+
+
+class MaterializeManifest(TypedDict):
+    benchmark: str
+    version: str
+    runs: str | None
+    precomputed_roots: list[str]
+    members: dict[str, ManifestMember]
+
 
 __all__ = ['MaterializeHelmSuiteConfig', 'materialize_suite', 'main']
 
@@ -38,8 +57,8 @@ class MaterializeHelmSuiteConfig(kwconf.Config):
     """Materialize every run of a HELM benchmark version that matches a pattern."""
 
     benchmark: str = kwconf.Value('lite', help='HELM benchmark name, e.g. lite, heim, ewok.')
-    version: str = kwconf.Value(None, help='Benchmark version, e.g. v1.0.0.')
-    runs: str = kwconf.Value(
+    version: str | None = kwconf.Value(None, help='Benchmark version, e.g. v1.0.0.')
+    runs: str | None = kwconf.Value(
         None,
         help=(
             'Which runs: a kwutil MultiPattern over run ids, e.g. '
@@ -70,7 +89,7 @@ class MaterializeHelmSuiteConfig(kwconf.Config):
         'symlink', choices=['symlink', 'copy'],
         help='How a precomputed run is placed into the suite.',
     )
-    suite_dpath: str = kwconf.Value(
+    suite_dpath: str | None = kwconf.Value(
         None, help='Output suite directory; the downstream node reads this.'
     )
     done_fpath: str | None = kwconf.Value(
@@ -81,17 +100,19 @@ class MaterializeHelmSuiteConfig(kwconf.Config):
     )
 
 
-def _coerce_roots(raw) -> list[Path]:
+def _coerce_roots(raw: str | Sequence[str] | None) -> list[Path]:
     if raw is None:
         return []
-    if isinstance(raw, (list, tuple)):
-        items = [str(x) for x in raw]
+    if isinstance(raw, str):
+        items = raw.split(':')
     else:
-        items = str(raw).split(':')
+        items = list(raw)
     return [Path(x).expanduser() for x in items if x.strip()]
 
 
-def _local_candidates(roots, benchmark, version) -> dict[str, Path]:
+def _local_candidates(
+    roots: Sequence[Path], benchmark: str, version: str
+) -> dict[str, Path]:
     """run id -> directory, first root wins."""
     found: dict[str, Path] = {}
     for root in roots:
@@ -104,7 +125,7 @@ def _local_candidates(roots, benchmark, version) -> dict[str, Path]:
     return found
 
 
-def _make_store(bucket: str):
+def _make_store(bucket: str) -> 'HelmRemoteStore':
     from magnet.backends.helm.cli.download_helm_results import HelmRemoteStore
     local = Path(bucket).expanduser()
     if local.is_dir():
@@ -113,7 +134,9 @@ def _make_store(bucket: str):
     return HelmRemoteStore(bucket)
 
 
-def materialize_suite(config) -> dict:
+def materialize_suite(
+    config: MaterializeHelmSuiteConfig,
+) -> MaterializeManifest:
     """Materialize the selected HELM runs and return the manifest."""
     import kwutil
     from magnet.backends.helm.cli.download_helm_results import filter_runs
@@ -133,7 +156,7 @@ def materialize_suite(config) -> dict:
 
     local = _local_candidates(roots, benchmark, version)
     remote_ids: list[str] = []
-    store = None
+    store: HelmRemoteStore | None = None
     need_remote = config.download == 'always' or (config.download == 'auto' and (not local or pattern is None))
     if config.download != 'never' and (need_remote or pattern is not None):
         # The remote listing is what a pattern is matched against when the
@@ -147,7 +170,9 @@ def materialize_suite(config) -> dict:
             store = None
     universe = sorted(set(local) | set(remote_ids))
     if pattern is not None:
-        wanted = filter_runs(universe, pattern)
+        wanted: list[str] = [
+            str(run_id) for run_id in filter_runs(universe, pattern)
+        ]
     else:
         wanted = universe
     if not wanted:
@@ -157,9 +182,14 @@ def materialize_suite(config) -> dict:
         )
 
     suite_dpath.mkdir(parents=True, exist_ok=True)
-    manifest = {'benchmark': benchmark, 'version': version, 'runs': config.runs,
-                'precomputed_roots': [os.fspath(r) for r in roots], 'members': {}}
-    to_fetch = []
+    manifest: MaterializeManifest = {
+        'benchmark': benchmark,
+        'version': version,
+        'runs': config.runs,
+        'precomputed_roots': [os.fspath(r) for r in roots],
+        'members': {},
+    }
+    to_fetch: list[str] = []
     for run_id in wanted:
         dst = suite_dpath / run_id
         if config.download != 'always' and run_id in local:
@@ -201,8 +231,13 @@ def materialize_suite(config) -> dict:
     return manifest
 
 
-def main(argv=None, **kwargs) -> int:
-    config = MaterializeHelmSuiteConfig.cli(argv=argv, data=kwargs, strict=True)
+def main(
+    argv: bool | list[str] | None = None, **kwargs: object
+) -> int:
+    config = cast(
+        MaterializeHelmSuiteConfig,
+        MaterializeHelmSuiteConfig.cli(argv=argv, data=kwargs, strict=True),
+    )
     materialize_suite(config)
     return 0
 

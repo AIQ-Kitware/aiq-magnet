@@ -30,7 +30,7 @@ _RECIPE = {
 
 
 def _write(tmp_path, **overrides):
-    card = dict(_RECIPE)
+    card: dict[str, object] = dict(_RECIPE)
     card.update(overrides)
     card.pop('_drop', None)
     for key in overrides.get('_drop', ()):
@@ -112,7 +112,7 @@ def test_the_requirement_does_not_reach_legacy_cards(tmp_path):
     """Legacy cards keep working; the requirement is on recipes only."""
     from magnet.evaluation import EvaluationCard
 
-    card = dict(_RECIPE)
+    card: dict[str, object] = dict(_RECIPE)
     del card['name']
     del card['kwdagger']
     card['pipeline'] = {'emit': {'command': 'true'}}

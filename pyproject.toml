@@ -134,6 +134,9 @@ ini_options.addopts = "--xdoctest --xdoctest-style=google --ignore-glob=docs"
 ini_options.pythonpath = [ "examples" ]
 ini_options.norecursedirs = ".git build __pycache__ dev docs dockerfiles"
 
+[tool.ty.environment]
+extra-paths = [ "./examples" ]
+
 [tool.coverage]
 report.exclude_lines = [
   ".*  # nocover",

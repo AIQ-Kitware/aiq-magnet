@@ -1,3 +1,6 @@
+from types import ModuleType
+
+
 class SymbolResolutionError(ValueError):
     """
     Used when symbols fail to evaluate
@@ -11,7 +14,9 @@ class MissingOptionalDependency(ImportError):
     """
 
 
-def require_optional(module, extra, purpose=None):
+def require_optional(
+    module: str, extra: str, purpose: str | None = None
+) -> ModuleType:
     """
     Import ``module`` or raise :class:`MissingOptionalDependency` naming the
     extra that provides it.

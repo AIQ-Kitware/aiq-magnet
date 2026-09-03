@@ -18,13 +18,15 @@ that a claim is false.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, TypedDict, Unpack, cast
 
 import kwconf
 import kwutil
@@ -36,7 +38,11 @@ from pydantic import ValidationError
 from rich import print
 
 from magnet import containers, leasing
-from magnet._kwdagger import KWDaggerProcessor, _resolve_pipeline_path
+from magnet._kwdagger import (
+    KWDaggerProcessor,
+    KWDaggerScheduleOptions,
+    _resolve_pipeline_path,
+)
 from magnet.evaluation import (
     SAFER_USE_TEMPFILE,
     Claim,
@@ -53,6 +59,17 @@ from magnet.utils.util_logger import setup_logging
 
 #: kwdagger's own default, used when there is no GPU to derive a cap from.
 DEFAULT_TMUX_WORKERS = 8
+
+Provenance = dict[str, object]
+ProvenanceInput = Mapping[str, object] | str | os.PathLike[str] | None
+
+
+class EvaluationScheduleOptions(KWDaggerScheduleOptions, total=False):
+    """Scheduler options accepted by :class:`NewEvaluationRecipe`."""
+
+    dry_run: bool
+    container_settings: containers.ContainerSettings
+    lease_settings: leasing.LeaseSettings
 
 __all__ = [
     'ClaimResultNamespace',
@@ -78,7 +95,7 @@ class NewEvaluationCLI(kwconf.Config):
     `magnet evaluate_legacy` during the migration period.
     """
 
-    path: str = kwconf.Value(
+    path: str | None = kwconf.Value(
         None, required=True, position=1, help='Path to evaluation recipe YAML'
     )
 
@@ -288,7 +305,9 @@ class NewEvaluationCLI(kwconf.Config):
     )
 
     @classmethod
-    def main(cls, argv: list[str] | None = None, **kwargs: Any) -> None:
+    def main(
+        cls, argv: list[str] | None = None, **kwargs: object
+    ) -> None:
         """Run one evaluation.
 
         The CLI returns ``None`` so its return value is not interpreted as a
@@ -302,6 +321,7 @@ class NewEvaluationCLI(kwconf.Config):
             special_options=False,
         )
 
+        assert args.path is not None
         validate = args['validate']
         if validate == 'only':
             try:
@@ -323,20 +343,15 @@ class NewEvaluationCLI(kwconf.Config):
         if args.evidence_scope:
             recipe.set_evidence_scope(args.evidence_scope)
 
-        schedule_options = {
-            key: args[key]
-            for key in [
-                'backend',
-                'skip_existing',
-                'cache',
-                'max_configs',
-                'print_commands',
-                'dry_run',
-            ]
+        schedule_options: EvaluationScheduleOptions = {
+            'backend': args['backend'],
+            'skip_existing': bool(args['skip_existing']),
+            'cache': bool(args['cache']),
+            'max_configs': args['max_configs'],
+            'print_commands': args['print_commands'],
+            'dry_run': bool(args['dry_run']),
+            'tmux_workers': coerce_tmux_workers(args['tmux_workers']),
         }
-        schedule_options['tmux_workers'] = coerce_tmux_workers(
-            args['tmux_workers']
-        )
         # Apply execution settings to DAG nodes when the recipe is scheduled.
         schedule_options['container_settings'] = (
             containers.ContainerSettings.coerce(
@@ -659,7 +674,7 @@ class NewEvaluationResultCard:
     evidence_scope: str = 'all'
     evidence_discovered: int = 0
     #: Caller-supplied metadata written to the verdict unchanged.
-    provenance: Dict[str, Any] | None = None
+    provenance: Provenance | None = None
 
     @property
     def cell_result_ids(self) -> List[str]:
@@ -790,18 +805,18 @@ class NewEvaluationRecipe(EvaluationCard):
             self._run_hash_cached = f'{self._recipe_hash}_{timestamp}'
         return self._run_hash_cached
 
-    def evaluate(
+    def evaluate(  # ty: ignore[invalid-method-override]
         self,
         verbose: bool = False,
-        provenance: Dict[str, Any] | None = None,
-        **schedule_options: Any,
+        provenance: ProvenanceInput = None,
+        **schedule_options: Unpack[EvaluationScheduleOptions],
     ) -> NewEvaluationResultCard:
         return evaluate_new_recipe(
             self, verbose=verbose, provenance=provenance, **schedule_options
         )
 
 
-def coerce_provenance(raw: Any) -> Dict[str, Any] | None:
+def coerce_provenance(raw: ProvenanceInput) -> Provenance | None:
     """Coerce caller-supplied provenance into a mapping.
 
     Use provenance for facts external to the recipe and result, such as whether
@@ -818,14 +833,14 @@ def coerce_provenance(raw: Any) -> Dict[str, Any] | None:
     """
     if raw is None or raw == '':
         return None
-    if isinstance(raw, dict):
+    if isinstance(raw, Mapping):
         return dict(raw)
-    value = kwutil.Yaml.coerce(raw, backend='pyyaml')
+    value: object = kwutil.Yaml.coerce(raw, backend='pyyaml')
     if not isinstance(value, dict):
         raise ValueError(
             f'provenance must be a mapping; got {type(value).__name__}'
         )
-    return value
+    return cast(Provenance, value)
 
 
 def _claim_execution_hash(symbols: Symbols, measured: set[str]) -> str:
@@ -1015,7 +1030,7 @@ def _link_kwdagger_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) ->
         logger.warning(f'could not link {link} to the DAG root: {ex}')
 
 
-def derive_recipe_name(path) -> str:
+def derive_recipe_name(path: str | os.PathLike[str]) -> str:
     """Derive ``<parent>_<stem>`` when a card does not declare ``name``.
 
     Including the parent avoids collisions between cards with common filenames.
@@ -1061,7 +1076,7 @@ def detected_gpu_count() -> int:
     return sum(1 for line in proc.stdout.splitlines() if line.strip())
 
 
-def coerce_tmux_workers(requested: Any) -> int:
+def coerce_tmux_workers(requested: str | int) -> int:
     """Coerce a worker count, deriving ``auto`` from the local GPU count.
 
     ``auto`` leaves one GPU free when GPUs are present; CPU-only hosts keep
@@ -1129,12 +1144,12 @@ def evaluate_new_recipe(
     recipe: NewEvaluationRecipe,
     *,
     verbose: bool = False,
-    provenance: Dict[str, Any] | None = None,
-    **schedule_options: Any,
+    provenance: ProvenanceInput = None,
+    **schedule_options: Unpack[EvaluationScheduleOptions],
 ) -> NewEvaluationResultCard:
     """Schedule requested work, then evaluate the claim over available evidence."""
     _check_new_evaluation_recipe(recipe)
-    provenance = coerce_provenance(provenance)
+    resolved_provenance = coerce_provenance(provenance)
 
     # Resolve static theory references before scheduling anything. A broken
     # annotation or index should fail before jobs run, not after.
@@ -1167,6 +1182,9 @@ def evaluate_new_recipe(
     processor = KWDaggerProcessor(
         recipe.kwdagger, root_dpath=recipe.kwdagger_dpath
     )
+    result_node = processor.result_node
+    if result_node is None:
+        raise ValueError('recipe must declare kwdagger.result_node')
 
     # Scheduling is one finite operational request. It may add new results to
     # the shared kwdagger store, reuse results that already exist, or leave
@@ -1206,7 +1224,7 @@ def evaluate_new_recipe(
             cell_results=[],
             requested_work=requested_work,
             evidence_scope=recipe.evidence_scope,
-            provenance=provenance,
+            provenance=resolved_provenance,
         )
         recipe.result_card = result_card
         recipe.claim.status = 'NOT_EVALUATED'
@@ -1223,7 +1241,7 @@ def evaluate_new_recipe(
     evidence_rows = _select_evidence_rows(
         discovered_evidence_rows,
         requested_runs,
-        result_node=processor.result_node,
+        result_node=result_node,
         scope=recipe.evidence_scope,
     )
 
@@ -1301,7 +1319,7 @@ def evaluate_new_recipe(
         requested_work=requested_work,
         evidence_scope=recipe.evidence_scope,
         evidence_discovered=len(discovered_evidence_rows),
-        provenance=provenance,
+        provenance=resolved_provenance,
     )
 
     with safer.open(

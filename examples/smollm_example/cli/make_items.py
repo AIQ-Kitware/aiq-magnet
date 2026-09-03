@@ -6,16 +6,20 @@ CommandLine:
         --n_items=8 --out_fpath=items.json
 """
 
+from __future__ import annotations
+
 import json
 import random
 
 import kwconf
 import ubelt as ub
 
+from smollm_example.cli._types import ItemsPayload, QuestionItem
+
 __all__ = ['build_items', 'MakeItemsCLI']
 
 
-def build_items(n_items: int, seed: int) -> list:
+def build_items(n_items: int, seed: int) -> list[QuestionItem]:
     """Build a reproducible question set.
 
     Args:
@@ -37,7 +41,7 @@ def build_items(n_items: int, seed: int) -> list:
         ['expected', 'id', 'prompt']
     """
     rng = random.Random(seed)
-    items = []
+    items: list[QuestionItem] = []
     for index in range(n_items):
         left = rng.randint(1, 9)
         right = rng.randint(1, 9)
@@ -63,10 +67,12 @@ class MakeItemsCLI(kwconf.Config):
     )
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(
+        cls, argv: bool | list[str] = True, **kwargs: object
+    ) -> None:
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
         items = build_items(int(config['n_items']), int(config['seed']))
-        payload = {
+        payload: ItemsPayload = {
             # `result.metrics` is where kwdagger's generic loader looks, so
             # this node needs no `load_result` of its own.
             'result': {'metrics': {

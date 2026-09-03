@@ -10,16 +10,29 @@ CommandLine:
         --answer_fpaths=manifest.txt --out_fpath=comparison.json
 """
 
+from __future__ import annotations
+
 import json
 from collections import defaultdict
+from collections.abc import Sequence
+from os import PathLike
+from typing import cast
 
 import kwconf
 import ubelt as ub
 
+from smollm_example.cli._types import (
+    AnswersPayload,
+    CompareMetrics,
+    ComparePayload,
+)
+
 __all__ = ['read_gathered_answers', 'compare', 'CompareAnswersCLI']
 
 
-def read_gathered_answers(manifest_fpath) -> list:
+def read_gathered_answers(
+    manifest_fpath: str | PathLike[str],
+) -> list[AnswersPayload]:
     """
     Resolve a gather manifest into the answer payloads it names.
 
@@ -29,16 +42,18 @@ def read_gathered_answers(manifest_fpath) -> list:
     Returns:
         list: one parsed ``answers.json`` per upstream cell, in manifest order.
     """
-    payloads = []
+    payloads: list[AnswersPayload] = []
     for line in ub.Path(manifest_fpath).read_text().splitlines():
         line = line.strip()
         if not line:
             continue
-        payloads.append(json.loads(ub.Path(line).read_text()))
+        payloads.append(cast(
+            AnswersPayload, json.loads(ub.Path(line).read_text())
+        ))
     return payloads
 
 
-def compare(payloads: list) -> dict:
+def compare(payloads: Sequence[AnswersPayload]) -> CompareMetrics:
     """
     Coverage and agreement across the gathered endpoints.
 
@@ -71,11 +86,11 @@ def compare(payloads: list) -> dict:
     if not payloads:
         raise ValueError('gather produced no answers to compare')
 
-    endpoints = []
-    coverages = []
-    by_item = defaultdict(list)
+    endpoints: list[str] = []
+    coverages: list[float] = []
+    by_item: defaultdict[int, list[str]] = defaultdict(list)
     for payload in payloads:
-        metrics = payload.get('result', {}).get('metrics', {})
+        metrics = payload['result']['metrics']
         endpoints.append(str(metrics.get('endpoint', '?')))
         coverages.append(float(metrics.get('answered_rate', 0.0)))
         for answer in payload['answers']:
@@ -102,7 +117,7 @@ def compare(payloads: list) -> dict:
 class CompareAnswersCLI(kwconf.Config):
     """Reduce the gathered endpoints to coverage and agreement."""
 
-    answer_fpaths: str = kwconf.Value(
+    answer_fpaths: str | None = kwconf.Value(
         None, help='kwdagger gather manifest of answers.json paths',
         tags=['in_path'])
     out_fpath: str = kwconf.Value(
@@ -110,10 +125,14 @@ class CompareAnswersCLI(kwconf.Config):
         tags=['out_path', 'primary'])
 
     @classmethod
-    def main(cls, argv=True, **kwargs):
+    def main(
+        cls, argv: bool | list[str] = True, **kwargs: object
+    ) -> None:
         config = cls.cli(argv=argv, data=kwargs, strict=True, verbose='auto')
         payloads = read_gathered_answers(config['answer_fpaths'])
-        payload = {'result': {'metrics': compare(payloads)}}
+        payload: ComparePayload = {
+            'result': {'metrics': compare(payloads)}
+        }
         out_fpath = ub.Path(config['out_fpath'])
         out_fpath.parent.ensuredir()
         out_fpath.write_text(json.dumps(payload, indent=2))

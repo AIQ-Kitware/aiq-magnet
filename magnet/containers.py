@@ -15,8 +15,9 @@ import json
 import os
 import shlex
 import sys
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Mapping, Sequence
+
+from kwdagger import Pipeline
 
 
 __all__ = [
@@ -49,9 +50,9 @@ class ContainerSettings:
     #: Extra environment variable names to capture at render time.
     forward_env: tuple[str, ...] = ()
 
-    def apply(self, pipeline: Any) -> None:
+    def apply(self, pipeline: Pipeline) -> None:
         """Apply these invocation settings to every container-capable node."""
-        for node in (getattr(pipeline, 'node_dict', None) or {}).values():
+        for node in pipeline.node_dict.values():
             if isinstance(node, ContainerCapability):
                 node.apply_container_settings(self)
 
@@ -59,10 +60,10 @@ class ContainerSettings:
     def coerce(
         cls,
         image: str = '',
-        mounts: Any = (),
-        env: Any = None,
+        mounts: str | Sequence[str] | None = (),
+        env: Mapping[str, object] | str | None = None,
         docker_args: str = '',
-        forward_env: Any = (),
+        forward_env: str | Sequence[str] | None = (),
     ) -> 'ContainerSettings':
         """
         Build settings from CLI argument values.
@@ -83,32 +84,38 @@ class ContainerSettings:
 
 
 
-def _coerce_env_map(raw: Any) -> dict[str, str]:
+def _coerce_env_map(
+    raw: Mapping[str, object] | str | None,
+) -> dict[str, str]:
     """Accept a mapping or a JSON object of fixed container env values."""
     if raw in (None, ''):
         return {}
     if isinstance(raw, str):
         try:
-            raw = json.loads(raw)
+            parsed: object = json.loads(raw)
         except json.JSONDecodeError as ex:
             raise ValueError(
                 'container_env must be a JSON object, for example '
                 '{"PYTHONPATH": "/opt/app"}'
             ) from ex
-    if not isinstance(raw, dict):
+    else:
+        parsed = raw
+    if not isinstance(parsed, Mapping):
         raise TypeError('container_env must be a mapping or JSON object')
-    return {str(name): str(value) for name, value in raw.items()}
+    return {str(name): str(value) for name, value in parsed.items()}
 
 
-def _coerce_name_list(raw: Any) -> list[str]:
-    """Accept a list, or one colon/comma separated string."""
+def _coerce_name_list(
+    raw: str | Sequence[str] | None,
+) -> list[str]:
+    """Accept a sequence, or one colon/comma separated string."""
     if raw is None:
         return []
-    if isinstance(raw, (list, tuple)):
-        items = raw
+    if isinstance(raw, str):
+        items = raw.replace(',', ':').split(':')
     else:
-        items = str(raw).replace(',', ':').split(':')
-    return [str(item).strip() for item in items if str(item).strip()]
+        items = raw
+    return [item.strip() for item in items if item.strip()]
 
 
 
@@ -144,11 +151,11 @@ class ContainerCapability:
     #: Image for this node's command. Empty => run on the host.
     container_image: str | None = None
     #: Host paths bind-mounted at their own absolute paths.
-    container_mounts: str | list[str] | tuple[str, ...] | None = None
+    container_mounts: str | Sequence[str] | None = None
     #: Render-time variables, name -> value, captured into the command.
     container_env: Mapping[str, object] | None = None
     #: Additional names whose values are captured at render time.
-    container_forward_env: str | list[str] | tuple[str, ...] | None = ()
+    container_forward_env: str | Sequence[str] | None = ()
     #: Extra ``docker run`` arguments, shell-split into the prefix.
     container_docker_args: str | None = None
 
@@ -251,7 +258,10 @@ class ContainerCapability:
         # Invocation values are defaults; a node may override individual
         # names without having to restate the rest of the invocation mapping.
         env = dict(settings.env)
-        env.update(self.container_env or {})
+        env.update({
+            str(name): str(value)
+            for name, value in (self.container_env or {}).items()
+        })
         self.container_env = env or None
         if not self.container_docker_args:
             self.container_docker_args = settings.docker_args
