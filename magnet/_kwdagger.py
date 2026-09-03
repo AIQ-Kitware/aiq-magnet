@@ -273,7 +273,7 @@ class KWDaggerProcessor:
         )
         lease_settings = lease_settings or leasing.LeaseSettings()
         containers.apply_settings(pipeline, container_settings)
-        leasing.apply_settings(pipeline, lease_settings)
+        lease_settings.apply(pipeline)
 
         # Before anything is submitted: an execution setting that cannot reach
         # a single node is a failed invocation, not a default.

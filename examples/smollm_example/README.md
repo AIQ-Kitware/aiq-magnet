@@ -13,10 +13,12 @@ inside the example container.
 ./run.sh --no-container            # real models, but run node commands on the host
 ./run.sh --mock --no-container     # simulator plus host node commands
 ./run.sh --dry_run=1               # compile using the default GPU/container mode
+./run.sh --help                    # show wrapper options without doing setup work
 ```
 
-`--mock` and `--no-container` are independent and combine. Anything else goes
-through to `magnet evaluate_new`.
+`--mock` and `--no-container` are independent and combine. `--help` only
+prints the wrapper's usage text: it does not require MAGNET, infer-stack, a GPU,
+or Docker. Anything else goes through to `magnet evaluate_new`.
 
 `run.sh` expects `magnet` and `infer-stack` to already be installed in the
 active environment. Installing MAGNET with its leasing extra provides both:

@@ -84,6 +84,7 @@ def test_new_cli_passes_execution_config_directly(
         '--output_path', str(output_path),
         '--params', 'matrix: {emit.seed: [7]}',
         '--backend', 'serial',
+        '--container_env', '{"DEMO_MODE": "1"}',
         '--skip_existing=0',
         '--cache=1',
         '--max_configs=1',

@@ -59,7 +59,7 @@ __all__ = [
     'coerce_provenance',
     'derive_recipe_name',
     'detected_gpu_count',
-    'resolve_tmux_workers',
+    'coerce_tmux_workers',
     'NewEvaluationCLI',
     'NewEvaluationCellResult',
     'NewEvaluationRecipe',
@@ -135,6 +135,17 @@ class NewEvaluationCLI(kwconf.Config):
         help=(
             'Colon- or comma-separated host paths to bind-mount at their own '
             'absolute paths. Normally the repository root.'
+        ),
+        group='containers',
+    )
+
+    container_env: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'JSON object of fixed environment values for node containers. '
+            'These override values captured from the host; a node-specific '
+            'container_env entry still wins for the same name.'
         ),
         group='containers',
     )
@@ -250,13 +261,13 @@ class NewEvaluationCLI(kwconf.Config):
         None,
         parser=str,
         help=(
-            'YAML/JSON mapping, or a path to one, recorded verbatim under '
-            '`provenance` in verdict.json: what produced this run -- the '
-            'execution substrate, and the kind of inference endpoint the '
-            'nodes talked to (a served model, a simulator, a replayed '
-            'fixture). A run against a simulator writes the same shape of '
-            'result as a real one; this is what tells them apart, and it '
-            'travels with the verdict rather than beside it.'
+            'Caller-supplied YAML/JSON mapping, or a path to one, recorded '
+            'verbatim under `provenance` in verdict.json. Use this only for '
+            'facts MAGNET cannot infer from the recipe/result itself -- for '
+            'example whether an OpenAI-compatible endpoint alias was backed '
+            'by real weights, a simulator, or a replay fixture. Ordinary '
+            'execution settings such as backend/container image should stay '
+            'in their normal options rather than being duplicated here.'
         ),
     )
 
@@ -330,7 +341,7 @@ class NewEvaluationCLI(kwconf.Config):
                 'dry_run',
             ]
         }
-        schedule_options['tmux_workers'] = resolve_tmux_workers(
+        schedule_options['tmux_workers'] = coerce_tmux_workers(
             args['tmux_workers']
         )
         # Execution environment. Passed configuration, so it comes from these
@@ -343,6 +354,7 @@ class NewEvaluationCLI(kwconf.Config):
             containers.ContainerSettings.coerce(
                 image=args['container_image'],
                 mounts=args['container_mounts'],
+                env=args['container_env'],
                 docker_args=args['container_docker_args'],
                 forward_env=args['container_forward_env'],
             )
@@ -826,8 +838,12 @@ class NewEvaluationRecipe(EvaluationCard):
 
 
 def coerce_provenance(raw: Any) -> Dict[str, Any] | None:
-    """
-    Accept a mapping, a YAML/JSON string, or a path to one; return a dict.
+    """Coerce caller-owned metadata that cannot be inferred from a result.
+
+    The common case is endpoint identity: a card deliberately sees the same
+    alias and OpenAI-compatible API whether infer-stack selected real weights
+    or a simulator, so that distinction has to be supplied by the launcher if
+    it should travel with the verdict.
 
     Example:
         >>> from magnet.evaluation_new import coerce_provenance
@@ -1100,35 +1116,11 @@ def detected_gpu_count() -> int:
     return sum(1 for line in proc.stdout.splitlines() if line.strip())
 
 
-def resolve_tmux_workers(requested: Any) -> int:
-    """
-    How many queue workers may run at once.
+def coerce_tmux_workers(requested: Any) -> int:
+    """Coerce a worker count, deriving ``auto`` from the local GPU count.
 
-    Args:
-        requested: an integer, or ``'auto'`` to derive one from the hardware.
-
-    Returns:
-        int: the worker cap.
-
-    This bounds GPU contention. A leased node holds its answerer while it waits
-    for the extractor it also needs, so if enough shards start at once to claim
-    every GPU, none can ever get the extractor and none will release. Observed
-    on a 4-GPU host: four answerers on GPUs 0-3, the shared extractor
-    unplaceable, eight leases queued behind it, zero rows produced in an hour.
-    The run does not fail, it converges every five seconds forever.
-
-    ``auto`` leaves one GPU free for a shared extractor, which is the shape of
-    every cohort we run. A host with no GPUs is not doing GPU work, so it keeps
-    kwdagger's own default rather than being throttled to nothing.
-
-    Example:
-        >>> from magnet.evaluation_new import resolve_tmux_workers
-        >>> resolve_tmux_workers(4)
-        4
-        >>> resolve_tmux_workers('4')
-        4
-        >>> isinstance(resolve_tmux_workers('auto'), int)
-        True
+    ``auto`` leaves one GPU free when GPUs are present; CPU-only hosts keep
+    kwdagger's default worker count.
     """
     if isinstance(requested, str) and requested.strip().lower() == 'auto':
         gpus = detected_gpu_count()

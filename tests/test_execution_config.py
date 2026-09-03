@@ -54,7 +54,7 @@ def test_nothing_is_read_from_the_old_environment_variables():
         node = _node(_Infer, lease=LeaseSettings())
         assert containers.containerization_is_enabled(node) is False
         assert containers.node_mounts(node) == []
-        assert 'STALE_VAR' not in containers.forwarded_env(node)
+        assert 'STALE_VAR' not in (node.container_forward_env or ())
         assert leasing.leasing_is_enabled(node) is False
 
 
@@ -131,7 +131,7 @@ def test_applying_settings_twice_changes_nothing():
     once = containers.container_prefix(node)
     node.apply_settings(settings)
     assert containers.container_prefix(node) == once
-    assert containers.forwarded_env(node).count('A') == 1
+    assert tuple(node.container_forward_env or ()).count('A') == 1
 
 
 def test_settings_reach_every_node_of_a_built_dag():

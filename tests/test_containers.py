@@ -71,6 +71,27 @@ def test_nodes_run_on_the_host_unless_an_image_is_named():
     assert node.command.startswith(HOST_PY + ' -m pkg.work')
 
 
+def test_invocation_container_env_overrides_captured_host_env(monkeypatch):
+    monkeypatch.setenv('PYTHONPATH', '/host/examples')
+    command = _node(
+        Work,
+        {'task': 't'},
+        _on(env={'PYTHONPATH': '/opt/magnet/examples'}),
+    ).command
+    assert 'PYTHONPATH=/opt/magnet/examples' in command
+    assert '/host/examples' not in command
+
+
+def test_container_env_accepts_json():
+    settings = containers.ContainerSettings.coerce(
+        env='{"PYTHONPATH": "/opt/magnet/examples", "DEMO": 1}'
+    )
+    assert settings.env == {
+        'PYTHONPATH': '/opt/magnet/examples',
+        'DEMO': '1',
+    }
+
+
 def test_the_command_runs_in_the_image():
     command = _node(Work, {'task': 't'}, _on()).command
     assert command.startswith('docker run --rm ')
@@ -112,19 +133,25 @@ def test_a_pipelines_own_variables_are_forwarded_on_request():
     assert '-e SOME_URL' in command
 
 
-def test_the_defaults_are_generic():
+def test_the_default_env_policy_is_generic_and_overridable():
     """Nothing evaluation-specific may be baked into the default set.
 
     A generic framework naming one evaluation's variables is a design smell
-    -- and a disclosure risk, since not every evaluation repo is public and
-    this one is. Whitelisting recognised prefixes means a new default has to
-    be a well-known variable or an explicit decision.
+    -- and a disclosure risk, since not every evaluation repo is public.
+    Keeping the policy on the node class also lets a specialized node replace
+    it without editing a module-level passlist.
     """
-    from magnet.containers import DEFAULT_FORWARDED_ENV
-
     allowed = ('OPENAI_', 'HF_', 'PYTHON', 'TRANSFORMERS_')
-    for name in DEFAULT_FORWARDED_ENV:
+    names = Work.container_runtime_env + Work.container_capture_env
+    for name in names:
         assert name.startswith(allowed), name
+
+    class Minimal(Work):
+        container_runtime_env = ()
+        container_capture_env = ('PYTHONPATH',)
+
+    command = _node(Minimal, {'task': 't'}, _on()).command
+    assert 'OPENAI_BASE_URL' not in command
 
 
 def test_the_lease_wraps_the_container_not_the_other_way_round(monkeypatch):

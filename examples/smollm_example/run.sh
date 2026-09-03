@@ -14,6 +14,36 @@
 # are pulled on demand; nothing needs fetching first.
 set -euo pipefail
 
+usage() {
+    cat <<'EOF'
+Usage: ./run.sh [OPTIONS] [MAGNET_EVALUATE_NEW_OPTIONS...]
+
+Run the SmolLM MAGNET demo. By default this serves the real SmolLM2 135M and
+360M checkpoints with vLLM on an NVIDIA GPU and runs each MAGNET node inside
+the example container.
+
+Options:
+  --mock          Use infer-stack simulator endpoints instead of real models.
+                  No GPU is required.
+  --no-container  Run MAGNET node commands on the host instead of building and
+                  using the example container.
+  -h, --help      Show this help and exit.
+
+The two mode switches are independent and may be combined. All other arguments
+are passed through to `python -m magnet.evaluation_new`.
+
+Examples:
+  ./run.sh
+  ./run.sh --mock
+  ./run.sh --no-container
+  ./run.sh --mock --no-container
+  ./run.sh --dry_run=1
+
+Environment:
+  SMOLLM_RUNS     Output root (default: ./runs/smollm)
+EOF
+}
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 examples="$(cd "$here/.." && pwd)"
 repo="$(cd "$examples/.." && pwd)"
@@ -63,6 +93,10 @@ container=1
 passthrough=()
 for arg in "$@"; do
     case "$arg" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         --mock)
             mock=1
             ;;

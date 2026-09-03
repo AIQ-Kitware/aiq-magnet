@@ -151,13 +151,13 @@ def test_tmux_workers_defaults_to_auto_rather_than_kwdaggers_literal():
     """
     from kwdagger.schedule import ScheduleEvaluationConfig
 
-    from magnet.evaluation_new import DEFAULT_TMUX_WORKERS, resolve_tmux_workers
+    from magnet.evaluation_new import DEFAULT_TMUX_WORKERS, coerce_tmux_workers
 
     assert NewEvaluationCLI()['tmux_workers'] == 'auto'
     # The fallback when there is no GPU to derive from is still kwdagger's.
     assert ScheduleEvaluationConfig()['tmux_workers'] == DEFAULT_TMUX_WORKERS
     # Whatever `auto` resolves to on this machine, kwdagger receives an int.
-    assert isinstance(resolve_tmux_workers('auto'), int)
+    assert isinstance(coerce_tmux_workers('auto'), int)
 
 
 def test_legacy_evaluator_surface_is_still_present():

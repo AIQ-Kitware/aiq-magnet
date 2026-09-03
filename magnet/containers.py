@@ -37,19 +37,20 @@ TODO:
     configuring the instance. Two things point the same way. A card that names
     no container class today is silently *not* containerized however it was
     invoked, which is a green run that proves nothing. And the environment
-    capture below (:data:`DEFAULT_CAPTURED_ENV`) is correct and needed on the
-    host path too, where a cmd_queue tmux worker inherits just as little, but is
-    reachable only through :func:`container_prefix`.
+    capture policy on :class:`ContainerProcessNode` is correct and needed on
+    the host path too, where a cmd_queue tmux worker inherits just as little,
+    but is reachable only through :func:`container_prefix`.
 """
 
 from __future__ import annotations
 
-import os
-import sys
-from typing import Any
-import shlex
-
 import dataclasses
+import json
+import os
+import shlex
+import sys
+from collections.abc import Mapping
+from typing import Any
 
 import kwdagger
 from kwdagger.yaml_pipeline import YamlProcessNode
@@ -62,9 +63,6 @@ __all__ = [
     'containerization_is_enabled',
     'host_interpreter',
     'container_prefix',
-    'forwarded_env',
-    'LEASE_ENV',
-    'DEFAULT_CAPTURED_ENV',
 ]
 
 
@@ -89,12 +87,17 @@ class ContainerSettings:
     #: entry: the repository root.
     mounts: tuple[str, ...] = ()
 
+    #: Fixed environment values to put in every container unless a node
+    #: overrides the same name. Useful when the image's import path or another
+    #: execution setting must differ from the orchestrating host.
+    env: dict[str, str] = dataclasses.field(default_factory=dict)
+
     #: Extra ``docker run`` arguments. An escape hatch for the things that vary
     #: by host and should not be guessed here -- GPU reservations, an alternate
     #: network, a registry credential mount.
     docker_args: str = ''
 
-    #: Extra variable names to forward, on top of :data:`DEFAULT_FORWARDED_ENV`.
+    #: Extra variable names to capture in addition to the node-class defaults.
     #: This is how a pipeline's own configuration reaches its nodes: MAGNET has
     #: no business knowing what those variables are called.
     forward_env: tuple[str, ...] = ()
@@ -104,6 +107,7 @@ class ContainerSettings:
         cls,
         image: str = '',
         mounts: Any = (),
+        env: Any = None,
         docker_args: str = '',
         forward_env: Any = (),
     ) -> 'ContainerSettings':
@@ -119,6 +123,7 @@ class ContainerSettings:
         return cls(
             image=str(image or '').strip(),
             mounts=tuple(_coerce_name_list(mounts)),
+            env=_coerce_env_map(env),
             docker_args=str(docker_args or ''),
             forward_env=tuple(_coerce_name_list(forward_env)),
         )
@@ -162,6 +167,23 @@ def apply_settings(pipeline: Any, settings: ContainerSettings) -> None:
             node.apply_settings(settings)
 
 
+def _coerce_env_map(raw: Any) -> dict[str, str]:
+    """Accept a mapping or a JSON object of fixed container env values."""
+    if raw in (None, ''):
+        return {}
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError as ex:
+            raise ValueError(
+                'container_env must be a JSON object, for example '
+                '{"PYTHONPATH": "/opt/app"}'
+            ) from ex
+    if not isinstance(raw, dict):
+        raise TypeError('container_env must be a mapping or JSON object')
+    return {str(name): str(value) for name, value in raw.items()}
+
+
 def _coerce_name_list(raw: Any) -> list[str]:
     """Accept a list, or one colon/comma separated string."""
     if raw is None:
@@ -171,53 +193,6 @@ def _coerce_name_list(raw: Any) -> list[str]:
     else:
         items = str(raw).replace(',', ':').split(':')
     return [str(item).strip() for item in items if str(item).strip()]
-
-
-#: Supplied at job time by a surrounding lease, so forwarded BY NAME. Capturing
-#: a value would freeze the orchestrator's shell over the endpoint actually
-#: leased.
-LEASE_ENV = (
-    'OPENAI_BASE_URL',
-    'OPENAI_API_KEY',
-)
-
-#: Exist at render time and are not recreated later, so their VALUES are
-#: captured. PYTHONPATH is the one that matters: bare, it arrives empty in a
-#: tmux worker that never inherited it and every import in the node fails.
-DEFAULT_CAPTURED_ENV = (
-    'PYTHONPATH',
-    'HF_TOKEN',
-    'HF_HOME',
-    'TRANSFORMERS_OFFLINE',
-    'HF_HUB_OFFLINE',
-)
-
-#: Every variable magnet forwards without being told to, in a stable order.
-DEFAULT_FORWARDED_ENV = LEASE_ENV + DEFAULT_CAPTURED_ENV
-
-
-def forwarded_env(node: Any = None) -> list[str]:
-    """
-    Variable names to forward into this node's container, in a stable order.
-
-    Returns:
-        list[str]: :data:`DEFAULT_FORWARDED_ENV` followed by whatever the node
-            adds, deduplicated.
-
-    Example:
-        >>> from magnet.containers import ContainerProcessNode, forwarded_env
-        >>> node = ContainerProcessNode(name='n', executable='true')
-        >>> node.container_forward_env = ('MY_FACTORY', 'MY_URL')
-        >>> names = forwarded_env(node)
-        >>> names[0], names[-2:]
-        ('OPENAI_BASE_URL', ['MY_FACTORY', 'MY_URL'])
-    """
-    names = list(DEFAULT_FORWARDED_ENV)
-    for chunk in (getattr(node, 'container_forward_env', None) or ()):
-        chunk = str(chunk).strip()
-        if chunk and chunk not in names:
-            names.append(chunk)
-    return names
 
 
 def node_image(node: Any = None) -> str:
@@ -230,7 +205,7 @@ def node_mounts(node: Any = None) -> list[str]:
     return _coerce_name_list(getattr(node, 'container_mounts', None))
 
 
-def declared_env(node: Any = None) -> dict:
+def declared_env(node: Any = None) -> dict[str, str | None]:
     """
     Render-time variables and their values, in a stable order.
 
@@ -241,13 +216,19 @@ def declared_env(node: Any = None) -> dict:
     A declared name with no value keeps a bare ``-e NAME`` (value None in the
     result): a name that is not set yet can only be a job-time value.
     """
-    names: list[str] = list(DEFAULT_CAPTURED_ENV)
-    for name in (getattr(node, 'container_forward_env', None) or ()):
-        name = str(name).strip()
-        if name and name not in names and name not in LEASE_ENV:
+    runtime_env = set(
+        _coerce_name_list(getattr(node, 'container_runtime_env', None))
+    )
+    names = _coerce_name_list(getattr(node, 'container_capture_env', None))
+    for name in _coerce_name_list(
+        getattr(node, 'container_forward_env', None)
+    ):
+        if name not in names and name not in runtime_env:
             names.append(name)
 
-    resolved: dict = {name: os.environ.get(name) or None for name in names}
+    resolved: dict[str, str | None] = {
+        name: os.environ.get(name) or None for name in names
+    }
     # An explicit mapping on the node wins over the environment.
     for name, value in (getattr(node, 'container_env', None) or {}).items():
         resolved[str(name)] = str(value)
@@ -330,17 +311,19 @@ def container_prefix(node: Any = None) -> str:
     ]
     # Two kinds of variable, split by WHEN the value exists.
     #
-    # Job-time (LEASE_ENV): `infer-stack run` writes these into the wrapped
-    # command's environment long after this string is rendered, so they stay a
-    # bare `-e NAME`. A captured value would freeze the orchestrator's shell
-    # over the endpoint actually leased.
+    # Job-time (`container_runtime_env`): `infer-stack run` writes these into
+    # the wrapped command's environment long after this string is rendered, so
+    # they stay a bare `-e NAME`. A captured value would freeze the
+    # orchestrator's shell over the endpoint actually leased.
     #
     # Render-time: values exist now and are not recreated later. A tmux worker
     # inherits the tmux server's environment, not the orchestrator's, so a bare
     # `-e NAME` forwards nothing and does it silently -- that cost a full run
     # when OC_BACKEND_FACTORY vanished and every shard routed to a provider it
     # had no key for.
-    for name in LEASE_ENV:
+    for name in _coerce_name_list(
+        getattr(node, 'container_runtime_env', None)
+    ):
         parts += ['-e', name]
     for name, value in declared_env(node).items():
         if value is None:
@@ -368,25 +351,45 @@ class ContainerProcessNode(kwdagger.ProcessNode):
     """
 
     #: Image for this node's command. Empty => run on the host.
-    container_image: Any = None
+    container_image: str | None = None
     #: Host paths bind-mounted at their own absolute paths.
-    container_mounts: Any = None
+    container_mounts: str | list[str] | tuple[str, ...] | None = None
     #: Render-time variables, name -> value, captured into the command.
-    container_env: Any = None
-    #: Names whose values are captured from the environment at render time.
-    container_forward_env: Any = ()
+    container_env: Mapping[str, object] | None = None
+    #: Additional names whose values are captured at render time.
+    container_forward_env: str | list[str] | tuple[str, ...] | None = ()
     #: Extra ``docker run`` arguments, shell-split into the prefix.
-    container_docker_args: Any = None
+    container_docker_args: str | None = None
+
+    #: Variables supplied by the surrounding job at execution time. These are
+    #: forwarded by name; capturing them while the DAG is rendered could freeze
+    #: a stale endpoint over a later ``infer-stack run`` lease.
+    container_runtime_env: tuple[str, ...] = (
+        'OPENAI_BASE_URL',
+        'OPENAI_API_KEY',
+    )
+
+    #: Variables whose values exist when the DAG is rendered and therefore
+    #: need to be embedded in the command. This policy is attached to the node
+    #: class so a specialized node can override it without editing a module
+    #: passlist.
+    container_capture_env: tuple[str, ...] = (
+        'PYTHONPATH',
+        'HF_TOKEN',
+        'HF_HOME',
+        'TRANSFORMERS_OFFLINE',
+        'HF_HUB_OFFLINE',
+    )
 
     def apply_settings(self, settings: ContainerSettings) -> None:
         """
         Adopt an invocation's settings for anything this node did not declare.
 
         A node's own declaration is a property of the step and always wins.
-        ``forward_env`` is the exception: it accumulates, because the node and
-        the invocation are naming different variables for the same reason, and
-        neither has grounds to drop the other's. Idempotent, so applying twice
-        is the same as applying once.
+        ``container_env`` merges by name so node values override invocation
+        defaults without discarding unrelated defaults. ``forward_env`` also
+        accumulates because both sides are adding names. Idempotent, so
+        applying twice is the same as applying once.
 
         Example:
             >>> from magnet.containers import ContainerProcessNode
@@ -402,9 +405,14 @@ class ContainerProcessNode(kwdagger.ProcessNode):
             self.container_image = settings.image
         if not self.container_mounts:
             self.container_mounts = list(settings.mounts)
+        # Invocation values are defaults; a node may override individual
+        # names without having to restate the rest of the invocation mapping.
+        env = dict(settings.env)
+        env.update(self.container_env or {})
+        self.container_env = env or None
         if not self.container_docker_args:
             self.container_docker_args = settings.docker_args
-        names = list(self.container_forward_env or ())
+        names = _coerce_name_list(self.container_forward_env)
         for name in settings.forward_env:
             if name not in names:
                 names.append(name)
@@ -417,7 +425,7 @@ class ContainerProcessNode(kwdagger.ProcessNode):
 
     @property
     def command(self) -> str:
-        base = kwdagger.ProcessNode.command.fget(self)  # type: ignore[attr-defined]
+        base = super().command
         if containerization_is_enabled(self):
             base = container_prefix(self) + ' \\\n    ' + base
         else:

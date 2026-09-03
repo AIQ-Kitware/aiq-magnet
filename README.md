@@ -446,6 +446,22 @@ new parser. The complete aggregate row is also recorded under `evidence`, and
 the aggregate verdict records the evidence scope and request summary. The
 `results/` directory is created even when no evidence is available.
 
+If the launcher knows a fact that cannot be recovered from the card or its
+result, it can attach that fact to the verdict with `--provenance`. The main
+case is an interchangeable inference endpoint: the card may ask for the same
+`smol-135` alias through the same OpenAI-compatible API whether infer-stack is
+serving real weights, a simulator, or a replay fixture. That choice is made
+outside the card, so there is nothing reliable for MAGNET to introspect later.
+
+```bash
+magnet evaluate_new card.yaml \
+    --provenance '{endpoint: {kind: simulator, catalog: rehearsal}}'
+```
+
+The mapping is copied into aggregate `verdict.json` as `provenance`. Do not use
+it to restate information MAGNET already has as ordinary invocation settings,
+such as the kwdagger backend or container image.
+
 ### Downloading HELM results
 
 We provide a utility to download precomputed HELM results. 

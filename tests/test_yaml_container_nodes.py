@@ -67,7 +67,7 @@ def _node(spec, config={'task': 't'}, settings=None, lease=None):
     containers.apply_settings(
         pipeline, settings or containers.ContainerSettings()
     )
-    leasing.apply_settings(pipeline, lease or leasing.LeaseSettings())
+    (lease or leasing.LeaseSettings()).apply(pipeline)
     node = pipeline.node_dict['work']
     node.configure(config)
     return node

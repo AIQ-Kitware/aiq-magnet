@@ -2,8 +2,8 @@
 A verdict says what produced it.
 
 A run against a simulator writes the same shape of result as a run against a
-served model. The caller knows which it was; the verdict is where that
-knowledge has to live, because the verdict is what gets read later, alone.
+served model. The caller knows which it was; MAGNET cannot infer it from the
+shared alias/API, so the verdict is where that external fact has to live.
 """
 import json
 import textwrap
@@ -12,7 +12,11 @@ import pytest
 import ubelt as ub
 import yaml
 
-from magnet.evaluation_new import NewEvaluationCLI, NewEvaluationRecipe, coerce_provenance
+from magnet.evaluation_new import (
+    NewEvaluationCLI,
+    NewEvaluationRecipe,
+    coerce_provenance,
+)
 
 SCRIPT = """
 import json, sys, pathlib
@@ -52,7 +56,7 @@ def card(tmp_path):
 
 def test_provenance_is_written_into_the_verdict(card, tmp_path):
     out = ub.Path(tmp_path) / 'out'
-    prov = {'endpoint_kind': 'mock', 'substrate': {'backend': 'serial'}}
+    prov = {'endpoint': {'kind': 'simulator', 'catalog': 'rehearsal'}}
     recipe = NewEvaluationRecipe(card, out)
     result_card = recipe.evaluate(backend='serial', provenance=prov)
     assert result_card.provenance == prov

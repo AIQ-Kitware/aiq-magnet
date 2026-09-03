@@ -68,7 +68,7 @@ def _configured_nodes(card, *, image=IMAGE, leasing_on=True):
     containers.apply_settings(
         pipeline, ContainerSettings.coerce(image=image, mounts='/repo')
     )
-    leasing.apply_settings(pipeline, LeaseSettings(enabled=leasing_on))
+    LeaseSettings(enabled=leasing_on).apply(pipeline)
     return pipeline.node_dict
 
 
@@ -272,6 +272,26 @@ def test_run_sh_defaults_to_gpu_and_container(tmp_path):
     assert 'catalog-mock.yaml' not in python_call
     assert '--container_image=magnet-smollm-example:latest' in python_call
     assert '--container_mounts=' in python_call
+    assert (
+        '--container_env={"PYTHONPATH": "/opt/magnet/examples"}' in python_call
+    )
+
+
+def test_run_sh_help_needs_no_runtime_prerequisites(tmp_path):
+    """Help is wrapper documentation, so it must not probe the machine."""
+    env = _child_env()
+    env['PATH'] = '/usr/bin:/bin'
+    run_sh = CARD_FPATH.parent / 'run.sh'
+    proc = subprocess.run(
+        ['bash', run_sh, '--help'],
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert 'Usage: ./run.sh' in proc.stdout
+    assert '--mock' in proc.stdout
+    assert '--no-container' in proc.stdout
+    assert 'SMOLLM_RUNS' in proc.stdout
+    assert 'requires MAGNET' not in proc.stderr
 
 
 def test_run_sh_default_requires_a_gpu(tmp_path):

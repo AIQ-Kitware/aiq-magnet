@@ -22,7 +22,7 @@ see -- which on a host without a device cgroup is all of them, not the ones this
 job was allocated. See :data:`GPU_ALLOW_LIST_EXPANSION`.
 
 Opt-in via ``--per_node_leasing``, which reaches the nodes through
-:class:`LeaseSettings` and :func:`apply_settings`. Off by default because
+:class:`LeaseSettings`. Off by default because
 plenty of legitimate runs point at a server infer-stack does not manage.
 """
 
@@ -41,7 +41,6 @@ __all__ = [
     'LeasedProcessNode',
     'LeasedYamlProcessNode',
     'LeaseSettings',
-    'apply_settings',
     'leasing_is_enabled',
     'slurm_gpu_allow_list',
     'INSIDE_LEASE_ENVVAR',
@@ -54,9 +53,9 @@ class LeaseSettings:
     """
     One invocation's answer to whether nodes lease their own endpoints.
 
-    Built from CLI arguments and handed to :func:`apply_settings`, which writes
-    it onto the leasable nodes. Nothing reads it afterwards: by the time a
-    command renders, the node carries what it needs.
+    Built from CLI arguments and applied to the DAG with :meth:`apply`. Nothing
+    reads it afterwards: by the time a command renders, the node carries what
+    it needs.
 
     This is passed configuration, so it arrives as an argument; contrast
     :data:`INSIDE_LEASE_ENVVAR`, which is a fact about the surrounding process
@@ -78,30 +77,11 @@ class LeaseSettings:
     #: reports indices that do not match the ones the container runtime sees.
     allowed_gpus: bool = True
 
-
-def apply_settings(pipeline: Any, settings: LeaseSettings) -> None:
-    """
-    Write an invocation's leasing settings onto the nodes that can lease.
-
-    The counterpart of :func:`magnet.containers.apply_settings`, applied at the
-    same point and for the same reason: the DAG is the one place MAGNET holds
-    every node, and ``command`` is a property with nowhere to pass an argument.
-
-    Example:
-        >>> from kwdagger.pipeline import coerce_pipeline
-        >>> from magnet.leasing import LeaseSettings, apply_settings
-        >>> spec = {'nodes': {'infer': {
-        ...     'class': 'magnet.leasing.LeasedYamlProcessNode',
-        ...     'executable': 'python -m pkg.infer',
-        ...     'out_paths': {'results_fpath': 'results.json'}}}}
-        >>> pipeline = coerce_pipeline(spec)
-        >>> apply_settings(pipeline, LeaseSettings(enabled=True))
-        >>> pipeline.node_dict['infer'].lease_enabled
-        True
-    """
-    for node in (getattr(pipeline, 'node_dict', None) or {}).values():
-        if isinstance(node, LeasedProcessNode):
-            node.apply_lease_settings(settings)
+    def apply(self, pipeline: Any) -> None:
+        """Apply these invocation settings to every leasable node in a DAG."""
+        for node in (getattr(pipeline, 'node_dict', None) or {}).values():
+            if isinstance(node, LeasedProcessNode):
+                node.apply_lease_settings(self)
 
 
 #: Exported by ``infer-stack run``. Its presence means we are already inside
@@ -201,8 +181,8 @@ class LeasedProcessNode(ContainerProcessNode):
             are busy. On by default -- with a DAG scheduling more jobs than the
             box has GPUs, busy is the normal case.
         lease_enabled (bool): whether this node leases at all. Written by
-            :func:`apply_settings` from the invocation; a node may also set it
-            outright.
+            :meth:`LeaseSettings.apply` from the invocation; a node may also
+            set it outright.
         lease_allowed_gpus (bool): whether to confine the lease to the job's
             Slurm allocation. See :data:`GPU_ALLOW_LIST_EXPANSION`.
     """
