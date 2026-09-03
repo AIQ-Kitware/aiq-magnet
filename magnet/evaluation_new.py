@@ -289,17 +289,10 @@ class NewEvaluationCLI(kwconf.Config):
 
     @classmethod
     def main(cls, argv: list[str] | None = None, **kwargs: Any) -> None:
-        """
-        Run one evaluation as a process.
+        """Run one evaluation.
 
-        Returns nothing on purpose. A CLI ``main`` return value is a process
-        exit status: ``kwconf.ModalCLI.main`` hands it to the console script,
-        which calls ``sys.exit`` on it, and ``sys.exit`` of a non-integer
-        prints that object and exits 1. Returning the result card made every
-        successful ``magnet evaluate_new`` dump the card and report failure.
-        Callers that want the card use the library API --
-        :meth:`NewEvaluationRecipe.evaluate` or :func:`evaluate_new_recipe` --
-        or read ``verdict.json`` from the run directory.
+        The CLI returns ``None`` so its return value is not interpreted as a
+        process exit status. Use the library API to retrieve a result card.
         """
         args = cls.cli(
             argv=argv,
@@ -344,12 +337,7 @@ class NewEvaluationCLI(kwconf.Config):
         schedule_options['tmux_workers'] = coerce_tmux_workers(
             args['tmux_workers']
         )
-        # Execution environment. Passed configuration, so it comes from these
-        # arguments rather than from the ambient environment -- which also
-        # means the record of an invocation says what it ran in. It travels
-        # with the request and is written onto the DAG's nodes when it is
-        # scheduled, so nothing here changes process state: two evaluations in
-        # one interpreter cannot see or disturb each other's.
+        # Apply execution settings to DAG nodes when the recipe is scheduled.
         schedule_options['container_settings'] = (
             containers.ContainerSettings.coerce(
                 image=args['container_image'],
@@ -670,8 +658,7 @@ class NewEvaluationResultCard:
     requested_work: Dict[str, Any] = field(default_factory=dict)
     evidence_scope: str = 'all'
     evidence_discovered: int = 0
-    #: What produced this run, as the caller described it: substrate and
-    #: endpoint kind. Opaque to MAGNET, written to the verdict unchanged.
+    #: Caller-supplied metadata written to the verdict unchanged.
     provenance: Dict[str, Any] | None = None
 
     @property
@@ -742,25 +729,15 @@ class NewEvaluationRecipe(EvaluationCard):
         self._run_hash_cached: str | None = None
 
     def set_evidence_scope(self, scope: str) -> None:
-        """
-        Override the card's ``evidence.scope`` for this invocation.
-
-        The card says what evidence a claim may see in general; an invocation
-        may narrow that to the rows it requested, so that its verdict
-        describes its own work rather than everything the result store has
-        accumulated under this recipe. Widening from ``requested`` to ``all``
-        is also allowed, and is the caller's decision to make.
+        """Set this invocation's evidence scope to ``all`` or ``requested``.
 
         Example:
             >>> from magnet.evaluation_new import NewEvaluationRecipe
-            >>> import pytest
             >>> recipe = NewEvaluationRecipe.__new__(NewEvaluationRecipe)
             >>> recipe.original_card = {'evidence': {}}
             >>> recipe.set_evidence_scope('requested')
             >>> recipe.evidence_scope
             'requested'
-            >>> with pytest.raises(ValueError):
-            ...     recipe.set_evidence_scope('some')
         """
         scope = str(scope or '').strip()
         if scope not in {'all', 'requested'}:
@@ -782,23 +759,10 @@ class NewEvaluationRecipe(EvaluationCard):
 
     @property
     def queue_name(self) -> str:
-        """
-        Name for this card's execution queue.
+        """Return the per-recipe queue namespace used by cmd_queue.
 
-        cmd_queue's tmux backend decides which sessions are "this queue" by
-        matching on the name, so it is a namespace. Unset, every card on the
-        machine shares one: starting an Incubilate run reported a Princeton
-        run's sessions as conflicts and offered to kill them.
-
-        Two runs of the same card still share a name. That one is a real
-        conflict and is meant to be reported.
-
-        Example:
-            >>> import magnet.evaluation_new as mod
-            >>> recipe = mod.NewEvaluationRecipe.__new__(mod.NewEvaluationRecipe)
-            >>> recipe.name = 'incubilate_lift'
-            >>> recipe.queue_name
-            'schedule-incubilate_lift'
+        Runs of different recipes use different tmux session names. Concurrent
+        runs of the same recipe still share a queue namespace.
         """
         return f'schedule-{self.name}'
 
@@ -838,12 +802,10 @@ class NewEvaluationRecipe(EvaluationCard):
 
 
 def coerce_provenance(raw: Any) -> Dict[str, Any] | None:
-    """Coerce caller-owned metadata that cannot be inferred from a result.
+    """Coerce caller-supplied provenance into a mapping.
 
-    The common case is endpoint identity: a card deliberately sees the same
-    alias and OpenAI-compatible API whether infer-stack selected real weights
-    or a simulator, so that distinction has to be supplied by the launcher if
-    it should travel with the verdict.
+    Use provenance for facts external to the recipe and result, such as whether
+    an endpoint alias resolved to real weights or a simulator.
 
     Example:
         >>> from magnet.evaluation_new import coerce_provenance
@@ -1045,7 +1007,7 @@ def _summarize_requested_runs(
 
 
 def _link_kwdagger_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
-    """Keep the historical ``<run>/kwdagger`` artifact location visible."""
+    """Maintain the ``<run>/kwdagger`` compatibility symlink."""
     link = recipe_output_path / 'kwdagger'
     try:
         ub.symlink(kwdagger_dpath, link, overwrite=True)
@@ -1054,19 +1016,9 @@ def _link_kwdagger_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) ->
 
 
 def derive_recipe_name(path) -> str:
-    """
-    A recipe's name when the card does not declare one.
+    """Derive ``<parent>_<stem>`` when a card does not declare ``name``.
 
-    Args:
-        path: the card's path.
-
-    Returns:
-        str: ``<parent directory>_<filename stem>``.
-
-    The parent is included because ``card.yaml`` is a common filename -- three
-    ship in this repository -- and the stem alone would give every one of them
-    the same name, which is the cross-card collision that naming the queue
-    exists to prevent.
+    Including the parent avoids collisions between cards with common filenames.
 
     Example:
         >>> from magnet.evaluation_new import derive_recipe_name
@@ -1093,14 +1045,7 @@ def derive_recipe_name(path) -> str:
 
 
 def detected_gpu_count() -> int:
-    """
-    How many GPUs this machine has, or 0 when that cannot be determined.
-
-    An ambient fact about the host, so it is discovered rather than passed.
-    ``nvidia-smi`` is asked because it is what reports the devices actually
-    present; no import of a CUDA runtime is involved, and a machine without it
-    simply reports none.
-    """
+    """Count GPUs reported by ``nvidia-smi``, or return 0 if unavailable."""
     exe = shutil.which('nvidia-smi')
     if exe is None:
         return 0

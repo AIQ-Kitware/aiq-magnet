@@ -1,32 +1,11 @@
-"""
-kwdagger nodes that run their command inside a container.
+"""Container execution support for kwdagger nodes.
 
-Orchestration outside, work inside. MAGNET parses the card, compiles the DAG
-and submits the queue on the host, because that needs the Docker socket, the
-infer-stack ledger and the host filesystem. What goes in a container is each
-node's command -- the process whose dependencies must be pinned and which runs
-many times, on many hosts.
+``ContainerCapability`` stores container settings and wraps a node command with
+``docker run``. ``MagnetProcessNode`` composes it with endpoint leasing. When
+both are enabled, the lease wraps the container command.
 
-A node can be both leased and containerized, and the order is not arbitrary::
-
-    test -e <output> || \\
-    infer-stack run --endpoint qwen3-8b -- \\
-        docker run --rm --network host ... image python -m pkg.node ...
-
-The lease is outside because acquiring one needs the host's daemon and ledger.
-The container is inside because it consumes the endpoint, and being inside
-means it inherits ``OPENAI_BASE_URL`` / ``OPENAI_API_KEY`` from the lease. The
-cache guard stays outermost, so a node whose output exists neither leases nor
-starts a container.
-
-The repository is mounted at the same absolute path it has on the host:
-kwdagger bakes absolute output paths into commands, so keeping them identical
-means nothing has to be rewritten and a path in a log is one you can open.
-
-Containerization is an independent execution capability. The mixin here
-contains only container state and settings; it does not inherit or know
-about leasing. :class:`magnet.process_node.MagnetProcessNode` is the normal
-integration surface that composes this capability with leasing.
+Container working directories are bind-mounted at the same absolute paths used
+on the host so kwdagger artifact paths remain valid inside the container.
 """
 
 from __future__ import annotations
@@ -49,38 +28,25 @@ __all__ = [
 
 @dataclasses.dataclass(frozen=True)
 class ContainerSettings:
-    """
-    What to run node commands in, for nodes that do not say.
+    """Invocation-level defaults for container-capable nodes.
 
-    One invocation's answer to "where does this run", built from CLI arguments
-    and applied with :meth:`apply`, which writes it onto the nodes that
-    did not declare their own. Nothing reads it afterwards: by the time a
-    command renders, every value it needs is on the node.
-
-    Empty by default, which is what makes an uncontainerized run the same path
-    with nothing prepended rather than a fallback.
+    :meth:`apply` fills values that a node did not declare itself. An empty
+    image leaves the node on the host.
     """
 
     #: Image to run node commands in. Empty => run on the host.
     image: str = ''
 
-    #: Host paths to bind-mount at their own absolute paths. Normally one
-    #: entry: the repository root.
+    #: Host paths to bind-mount at their own absolute paths.
     mounts: tuple[str, ...] = ()
 
-    #: Fixed environment values to put in every container unless a node
-    #: overrides the same name. Useful when the image's import path or another
-    #: execution setting must differ from the orchestrating host.
+    #: Fixed environment values. Node-specific values override these defaults.
     env: dict[str, str] = dataclasses.field(default_factory=dict)
 
-    #: Extra ``docker run`` arguments. An escape hatch for the things that vary
-    #: by host and should not be guessed here -- GPU reservations, an alternate
-    #: network, a registry credential mount.
+    #: Extra ``docker run`` arguments.
     docker_args: str = ''
 
-    #: Extra variable names to capture in addition to the node-class defaults.
-    #: This is how a pipeline's own configuration reaches its nodes: MAGNET has
-    #: no business knowing what those variables are called.
+    #: Extra environment variable names to capture at render time.
     forward_env: tuple[str, ...] = ()
 
     def apply(self, pipeline: Any) -> None:
@@ -147,22 +113,11 @@ def _coerce_name_list(raw: Any) -> list[str]:
 
 
 def host_interpreter(command: str) -> str:
-    """
-    Render a leading bare ``python`` as the interpreter that runs the node.
+    """Replace a leading bare ``python`` with :data:`sys.executable`.
 
-    ``python`` in a node's executable means "the interpreter that will run
-    this node": inside an image that is the image's own, on PATH; on the host
-    it is this process's, because a cmd_queue worker does not inherit the
-    orchestrator's virtualenv and a bare ``python -m ...`` dies with
-    "python: not found" before the node starts. The substitution happens at
-    render time, on the node, so a pipeline never has to guess at
-    construction which route the run will take. (Three pipelines used to
-    guess container state before invocation settings reached the node while
-    building their DAG; once settings moved onto the nodes that answer was
-    always "host", and their containers were handed a path that did not
-    exist inside them.)
-
-    Only the first word is touched, and only when it is exactly ``python``.
+    Host workers may not inherit the orchestrator's virtual environment. Only
+    an exact leading ``python`` token is replaced; ``python3`` and explicit
+    interpreter paths are unchanged.
 
     Example:
         >>> from magnet.containers import host_interpreter
@@ -172,8 +127,6 @@ def host_interpreter(command: str) -> str:
         True
         >>> host_interpreter('python3 -m pkg.work')
         'python3 -m pkg.work'
-        >>> host_interpreter('/usr/bin/python -m pkg.work')
-        '/usr/bin/python -m pkg.work'
     """
     if command == 'python' or command.startswith(('python ', 'python\t', 'python\n', 'python \\')):
         return shlex.quote(sys.executable) + command[len('python'):]
@@ -182,19 +135,10 @@ def host_interpreter(command: str) -> str:
 
 
 class ContainerCapability:
-    """
-    Container-specific state and configuration, independent of node type.
+    """Mixin providing container state and command wrapping.
 
-    This mixin owns no ``command`` property and knows nothing about leasing.
-    :class:`magnet.process_node.MagnetProcessNode` is the supported integration
-    surface. Tests also compose this mixin with a bare kwdagger node to pin
-    the fact that the capability itself remains independently reusable.
-
-    Every value the command needs lives on the node by the time it renders.
-    A node that declares its own keeps it; :meth:`ContainerSettings.apply`
-    fills the rest in. That is what lets two pipelines in one process differ,
-    and what
-    keeps a rendered command explainable from the node alone.
+    The mixin does not define ``command``. ``MagnetProcessNode`` controls how
+    containerization composes with other execution capabilities.
     """
 
     #: Image for this node's command. Empty => run on the host.
@@ -216,10 +160,7 @@ class ContainerCapability:
         'OPENAI_API_KEY',
     )
 
-    #: Variables whose values exist when the DAG is rendered and therefore
-    #: need to be embedded in the command. This policy is attached to the node
-    #: class so a specialized node can override it without editing a module
-    #: passlist.
+    #: Variables captured when the DAG command is rendered.
     container_capture_env: tuple[str, ...] = (
         'PYTHONPATH',
         'HF_TOKEN',
@@ -288,22 +229,18 @@ class ContainerCapability:
         return self._container_command_prefix() + " \\\n    " + command
 
     def apply_container_settings(self, settings: ContainerSettings) -> None:
-        """
-        Adopt an invocation's settings for anything this node did not declare.
+        """Apply invocation defaults without overriding node declarations.
 
-        A node's own declaration is a property of the step and always wins.
-        ``container_env`` merges by name so node values override invocation
-        defaults without discarding unrelated defaults. ``forward_env`` also
-        accumulates because both sides are adding names. Idempotent, so
-        applying twice is the same as applying once.
+        Environment mappings merge by name, with node values taking precedence.
+        Forwarded environment names accumulate.
 
         Example:
             >>> from magnet.process_node import MagnetProcessNode
             >>> from magnet.containers import ContainerSettings
             >>> node = MagnetProcessNode(name='n', executable='true')
             >>> node.container_image = 'declared:latest'
-            >>> settings = ContainerSettings.coerce(image='other:latest')
-            >>> node.apply_container_settings(settings)
+            >>> node.apply_container_settings(
+            ...     ContainerSettings.coerce(image='other:latest'))
             >>> node.container_image
             'declared:latest'
         """

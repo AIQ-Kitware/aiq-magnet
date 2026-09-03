@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Developer-only end-to-end smoke test for the SmolLM example.
 #
-# This intentionally assumes a developer machine with an NVIDIA GPU, Docker,
-# MAGNET + its leasing extra, and an initialized infer-stack backend. It is not
-# a CI entry point. The CI workflow exercises only `./run.sh --mock`.
+# Requires an NVIDIA GPU, Docker, MAGNET with leasing support, and an
+# initialized infer-stack backend. CI exercises `./run.sh --mock` separately.
 set -euo pipefail
 
 usage() {
@@ -206,15 +205,12 @@ printf 'This test expects a usable NVIDIA GPU and Docker.\n'
 if ((release_before_start == 1)); then
     release_lease_pool
 else
-    # Default is deliberately non-destructive. Turn stale capacity into an
-    # immediate diagnostic instead of modifying another developer's work.
+    # Do not modify leases owned by other work unless --release was requested.
     require_clean_lease_pool 'before starting'
 fi
 smoke_started=1
 
-# Container modes are adjacent on purpose. The first may build the node image;
-# the second should reuse it. In particular, switching from the real catalog to
-# the mock catalog must not invalidate the image.
+# Run container modes consecutively so the second can reuse the node image.
 if ! run_variant real-container; then
     :
 fi

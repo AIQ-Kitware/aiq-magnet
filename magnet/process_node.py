@@ -1,21 +1,13 @@
-"""
-The MAGNET process-node integration surface.
+"""MAGNET's kwdagger process-node integration.
 
-Containerization and endpoint leasing are independent capabilities implemented
-in :mod:`magnet.containers` and :mod:`magnet.leasing`. Most users should not
-compose those mixins themselves. ``MagnetProcessNode`` is the one supported
-integration point and carries both capabilities so an invocation may enable
-neither, either, or both::
+``MagnetProcessNode`` combines containerization and endpoint leasing::
 
-    host only:             python -m pkg.node ...
-    container only:        docker run ... python -m pkg.node ...
-    lease only:            infer-stack run ... -- python -m pkg.node ...
-    lease + container:     infer-stack run ... -- docker run ... python ...
+    host:                python -m pkg.node ...
+    container:           docker run ... python -m pkg.node ...
+    lease:               infer-stack run ... -- python -m pkg.node ...
+    lease + container:   infer-stack run ... -- docker run ... python ...
 
-The wrapper order is explicit here rather than encoded in inheritance between
-the capabilities: first choose host versus container execution, then put any
-lease around that command. kwdagger's cache guard remains outside the rendered
-node command.
+Container selection is applied first and leasing wraps the resulting command.
 """
 
 from __future__ import annotations
@@ -33,20 +25,9 @@ class MagnetProcessNode(
     LeaseCapability,
     YamlProcessNode,
 ):
-    """A kwdagger process node with MAGNET's optional execution policies.
+    """A kwdagger process node with MAGNET container and lease capabilities."""
 
-    ``YamlProcessNode`` already derives from kwdagger's ordinary
-    ``ProcessNode`` and adds declarative metadata hooks, so it is the single
-    kwdagger base here. Python-defined and declarative DAGs therefore use the
-    same MAGNET surface without an artificial inheritance diamond.
-    The capability mixins deliberately own no ``command`` property; composition
-    and wrapper order live here.
-    """
-
-    # Which parameter names hold infer-stack endpoint aliases is legitimate
-    # declarative node data. kwdagger >= 0.4.1 consults this allow-list; the
-    # project still supports 0.4.0, where Python-defined DAGs set the class
-    # attribute directly.
+    # Leasing-specific keys accepted in declarative node specifications.
     extra_node_spec_keys = LEASE_NODE_SPEC_KEYS
 
     @property

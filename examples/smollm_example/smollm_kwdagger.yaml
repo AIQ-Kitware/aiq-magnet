@@ -2,18 +2,9 @@ name: smollm_example
 title: "Two SmolLM endpoints answer a dummy dataset"
 
 description: |
-  A minimal card whose subject is the execution machinery, not a measurement.
-
-  Two SmolLM2 models -- the 135M and 360M instruct checkpoints, the smallest
-  ungated chat models worth serving -- are each asked the same eight
-  single-digit addition questions, and the answers are compared.
-
-  Nothing here is a benchmark. The questions are generated from a seed, the
-  claim is about whether every question came back, and the interesting number
-  (how often the two models agree) is reported without being claimed about.
-  Run this against a simulator and the answers are random text: the coverage
-  claim still holds, and it is exactly the claim that fails when leasing or
-  containerization is broken.
+  Two SmolLM2 endpoints answer the same generated addition questions. The
+  evaluation checks request coverage and reports arithmetic accuracy and
+  cross-endpoint agreement.
 
 version: 1.0
 
@@ -41,10 +32,6 @@ links:
     url: "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct"
     type: "model"
 
-# What this example actually establishes: both endpoints came up, held a
-# model for the length of their own job, and answered everything they were
-# asked. A broken lease fails this. A container that cannot reach the gateway
-# fails this. A model that is bad at arithmetic does not.
 claim:
   python: |
     c = compare
@@ -71,39 +58,10 @@ symbols:
 
 kwdagger:
   result_node: compare
-
-  # Three nodes, and the middle one is the point.
-  #
-  # `items` and `compare` need no model, so they never lease -- they hold no
-  # GPU while they run. `ask` names which of its parameters holds a catalog
-  # alias, so each of its two cells acquires only the model it is about to use
-  # and releases it when its own job ends. Wrapping the whole evaluation in one
-  # lease would instead hold both models from the first node to the last.
-  #
-  # The DAG is built in Python rather than declared here, for one reason: a
-  # leasing node has to be told which parameter holds an alias, and kwdagger's
-  # node-spec allow-list is closed until 0.4.1 adds `extra_node_spec_keys`. In
-  # Python that is a class attribute, so this card runs on the released 0.4.0.
-  # `pipeline.py` says what the declarative form becomes once 0.4.1 lands.
-  #
-  # Each node's inputs, outputs and parameters come from its CLI's own kwconf
-  # declaration, so they are not restated here. What is left in this file is
-  # what a card is actually for: the claim, the evidence, and the sweep.
   pipeline: "smollm_example.pipeline.smollm_pipeline()"
 
-  # The two smallest SmolLM2 instruct checkpoints, named by catalog alias
-  # rather than by model. Which weights those resolve to, and whether they are
-  # served by vLLM on a GPU or by a simulator on a laptop, is the catalog's
-  # business -- see the two beside this file.
-  #
-  # This is a default matrix, not a fixed list. `run.sh` passes `--params`
-  # through to evaluate_new, so a caller can replace this axis without editing
-  # the card, for example:
-  #
-  #   ./run.sh --params='matrix: {ask.endpoint: [smol-135]}'
-  #
-  # README.md also shows how to make an untracked local catalog, add an
-  # endpoint with the infer-stack CLI, and sweep that alias here.
+  # Endpoint values are infer-stack catalog aliases. Override this default
+  # matrix with `--params='matrix: {ask.endpoint: [...]}'`.
   matrix:
     ask.endpoint:
       - smol-135

@@ -9,9 +9,7 @@
 # Anything else is passed through to `magnet evaluate_new`, so
 # `./run.sh --dry_run=1` compiles the campaign without running it.
 #
-# The two catalogs declare the SAME two aliases, so the card never learns
-# whether the real or simulated endpoints answered. Images and model weights
-# are pulled on demand; nothing needs fetching first.
+# The real and mock catalogs expose the same endpoint aliases.
 set -euo pipefail
 
 usage() {
@@ -52,9 +50,7 @@ EOF
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 examples="$(cd "$here/.." && pwd)"
 
-# This example lives beside magnet, not inside it -- it is a *consumer* of
-# magnet, the way a team's own repository is, and it is imported the same way:
-# by being on the path. `pipeline.py` and the node commands both need it.
+# Make the example package importable by the pipeline and node commands.
 export PYTHONPATH="$examples${PYTHONPATH:+:$PYTHONPATH}"
 
 require_commands() {
@@ -107,8 +103,7 @@ for arg in "$@"; do
         --no-container)
             container=0
             ;;
-        # Historical positive flags are harmless no-ops now that these are the
-        # defaults. Keep them accepted so existing invocations do not break.
+        # Compatibility aliases for the default real/container modes.
         --gpu|--container)
             ;;
         *)
@@ -117,14 +112,11 @@ for arg in "$@"; do
     esac
 done
 
-# Detect prerequisites without invoking their CLIs. Calling a modal CLI with no
-# subcommand prints its usage text and turns a simple presence check into a
-# spurious error.
+# Check executable availability without invoking modal CLIs.
 require_commands magnet infer-stack
 
 if [[ "$mock" == 1 ]]; then
-    # The mock catalog is a checked-in fixture. Custom real-model experiments
-    # should not rewrite it or the checked-in real catalog.
+    # The mock catalog is a checked-in fixture.
     catalog="$here/catalog-mock.yaml"
 else
     require_nvidia_gpu
@@ -135,8 +127,7 @@ if [[ ! -f "$catalog" ]]; then
     printf 'SmolLM catalog does not exist: %s\n' "$catalog" >&2
     exit 1
 fi
-# Generated kwdagger jobs run from artifact directories, so a caller-supplied
-# relative catalog path would stop resolving there. Export an absolute path.
+# Generated jobs run from artifact directories; export an absolute catalog path.
 catalog="$(cd "$(dirname "$catalog")" && pwd)/$(basename "$catalog")"
 
 if [[ "$container" == 1 ]] && ! command -v docker >/dev/null 2>&1; then
@@ -147,34 +138,23 @@ MSG
     exit 127
 fi
 
-# One-time host setup, not a per-run step: infer-stack needs to know how it
-# brings endpoints up. Say so plainly rather than let the run fail deep inside
-# a lease with `NullBackend`.
+# Require an initialized infer-stack backend.
 if ! infer-stack status 2>/dev/null | grep -qE '^\s*backend:\s*(compose|kubeai)'; then
     echo "infer-stack has no backend configured. Once per machine:" >&2
     echo "    infer-stack config init --yes --backend compose" >&2
     exit 1
 fi
 
-# The node image installs MAGNET from the commit pinned in Dockerfile and copies
-# only this example's CLI package. The Docker build context is this directory,
-# not the repository root, so changing cards, catalogs, docs, or unrelated
-# MAGNET source does not invalidate the image. infer-stack serves models
-# separately on the host.
+# Build the node image from this example directory. infer-stack runs on the host.
 container_args=()
 if [[ "$container" == 1 ]]; then
     image=magnet-smollm-example:latest
     docker build -f "$here/Dockerfile" -t "$image" "$here"
-    # Mount the working directory at its own absolute path: kwdagger bakes
-    # absolute output paths into every command, so keeping them identical means
-    # nothing has to be rewritten and a path in a log is one you can open.
+    # Preserve kwdagger's absolute artifact paths inside the container.
     container_args=(
         --container_image="$image"
         --container_mounts="$PWD"
-        # PYTHONPATH is captured by value into the rendered command, and the
-        # host path it names does not exist in the image -- the example is
-        # COPYed in and already on the image's path. Clear it rather than let
-        # a broken host path shadow that.
+        # Use the package path baked into the image, not the host PYTHONPATH.
         --container_env='{"PYTHONPATH": "/opt/examples"}'
     )
 fi

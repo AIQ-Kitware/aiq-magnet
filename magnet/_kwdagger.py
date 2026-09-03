@@ -178,7 +178,7 @@ class KWDaggerProcessor:
     """
     Adapter between a MAGNET recipe and kwdagger's experiment-runner APIs.
 
-    Scheduling and evidence discovery are deliberately separate. ``schedule``
+    Scheduling and evidence discovery are separate operations. ``schedule``
     submits the finite experiment campaign requested by this invocation.
     ``load_available_result_rows`` scans the shared kwdagger result store using
     kwdagger's aggregate loader, so evidence is not limited to the processes

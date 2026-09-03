@@ -71,16 +71,11 @@ def _configured_nodes(card, *, image=IMAGE, leasing_on=True):
     return pipeline.node_dict
 
 
-# --- what the example demonstrates -----------------------------------------
+# --- execution behavior -----------------------------------------------------
 
 
 def test_only_the_node_that_needs_a_model_leases(card):
-    """The argument for per-node leasing, stated as a DAG.
-
-    One lease around the evaluation would hold both SmolLM models while the
-    dataset is written and while the comparison runs, neither of which can use
-    one.
-    """
+    """Only the endpoint-consuming node acquires a lease."""
     nodes = _configured_nodes(card)
     nodes['ask'].configure({'endpoint': 'smol-135'})
     nodes['items'].configure({})
@@ -440,7 +435,7 @@ def test_run_sh_reports_all_missing_commands(tmp_path):
     assert 'usage:' not in proc.stderr.lower()
 
 
-# --- what the example computes ---------------------------------------------
+# --- evaluation outputs -----------------------------------------------------
 
 
 class _StubOpenAI(BaseHTTPRequestHandler):
@@ -451,7 +446,7 @@ class _StubOpenAI(BaseHTTPRequestHandler):
             self.rfile.read(int(self.headers['Content-Length'])))
         prompt = body['messages'][0]['content']
         left, right = (int(v) for v in re.findall(r'\d+', prompt)[:2])
-        # The 360M stub is wrong on purpose, so agreement is not trivially 1.
+        # Give the 360M stub a different answer so agreement is not always 1.
         total = left + right
         if body['model'] == 'smol-360':
             total += 1

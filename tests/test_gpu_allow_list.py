@@ -47,7 +47,7 @@ class Infer(LeaseOnlyProcessNode):
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     monkeypatch.delenv(leasing.INSIDE_LEASE_ENVVAR, raising=False)
-    # Poisoned on purpose: nothing may be interpolated at render time.
+    # A render-time value here must not be interpolated into the command.
     monkeypatch.setenv('SLURM_JOB_GPUS', '7')
 
 

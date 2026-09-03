@@ -9,10 +9,8 @@ This early version of the MAGNET package is intended to provide a look into how 
 
 ## Installing
 
-The base package is the card and claim machinery, the theory annotations,
-and kwdagger execution with containers. Anything that reads HELM output or
-leases inference endpoints is an extra, so a team whose card is a kwdagger
-pipeline over its own artifacts does not pull torch to run it:
+The base package includes cards, claims, theory annotations, kwdagger
+execution, and containers. HELM integration and endpoint leasing are optional:
 
 ```bash
 pip install aiq-magnet              # cards, claims, theory, kwdagger, containers
@@ -446,12 +444,9 @@ new parser. The complete aggregate row is also recorded under `evidence`, and
 the aggregate verdict records the evidence scope and request summary. The
 `results/` directory is created even when no evidence is available.
 
-If the launcher knows a fact that cannot be recovered from the card or its
-result, it can attach that fact to the verdict with `--provenance`. The main
-case is an interchangeable inference endpoint: the card may ask for the same
-`smol-135` alias through the same OpenAI-compatible API whether infer-stack is
-serving real weights, a simulator, or a replay fixture. That choice is made
-outside the card, so there is nothing reliable for MAGNET to introspect later.
+Use `--provenance` to record caller-known facts that are not present in the
+card or result, such as whether an endpoint alias resolved to real weights, a
+simulator, or a replay fixture.
 
 ```bash
 magnet evaluate_new card.yaml \

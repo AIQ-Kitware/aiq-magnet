@@ -557,11 +557,7 @@ def test_empty_evidence_still_writes_dashboard_run_bundle(
 
 def test_dry_run_compiles_the_campaign_without_running_it(
         kwdagger_recipe_fpath, tmp_path):
-    """`--dry_run` schedules KWDagger with run=0.
-
-    The whole matrix still compiles, so the request can be reported in full --
-    which is the point of asking. Nothing is submitted.
-    """
+    """`--dry_run` compiles the full matrix without submitting jobs."""
     output_path = ub.Path(tmp_path) / 'out'
     recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
     result = recipe.evaluate(backend='serial', dry_run=True)

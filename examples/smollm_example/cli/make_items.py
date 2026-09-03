@@ -1,10 +1,5 @@
 """
-Write the dummy dataset this example asks about.
-
-Contrived on purpose. A real benchmark would bring a download, a licence and a
-scoring convention, and none of those are what this example is demonstrating.
-Single-digit addition is enough to have a right answer, a wrong answer and a
-non-answer, which is all the comparison downstream needs.
+Generate a reproducible set of single-digit addition questions.
 
 CommandLine:
     python -m smollm_example.cli.make_items \
@@ -21,12 +16,11 @@ __all__ = ['build_items', 'MakeItemsCLI']
 
 
 def build_items(n_items: int, seed: int) -> list:
-    """
-    The dataset, derived from a seed so two runs ask the same questions.
+    """Build a reproducible question set.
 
     Args:
-        n_items (int): how many questions to write.
-        seed (int): what makes the set reproducible.
+        n_items (int): number of questions to write.
+        seed (int): random seed.
 
     Returns:
         list: dicts with ``id``, ``prompt`` and ``expected``.

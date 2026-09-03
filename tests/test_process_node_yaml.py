@@ -32,7 +32,7 @@ class Infer(MagnetProcessNode):
 
 
 class BareContainerNode(ContainerCapability, kwdagger.ProcessNode):
-    """Test-only non-YAML capability composition used to pin loader guards."""
+    """Test-only container-capable base ProcessNode."""
 
     @property
     def command(self):

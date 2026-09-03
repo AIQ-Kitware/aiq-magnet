@@ -1,52 +1,24 @@
 r"""
-magnet.backends.helm.cli.materialize_helm_suite
-================================================
+Materialize a set of precomputed HELM runs for a downstream pipeline node.
 
-A kwdagger-shaped node that puts a *set* of precomputed HELM runs where a
-downstream node expects a suite directory, cache-first.
+The selected runs are placed under::
 
-:mod:`materialize_helm_run` handles one run entry. Several evaluation cards
-read a whole suite -- every run of one scenario across the models a version
-holds -- and today that suite is staged by hand into a path the card is then
-pointed at. This node makes acquisition part of the pipeline: declare the
-benchmark, the version and a run pattern, and the node produces
-``<out>/benchmark_output/runs/<version>/<run>`` for every matching run,
-symlinked from a precomputed root when one holds it and downloaded from the
-public bucket otherwise. A ``DONE`` sentinel and then the JSON manifest are
-written last; the manifest is the node's primary output, because kwdagger's
-generic result loader parses the primary output as JSON and a bare sentinel
-would fail that parse for every downstream aggregate.
+    <suite_dpath>/<run>
 
-Identity: benchmark, version and pattern are algorithm parameters (they say
-*which* suite). Where the bytes come from -- ``precomputed_roots``, whether a
-download is allowed -- is not: two nodes asking for the same suite are the
-same computation whichever cache served it.
+Local ``precomputed_roots`` are preferred; missing runs may be downloaded from
+the configured bucket. The JSON manifest is the primary kwdagger output and a
+``DONE`` sentinel is written alongside it.
 
-Usage::
+``benchmark``, ``version``, and ``runs`` define computation identity. Cache
+locations and download policy only control where the bytes are obtained.
+
+Example::
 
     python -m magnet.backends.helm.cli.materialize_helm_suite \
         --benchmark lite --version v1.0.0 --runs 'regex:med_qa.*' \
         --precomputed_roots /data/crfm-helm-public \
         --suite_dpath ./node_out/benchmark_output/runs/v1.0.0 \
         --done_fpath ./node_out/DONE
-
-In a declarative pipeline::
-
-    nodes:
-      materialize_lite:
-        executable: 'python -m magnet.backends.helm.cli.materialize_helm_suite'
-        algo_params: {benchmark: lite, version: v1.0.0, runs: 'regex:med_qa.*'}
-        perf_params: {precomputed_roots: '', download: auto}
-        out_paths:
-          suite_dpath: benchmark_output/runs/v1.0.0
-          manifest_fpath: materialize_manifest.json
-          done_fpath: DONE
-        primary_out_key: manifest_fpath
-      score:
-        in_paths: [helm_suite_path]
-        ...
-    edges:
-      - materialize_lite.suite_dpath -> score.helm_suite_path
 """
 from __future__ import annotations
 
@@ -142,9 +114,7 @@ def _make_store(bucket: str):
 
 
 def materialize_suite(config) -> dict:
-    """
-    Do the work; returns the manifest written beside the sentinel.
-    """
+    """Materialize the selected HELM runs and return the manifest."""
     import kwutil
     from magnet.backends.helm.cli.download_helm_results import filter_runs
     from magnet.backends.helm.cli.materialize_helm_run import ensure_symlink
