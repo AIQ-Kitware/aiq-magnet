@@ -18,9 +18,15 @@ that a claim is false.
 from __future__ import annotations
 
 import json
+import os
+import re
+import shutil
+import subprocess
+import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Tuple, TypedDict, Unpack, cast
 
 import kwconf
 import kwutil
@@ -31,7 +37,12 @@ from loguru import logger
 from pydantic import ValidationError
 from rich import print
 
-from magnet._kwdagger import KWDaggerProcessor, _resolve_pipeline_path
+from magnet import containers, leasing
+from magnet._kwdagger import (
+    KWDaggerProcessor,
+    KWDaggerScheduleOptions,
+    _resolve_pipeline_path,
+)
 from magnet.evaluation import (
     SAFER_USE_TEMPFILE,
     Claim,
@@ -42,12 +53,30 @@ from magnet.evaluation import (
     _parse_symbol_metadata,
     _reduce_results,
 )
-from magnet.schema import NewEvaluationRecipeSchema
+from magnet.schema import RECIPE_NAME_PATTERN, NewEvaluationRecipeSchema
 from magnet.theory.cards import report_from_card
 from magnet.utils.util_logger import setup_logging
 
+#: kwdagger's own default, used when there is no GPU to derive a cap from.
+DEFAULT_TMUX_WORKERS = 8
+
+Provenance = dict[str, object]
+ProvenanceInput = Mapping[str, object] | str | os.PathLike[str] | None
+
+
+class EvaluationScheduleOptions(KWDaggerScheduleOptions, total=False):
+    """Scheduler options accepted by :class:`NewEvaluationRecipe`."""
+
+    dry_run: bool
+    container_settings: containers.ContainerSettings
+    lease_settings: leasing.LeaseSettings
+
 __all__ = [
     'ClaimResultNamespace',
+    'coerce_provenance',
+    'derive_recipe_name',
+    'detected_gpu_count',
+    'coerce_tmux_workers',
     'NewEvaluationCLI',
     'NewEvaluationCellResult',
     'NewEvaluationRecipe',
@@ -66,7 +95,7 @@ class NewEvaluationCLI(kwconf.Config):
     `magnet evaluate_legacy` during the migration period.
     """
 
-    path: str = kwconf.Value(
+    path: str | None = kwconf.Value(
         None, required=True, position=1, help='Path to evaluation recipe YAML'
     )
 
@@ -96,10 +125,92 @@ class NewEvaluationCLI(kwconf.Config):
         ),
     )
 
-    tmux_workers: int = kwconf.Value(
-        8,
-        parser=int,
-        help='Number of tmux workers. Passed directly to kwdagger.',
+    tmux_workers: str = kwconf.Value(
+        'auto',
+        parser=str,
+        help=(
+            "Number of tmux workers, or 'auto' to bound it by the number of "
+            'GPUs on this machine. Concurrency has to stay under the GPU '
+            'count when leased nodes hold a model while waiting for another: '
+            'claim every GPU and nothing can be placed, so nothing releases.'
+        ),
+    )
+
+    container_image: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Run each node command in this image. Empty (the default) runs '
+            'them on the host. A node that declares its own image wins.'
+        ),
+        group='containers',
+    )
+
+    container_mounts: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Colon- or comma-separated host paths to bind-mount at their own '
+            'absolute paths. Normally the repository root.'
+        ),
+        group='containers',
+    )
+
+    container_env: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'JSON object of fixed environment values for node containers. '
+            'These override values captured from the host; a node-specific '
+            'container_env entry still wins for the same name.'
+        ),
+        group='containers',
+    )
+
+    container_docker_args: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Extra `docker run` arguments, for what varies by host: GPU '
+            'reservations, an alternate network, a registry credential mount.'
+        ),
+        group='containers',
+    )
+
+    container_forward_env: str = kwconf.Value(
+        '',
+        parser=str,
+        help=(
+            'Extra environment variable names to forward into the container, '
+            "on top of the defaults. This is how a pipeline's own "
+            'configuration reaches its nodes.'
+        ),
+        group='containers',
+    )
+
+    per_node_leasing: bool = kwconf.Value(
+        False,
+        isflag=True,
+        help=(
+            'Let each node acquire its own inference endpoints for the '
+            'duration of its own job, instead of holding every model in the '
+            'cohort for the whole run. Off by default: a run pointing at a '
+            'server infer-stack does not manage has no catalog to look up.'
+        ),
+        group='containers',
+    )
+
+    lease_allowed_gpus: bool = kwconf.Value(
+        True,
+        isflag=True,
+        help=(
+            'Confine a leased node to the GPUs its Slurm job was allocated. '
+            'On by default: off Slurm it renders to nothing, and under Slurm '
+            'its absence lets two nodes place servers on the same card. Turn '
+            'it off only where Slurm reports indices the container runtime '
+            'does not use.'
+        ),
+        group='containers',
     )
 
     skip_existing = kwconf.Value(
@@ -148,6 +259,35 @@ class NewEvaluationCLI(kwconf.Config):
         ),
     )
 
+    evidence_scope: str | None = kwconf.Value(
+        None,
+        parser=str,
+        help=(
+            "Which accumulated result rows the claim sees: `all` (every row "
+            "the result store holds for this recipe, whoever produced it) or "
+            "`requested` (only rows for result-node computations this "
+            "invocation asked for, cached or fresh). Unset, the card's own "
+            "`evidence.scope` applies, default `all`. A runner whose verdict "
+            "must describe this invocation passes `requested`: otherwise an "
+            "artifact left in the root by an earlier, superseded grid keeps "
+            "voting."
+        ),
+    )
+
+    provenance: str | None = kwconf.Value(
+        None,
+        parser=str,
+        help=(
+            'Caller-supplied YAML/JSON mapping, or a path to one, recorded '
+            'verbatim under `provenance` in verdict.json. Use this only for '
+            'facts MAGNET cannot infer from the recipe/result itself -- for '
+            'example whether an OpenAI-compatible endpoint alias was backed '
+            'by real weights, a simulator, or a replay fixture. Ordinary '
+            'execution settings such as backend/container image should stay '
+            'in their normal options rather than being duplicated here.'
+        ),
+    )
+
     verbose: bool = kwconf.Value(
         False, isflag=True, help='Verbose log output', group='logging'
     )
@@ -165,18 +305,13 @@ class NewEvaluationCLI(kwconf.Config):
     )
 
     @classmethod
-    def main(cls, argv: list[str] | None = None, **kwargs: Any) -> None:
-        """
-        Run one evaluation as a process.
+    def main(
+        cls, argv: list[str] | None = None, **kwargs: object
+    ) -> None:
+        """Run one evaluation.
 
-        Returns nothing on purpose. A CLI ``main`` return value is a process
-        exit status: ``kwconf.ModalCLI.main`` hands it to the console script,
-        which calls ``sys.exit`` on it, and ``sys.exit`` of a non-integer
-        prints that object and exits 1. Returning the result card made every
-        successful ``magnet evaluate_new`` dump the card and report failure.
-        Callers that want the card use the library API --
-        :meth:`NewEvaluationRecipe.evaluate` or :func:`evaluate_new_recipe` --
-        or read ``verdict.json`` from the run directory.
+        The CLI returns ``None`` so its return value is not interpreted as a
+        process exit status. Use the library API to retrieve a result card.
         """
         args = cls.cli(
             argv=argv,
@@ -186,6 +321,7 @@ class NewEvaluationCLI(kwconf.Config):
             special_options=False,
         )
 
+        assert args.path is not None
         validate = args['validate']
         if validate == 'only':
             try:
@@ -204,21 +340,35 @@ class NewEvaluationCLI(kwconf.Config):
         )
         if args.params is not None:
             recipe.apply_params(args.params)
+        if args.evidence_scope:
+            recipe.set_evidence_scope(args.evidence_scope)
 
-        schedule_options = {
-            key: args[key]
-            for key in [
-                'backend',
-                'tmux_workers',
-                'skip_existing',
-                'cache',
-                'max_configs',
-                'print_commands',
-                'dry_run',
-            ]
+        schedule_options: EvaluationScheduleOptions = {
+            'backend': args['backend'],
+            'skip_existing': bool(args['skip_existing']),
+            'cache': bool(args['cache']),
+            'max_configs': args['max_configs'],
+            'print_commands': args['print_commands'],
+            'dry_run': bool(args['dry_run']),
+            'tmux_workers': coerce_tmux_workers(args['tmux_workers']),
         }
+        # Apply execution settings to DAG nodes when the recipe is scheduled.
+        schedule_options['container_settings'] = (
+            containers.ContainerSettings.coerce(
+                image=args['container_image'],
+                mounts=args['container_mounts'],
+                env=args['container_env'],
+                docker_args=args['container_docker_args'],
+                forward_env=args['container_forward_env'],
+            )
+        )
+        schedule_options['lease_settings'] = leasing.LeaseSettings(
+            enabled=bool(args['per_node_leasing']),
+            allowed_gpus=bool(args['lease_allowed_gpus']),
+        )
         recipe.evaluate(
             verbose=bool(args.verbose),
+            provenance=coerce_provenance(args['provenance']),
             **schedule_options,
         )
         recipe.summarize()
@@ -523,6 +673,8 @@ class NewEvaluationResultCard:
     requested_work: Dict[str, Any] = field(default_factory=dict)
     evidence_scope: str = 'all'
     evidence_discovered: int = 0
+    #: Caller-supplied metadata written to the verdict unchanged.
+    provenance: Provenance | None = None
 
     @property
     def cell_result_ids(self) -> List[str]:
@@ -543,6 +695,8 @@ class NewEvaluationResultCard:
             record['requested_work'] = self.requested_work
         if self.metrics:
             record['metrics'] = self.metrics
+        if self.provenance:
+            record['provenance'] = self.provenance
         return record
 
 
@@ -567,6 +721,8 @@ class NewEvaluationRecipe(EvaluationCard):
         self, path, output_path: str | ub.Path, validate: str = 'error'
     ) -> None:
         super().__init__(path, output_path, validate='off')
+        #: Short machine identifier for this card, distinct from ``title``.
+        self.name = self.original_card.get('name') or derive_recipe_name(path)
         _check_new_evaluation_recipe(self)
 
         if validate in ('error', 'warning'):
@@ -587,6 +743,25 @@ class NewEvaluationRecipe(EvaluationCard):
         self.result_card: NewEvaluationResultCard | None = None
         self._run_hash_cached: str | None = None
 
+    def set_evidence_scope(self, scope: str) -> None:
+        """Set this invocation's evidence scope to ``all`` or ``requested``.
+
+        Example:
+            >>> from magnet.evaluation_new import NewEvaluationRecipe
+            >>> recipe = NewEvaluationRecipe.__new__(NewEvaluationRecipe)
+            >>> recipe.original_card = {'evidence': {}}
+            >>> recipe.set_evidence_scope('requested')
+            >>> recipe.evidence_scope
+            'requested'
+        """
+        scope = str(scope or '').strip()
+        if scope not in {'all', 'requested'}:
+            raise ValueError(
+                f'evidence scope must be `all` or `requested`; got {scope!r}')
+        evidence = dict(self.original_card.get('evidence') or {})
+        evidence['scope'] = scope
+        self.original_card['evidence'] = evidence
+
     def apply_params(self, params: Any) -> None:
         """Merge kwdagger-style params into this recipe's execution block."""
         params = kwutil.Yaml.coerce(params, backend='pyyaml')
@@ -596,6 +771,15 @@ class NewEvaluationRecipe(EvaluationCard):
         self.original_card['kwdagger'] = merged
         self.kwdagger = _resolve_pipeline_path(merged, self.recipe_dpath)
         _check_new_evaluation_recipe(self)
+
+    @property
+    def queue_name(self) -> str:
+        """Return the per-recipe queue namespace used by cmd_queue.
+
+        Runs of different recipes use different tmux session names. Concurrent
+        runs of the same recipe still share a queue namespace.
+        """
+        return f'schedule-{self.name}'
 
     @property
     def kwdagger_dpath(self) -> ub.Path:
@@ -621,14 +805,42 @@ class NewEvaluationRecipe(EvaluationCard):
             self._run_hash_cached = f'{self._recipe_hash}_{timestamp}'
         return self._run_hash_cached
 
-    def evaluate(
+    def evaluate(  # ty: ignore[invalid-method-override]
         self,
         verbose: bool = False,
-        **schedule_options: Any,
+        provenance: ProvenanceInput = None,
+        **schedule_options: Unpack[EvaluationScheduleOptions],
     ) -> NewEvaluationResultCard:
         return evaluate_new_recipe(
-            self, verbose=verbose, **schedule_options
+            self, verbose=verbose, provenance=provenance, **schedule_options
         )
+
+
+def coerce_provenance(raw: ProvenanceInput) -> Provenance | None:
+    """Coerce caller-supplied provenance into a mapping.
+
+    Use provenance for facts external to the recipe and result, such as whether
+    an endpoint alias resolved to real weights or a simulator.
+
+    Example:
+        >>> from magnet.evaluation_new import coerce_provenance
+        >>> coerce_provenance(None) is None
+        True
+        >>> coerce_provenance('{endpoint_kind: mock}')
+        {'endpoint_kind': 'mock'}
+        >>> coerce_provenance({'a': 1})
+        {'a': 1}
+    """
+    if raw is None or raw == '':
+        return None
+    if isinstance(raw, Mapping):
+        return dict(raw)
+    value: object = kwutil.Yaml.coerce(raw, backend='pyyaml')
+    if not isinstance(value, dict):
+        raise ValueError(
+            f'provenance must be a mapping; got {type(value).__name__}'
+        )
+    return cast(Provenance, value)
 
 
 def _claim_execution_hash(symbols: Symbols, measured: set[str]) -> str:
@@ -810,12 +1022,72 @@ def _summarize_requested_runs(
 
 
 def _link_kwdagger_root(recipe_output_path: ub.Path, kwdagger_dpath: ub.Path) -> None:
-    """Keep the historical ``<run>/kwdagger`` artifact location visible."""
+    """Maintain the ``<run>/kwdagger`` compatibility symlink."""
     link = recipe_output_path / 'kwdagger'
     try:
         ub.symlink(kwdagger_dpath, link, overwrite=True)
     except OSError as ex:
         logger.warning(f'could not link {link} to the DAG root: {ex}')
+
+
+def derive_recipe_name(path: str | os.PathLike[str]) -> str:
+    """Derive ``<parent>_<stem>`` when a card does not declare ``name``.
+
+    Including the parent avoids collisions between cards with common filenames.
+
+    Example:
+        >>> from magnet.evaluation_new import derive_recipe_name
+        >>> derive_recipe_name('examples/theory_links/coin_flip/card.yaml')
+        'coin_flip_card'
+        >>> derive_recipe_name('cards/oc_lift.yaml')
+        'cards_oc_lift'
+    """
+    fpath = ub.Path(path).absolute()
+    derived = f'{fpath.parent.name}_{fpath.stem}'
+    if not re.match(RECIPE_NAME_PATTERN, derived):
+        raise ValueError(
+            f'cannot derive a recipe name from {fpath.name!r}: {derived!r} is '
+            f'not a usable identifier ({RECIPE_NAME_PATTERN}). Declare a '
+            '`name` in the card.'
+        )
+    warnings.warn(
+        f'card declares no `name`; using {derived!r}, derived from its path. '
+        'Declare a `name` so it stays stable when the file moves.',
+        UserWarning,
+        stacklevel=3,
+    )
+    return derived
+
+
+def detected_gpu_count() -> int:
+    """Count GPUs reported by ``nvidia-smi``, or return 0 if unavailable."""
+    exe = shutil.which('nvidia-smi')
+    if exe is None:
+        return 0
+    try:
+        proc = subprocess.run(
+            [exe, '--list-gpus'],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if proc.returncode != 0:
+        return 0
+    return sum(1 for line in proc.stdout.splitlines() if line.strip())
+
+
+def coerce_tmux_workers(requested: str | int) -> int:
+    """Coerce a worker count, deriving ``auto`` from the local GPU count.
+
+    ``auto`` leaves one GPU free when GPUs are present; CPU-only hosts keep
+    kwdagger's default worker count.
+    """
+    if isinstance(requested, str) and requested.strip().lower() == 'auto':
+        gpus = detected_gpu_count()
+        if gpus <= 0:
+            return DEFAULT_TMUX_WORKERS
+        return max(1, gpus - 1)
+    return int(requested)
 
 
 def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
@@ -835,6 +1107,13 @@ def _check_new_evaluation_recipe(recipe: NewEvaluationRecipe) -> None:
             'evaluate_new does not combine `kwdagger:` with the legacy '
             '`pipeline:` executor. Remove the legacy block or use '
             '`magnet evaluate_legacy`.'
+        )
+    if not re.match(RECIPE_NAME_PATTERN, recipe.name or ''):
+        raise ValueError(
+            f'recipe `name` {recipe.name!r} must match {RECIPE_NAME_PATTERN}. '
+            'It is used as a tmux session name and a path component, so it is '
+            'restricted to letters, digits, underscore and hyphen. Put the '
+            'readable version in `title`.'
         )
     if not recipe.kwdagger.get('result_node'):
         raise ValueError(
@@ -865,10 +1144,12 @@ def evaluate_new_recipe(
     recipe: NewEvaluationRecipe,
     *,
     verbose: bool = False,
-    **schedule_options: Any,
+    provenance: ProvenanceInput = None,
+    **schedule_options: Unpack[EvaluationScheduleOptions],
 ) -> NewEvaluationResultCard:
     """Schedule requested work, then evaluate the claim over available evidence."""
     _check_new_evaluation_recipe(recipe)
+    resolved_provenance = coerce_provenance(provenance)
 
     # Resolve static theory references before scheduling anything. A broken
     # annotation or index should fail before jobs run, not after.
@@ -905,6 +1186,8 @@ def evaluate_new_recipe(
     # Scheduling is one finite operational request. It may add new results to
     # the shared kwdagger store, reuse results that already exist, or leave
     # some requested work failed / pending.
+    # An explicit queue_name from the caller still wins.
+    schedule_options.setdefault('queue_name', recipe.queue_name)
     dry_run = bool(schedule_options.get('dry_run', False))
     processor.schedule(**schedule_options)
     requested_runs = processor.inspect_requested_runs()
@@ -938,6 +1221,7 @@ def evaluate_new_recipe(
             cell_results=[],
             requested_work=requested_work,
             evidence_scope=recipe.evidence_scope,
+            provenance=resolved_provenance,
         )
         recipe.result_card = result_card
         recipe.claim.status = 'NOT_EVALUATED'
@@ -950,11 +1234,14 @@ def evaluate_new_recipe(
     # KWDagger aggregate discovers the available result store independently of
     # this request. The recipe may then use the request as an optional filter;
     # the compiled schedule is never the result-discovery mechanism.
+    result_node = processor.result_node
+    if result_node is None:
+        raise ValueError('recipe must declare kwdagger.result_node')
     discovered_evidence_rows = processor.load_available_result_rows()
     evidence_rows = _select_evidence_rows(
         discovered_evidence_rows,
         requested_runs,
-        result_node=processor.result_node,
+        result_node=result_node,
         scope=recipe.evidence_scope,
     )
 
@@ -1032,6 +1319,7 @@ def evaluate_new_recipe(
         requested_work=requested_work,
         evidence_scope=recipe.evidence_scope,
         evidence_discovered=len(discovered_evidence_rows),
+        provenance=resolved_provenance,
     )
 
     with safer.open(

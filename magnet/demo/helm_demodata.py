@@ -215,6 +215,9 @@ def ensure_helm_fixture_outputs(**kwargs):
             path to demo outputs with a ``benchmark_output`` subdirectory.
 
     Example:
+        >>> # The fixture is built with HELM's own dataclasses, so this needs
+        >>> # the extra even though the module imports without it.
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.demo.helm_demodata import ensure_helm_fixture_outputs
         >>> dpath = ensure_helm_fixture_outputs()
         >>> assert (dpath / 'benchmark_output/runs/my-suite').is_dir()
@@ -257,6 +260,7 @@ def ensure_helm_llama_fixture_outputs():
             root corresponding to ``crfm-helm-public``.
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.demo.helm_demodata import ensure_helm_llama_fixture_outputs
         >>> root = ensure_helm_llama_fixture_outputs()
         >>> runs = root / 'lite/benchmark_output/runs'

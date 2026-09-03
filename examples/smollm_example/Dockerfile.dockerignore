@@ -1,0 +1,5 @@
+# The node image only executes the example's Python CLI package.
+*
+!__init__.py
+!cli/
+!cli/**

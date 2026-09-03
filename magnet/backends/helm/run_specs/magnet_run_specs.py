@@ -1,5 +1,7 @@
 from dataclasses import replace
 
+from magnet.exceptions import require_optional
+require_optional('helm', 'helm', 'HELM run specs')
 from helm.benchmark.run_spec import RunSpec, run_spec_function, get_run_spec_function
 from helm.benchmark.scenarios.scenario import ScenarioSpec
 

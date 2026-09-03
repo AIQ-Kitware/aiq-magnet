@@ -1,6 +1,9 @@
 import argparse
 
-from sklearn.linear_model import LinearRegression
+from magnet.exceptions import require_optional
+require_optional('sklearn', 'helm', 'the perturbation predictor\'s linear fit')
+
+from sklearn.linear_model import LinearRegression  # noqa: E402
 import pandas as pd
 
 from magnet.predictor import RunPredictor, RunPrediction
@@ -12,6 +15,7 @@ class ExamplePerturbationPredictor(RunPredictor):
     Class to demonstrate a stat prediction algorithm based on strength of perturbation
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:sklearn)
         >>> from magnet.example_perturbation_predictor import *  # NOQA
         >>> import magnet
         >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)

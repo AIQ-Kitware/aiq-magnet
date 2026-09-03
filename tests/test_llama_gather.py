@@ -1,3 +1,5 @@
+import pytest
+pytest.importorskip('helm', reason="needs the helm extra: pip install 'aiq-magnet[helm]'")  # noqa: E402
 """
 The llama recipe reads a declared set of runs, not a directory.
 

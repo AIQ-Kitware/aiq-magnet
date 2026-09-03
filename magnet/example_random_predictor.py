@@ -10,6 +10,7 @@ class ExampleRandomPredictor(RunPredictor):
     Class to demonstrate a random stat prediction algorithm
 
     Example:
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.example_random_predictor import *  # NOQA
         >>> import magnet
         >>> # xdoctest: +REQUIRES(env:HELM_RUN_AVAILABLE)

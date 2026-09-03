@@ -32,6 +32,7 @@ def kwdagger_recipe_fpath(tmp_path):
     script.write_text(textwrap.dedent(SCRIPT))
     fpath = dpath / 'recipe.yaml'
     fpath.write_text(yaml.safe_dump({
+        'name': 'probe',
         'title': 'new evaluator probe',
         'description': 'new evaluator probe',
         'version': '1.0',
@@ -83,6 +84,7 @@ def test_new_cli_passes_execution_config_directly(
         '--output_path', str(output_path),
         '--params', 'matrix: {emit.seed: [7]}',
         '--backend', 'serial',
+        '--container_env', '{"DEMO_MODE": "1"}',
         '--skip_existing=0',
         '--cache=1',
         '--max_configs=1',
@@ -353,6 +355,29 @@ def test_requested_scope_filters_accumulated_evidence(
     }
 
 
+def test_an_invocation_can_narrow_the_scope_without_editing_the_card(
+        kwdagger_recipe_fpath, tmp_path):
+    """A runner's verdict must describe the work it requested, even when the
+    result store holds rows from an earlier grid under the same recipe."""
+    output_path = ub.Path(tmp_path) / 'out'
+
+    first = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    first.apply_params('matrix: {emit.seed: [1]}')
+    first.evaluate(backend='serial')
+
+    second = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    second.apply_params('matrix: {emit.seed: [2]}')
+    second.set_evidence_scope('requested')
+    second_result = second.evaluate(backend='serial')
+
+    assert second_result.evidence_scope == 'requested'
+    assert second_result.evidence_discovered == 2
+    assert len(second_result.cell_results) == 1
+    # The card on disk still says nothing about scope.
+    third = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
+    assert third.evidence_scope == 'all'
+
+
 def test_requested_scope_includes_requested_cached_output(
         kwdagger_recipe_fpath, tmp_path):
     output_path = ub.Path(tmp_path) / 'out'
@@ -532,11 +557,7 @@ def test_empty_evidence_still_writes_dashboard_run_bundle(
 
 def test_dry_run_compiles_the_campaign_without_running_it(
         kwdagger_recipe_fpath, tmp_path):
-    """`--dry_run` schedules KWDagger with run=0.
-
-    The whole matrix still compiles, so the request can be reported in full --
-    which is the point of asking. Nothing is submitted.
-    """
+    """`--dry_run` compiles the full matrix without submitting jobs."""
     output_path = ub.Path(tmp_path) / 'out'
     recipe = NewEvaluationRecipe(kwdagger_recipe_fpath, output_path)
     result = recipe.evaluate(backend='serial', dry_run=True)

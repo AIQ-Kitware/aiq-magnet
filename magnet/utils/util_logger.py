@@ -6,7 +6,7 @@ from loguru import logger
 
 
 def setup_logging(
-    verbose: bool = False, log_out_dir: str | None = None
+    verbose: bool = False, log_out_dir: str | os.PathLike[str] | None = None
 ) -> None:
     """Configure loguru logging.
 
@@ -21,9 +21,9 @@ def setup_logging(
     logger.remove()
 
     if log_out_dir:
-        ub.Path(log_out_dir).ensuredir()
+        log_out_path = ub.Path(log_out_dir).ensuredir()
         logger.add(
-            f'{log_out_dir}/log',
+            str(log_out_path / 'log'),
             level=level,
             enqueue=True,
         )

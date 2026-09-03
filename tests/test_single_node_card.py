@@ -21,6 +21,7 @@ out.write_text(json.dumps({'result': {'metrics': {'score': float(args['seed']) /
 
 def _card_data(script, seeds, result_node='emit'):
     data = {
+        'name': 'probe',
         'title': 'probe',
         'description': 'probe',
         'version': '1.0',

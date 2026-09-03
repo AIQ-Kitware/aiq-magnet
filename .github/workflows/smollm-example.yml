@@ -1,0 +1,80 @@
+name: SmolLM Mock Integration
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/smollm-example.yml'
+      - 'examples/smollm_example/**'
+      - 'magnet/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/smollm-example.yml'
+      - 'examples/smollm_example/**'
+      - 'magnet/**'
+      - 'pyproject.toml'
+      - 'uv.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smollm-mock-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mock_end_to_end:
+    name: Mock end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v6.0.2
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.13'
+
+      - name: Install MAGNET with leasing support
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[leasing]'
+
+      - name: Check Docker
+        run: |
+          docker version
+          docker compose version
+
+      - name: Configure infer-stack
+        run: |
+          infer-stack config init --yes --backend compose
+          # Open WebUI is useful interactively but unnecessary for this smoke
+          # test. Keep LiteLLM enabled: the demo should exercise the same
+          # stable OpenAI-compatible front door as a real run.
+          infer-stack config set ui false
+          infer-stack status
+
+      - name: Run SmolLM mock demo
+        working-directory: examples/smollm_example
+        run: ./run.sh --mock
+
+      - name: Show failure diagnostics
+        if: failure()
+        run: |
+          infer-stack status || true
+          infer-stack leases || true
+          docker ps -a || true
+
+      - name: Upload run artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v6.0.0
+        with:
+          name: smollm-mock-failure-${{ github.run_id }}
+          path: examples/smollm_example/runs/smollm
+          if-no-files-found: ignore

@@ -1,0 +1,39 @@
+# Simulator definitions for the same aliases as catalog.yaml. These endpoints
+# require no GPU or model weights. Fixed seeds make mock runs reproducible;
+# model-quality metrics from the simulator are not meaningful.
+models:
+  smol135: {source: hf://HuggingFaceTB/SmolLM2-135M-Instruct}
+  smol360: {source: hf://HuggingFaceTB/SmolLM2-360M-Instruct}
+
+endpoints:
+  smol-135:
+    engine: vllm
+    model: smol135
+    runtime:
+      image: ghcr.io/llm-d/llm-d-inference-sim:v0.9.0
+      max_model_len: 2048
+      max_num_seqs: 8
+      simulator:
+        kind: llm-d-sim
+        mode: random
+        seed: 20260902
+        time_to_first_token: 120ms
+        inter_token_latency: 8ms
+        startup_duration: 10s
+    reclaim: {policy: stop}
+
+  smol-360:
+    engine: vllm
+    model: smol360
+    runtime:
+      image: ghcr.io/llm-d/llm-d-inference-sim:v0.9.0
+      max_model_len: 2048
+      max_num_seqs: 8
+      simulator:
+        kind: llm-d-sim
+        mode: random
+        seed: 20260903
+        time_to_first_token: 120ms
+        inter_token_latency: 8ms
+        startup_duration: 10s
+    reclaim: {policy: stop}

@@ -6,12 +6,29 @@ Everything that knows about DAGs, schedules and queues lives here, so
 """
 import json
 import os
-from typing import Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple, TypedDict, Unpack
 
 import ubelt as ub
 from kwdagger import Pipeline, ProcessNode
+from kwdagger.pipeline import coerce_pipeline
 from kwdagger.schedule import ScheduleEvaluationConfig, build_schedule
 from loguru import logger
+
+if TYPE_CHECKING:
+    from magnet.containers import ContainerSettings
+    from magnet.leasing import LeaseSettings
+
+
+class KWDaggerScheduleOptions(TypedDict, total=False):
+    """KWDagger scheduler options exposed by the new evaluator."""
+
+    backend: str
+    tmux_workers: int
+    skip_existing: bool
+    cache: bool
+    max_configs: int | None
+    print_commands: bool | str
+    queue_name: str
 
 __all__ = [
     'GenericPipelineProcessor',
@@ -135,6 +152,8 @@ class GenericPipelineProcessor:
         if not self.symbols:
             self.dispatch()
 
+        assert self.dag is not None
+        assert self.compiled_dag is not None
         node_name = next(iter(self.dag.node_dict))
         out_path = self.dag.node_dict[node_name].out_paths['results_fpath']
 
@@ -177,7 +196,7 @@ class KWDaggerProcessor:
     """
     Adapter between a MAGNET recipe and kwdagger's experiment-runner APIs.
 
-    Scheduling and evidence discovery are deliberately separate. ``schedule``
+    Scheduling and evidence discovery are separate operations. ``schedule``
     submits the finite experiment campaign requested by this invocation.
     ``load_available_result_rows`` scans the shared kwdagger result store using
     kwdagger's aggregate loader, so evidence is not limited to the processes
@@ -219,14 +238,14 @@ class KWDaggerProcessor:
     """
 
     def __init__(
-        self, kwdagger_config: Dict[str, Any], root_dpath: ub.Path
+        self, kwdagger_config: Dict[str, Any], root_dpath: str | os.PathLike[str]
     ) -> None:
         # ``result_node`` is a MAGNET-level declaration, not part of the
         # ``kwdagger schedule --params`` payload.
         self.params = {
             k: v for k, v in kwdagger_config.items() if k != 'result_node'
         }
-        self.result_node = kwdagger_config.get('result_node')
+        self.result_node: str | None = kwdagger_config.get('result_node')
         self.root_dpath = ub.Path(root_dpath)
         self.results = []
         self.symbols = []
@@ -234,7 +253,12 @@ class KWDaggerProcessor:
         self.queue = None
 
     def schedule(
-        self, *, dry_run: bool = False, **schedule_options: Any
+        self,
+        *,
+        dry_run: bool = False,
+        container_settings: 'ContainerSettings | None' = None,
+        lease_settings: 'LeaseSettings | None' = None,
+        **schedule_options: Unpack[KWDaggerScheduleOptions],
     ) -> None:
         """Submit this invocation's requested experiment campaign.
 
@@ -246,9 +270,39 @@ class KWDaggerProcessor:
         ``dry_run`` schedules with ``run=0``. KWDagger still compiles the whole
         matrix and hands back the graph, so the request is reported in full; it
         writes a driver script rather than submitting anything.
+
+        ``container_settings`` and ``lease_settings`` say where this
+        invocation's work runs. They are written onto the nodes here rather
+        than read from process state when a command renders, so two pipelines
+        in one process can differ and a rendered command is explainable from
+        its node alone.
         """
+        from magnet import containers, leasing
+
+        # Build the DAG once and hand the same object to build_schedule.
+        # coerce_pipeline returns a Pipeline unchanged, so the nodes configured
+        # here are the nodes that render commands -- which they were not when
+        # this built a throwaway pipeline to inspect and let build_schedule
+        # construct its own.
+        pipeline = coerce_pipeline(self.params['pipeline'])
+
+        container_settings = (
+            container_settings or containers.ContainerSettings()
+        )
+        lease_settings = lease_settings or leasing.LeaseSettings()
+        container_settings.apply(pipeline)
+        lease_settings.apply(pipeline)
+
+        # Before anything is submitted: an execution setting that cannot reach
+        # a single node is a failed invocation, not a default.
+        _check_container_settings_apply(pipeline, container_settings)
+
         kwd_config = ScheduleEvaluationConfig(
-            params=self.params,  # includes pipeline and matrix/grid controls
+            # includes pipeline and matrix/grid controls. The configured
+            # Pipeline object goes in place of the spec; self.params keeps the
+            # spec, because the aggregate path builds its own pipeline for
+            # reading results and has no business inheriting execution settings.
+            params=dict(self.params, pipeline=pipeline),
             root_dpath=self.root_dpath,
             run=not dry_run,
             **schedule_options,
@@ -451,6 +505,61 @@ def _is_missing_aggregate_value(value: Any) -> bool:
             return False
         return bool(missing.item())
     return False
+
+
+def _check_container_settings_apply(
+    pipeline: Pipeline, settings: 'ContainerSettings | None' = None
+) -> None:
+    """
+    Refuse to run when ``--container_image`` would do nothing.
+
+    Containerization is opt-in per node capability: only a node carrying
+    :class:`~magnet.containers.ContainerCapability` renders the ``docker run``
+    prefix. A card that declares its DAG as data gets kwdagger's plain
+    ``YamlProcessNode``, which carries no container capability, so the image
+    was accepted, stored, and never read -- a green run that containerized
+    nothing, with no warning. Evidence from that run is indistinguishable from evidence produced
+    the way the invocation asked for, which is the whole reason it has to be an
+    error rather than a note in a log nobody reads.
+
+    Raises:
+        ValueError: if an image is configured and no node can use it.
+    """
+    from magnet import containers
+
+    if settings is None:
+        settings = containers.ContainerSettings()
+    if not settings.image:
+        return
+
+    node_dict = pipeline.node_dict
+    inert = sorted(
+        name for name, node in node_dict.items()
+        if not isinstance(node, containers.ContainerCapability)
+    )
+    if not node_dict or len(inert) < len(node_dict):
+        # A mixed DAG is legitimate -- an analysis step may belong on the host
+        # next to a containerized model step -- so name what will not move
+        # rather than refusing the run.
+        if inert:
+            logger.warning(
+                f'--container_image is set, but these nodes cannot use it and '
+                f'will run on the host: {inert}. Give each a container-capable '
+                '`class:` (normally magnet.process_node.MagnetProcessNode) if '
+                'that is not intended.'
+            )
+        return
+
+    raise ValueError(
+        f'--container_image={settings.image!r} was given, '
+        f'but no node in this pipeline can be containerized, so nothing would '
+        f'run in the image and the results would look exactly like a '
+        f'containerized run. Nodes: {inert}.\n'
+        'Containerization is opt-in per node capability. For a card that '
+        'inlines its DAG and may also lease endpoints, use:\n'
+        '    class: magnet.process_node.MagnetProcessNode\n'
+        'Drop --container_image to run on the host.'
+    )
 
 
 def _primary_result_path(node: Any) -> ub.Path | None:

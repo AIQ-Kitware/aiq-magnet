@@ -14,6 +14,8 @@ The heavy end-to-end replay (a real model executes) is opt-in behind
 """
 
 from __future__ import annotations
+import pytest
+pytest.importorskip('helm', reason="needs the helm extra: pip install 'aiq-magnet[helm]'")  # noqa: E402
 
 import json
 import os

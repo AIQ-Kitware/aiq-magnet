@@ -7,6 +7,22 @@ This early version of the MAGNET package is intended to provide a look into how 
 
 **IMPORTANT:** As this is a preliminary release, interfaces are subject to change.
 
+## Installing
+
+The base package includes cards, claims, theory annotations, kwdagger
+execution, and containers. HELM integration and endpoint leasing are optional:
+
+```bash
+pip install aiq-magnet              # cards, claims, theory, kwdagger, containers
+pip install 'aiq-magnet[helm]'      # + HELM output loaders, predictors, materialize, demo data (crfm-helm, torch)
+pip install 'aiq-magnet[leasing]'   # + infer-stack, for --per_node_leasing
+pip install 'aiq-magnet[optional]'  # helm + leasing
+pip install 'aiq-magnet[all]'       # everything, plus the test tools
+```
+
+Importing a HELM-backed module without the extra raises
+``MissingOptionalDependency`` naming the extra to install.
+
 ## Developer Quick Start
 
 Quick start: install and run tests
@@ -14,7 +30,7 @@ Quick start: install and run tests
 ```bash
 uv venv --python 3.11 --seed .venv-311-magnet
 source .venv-311-magnet/bin/activate
-uv pip install .[tests]
+uv pip install '.[all]'
 pytest
 ```
 
@@ -427,6 +443,19 @@ the existing dashboard can display the concrete experiment inputs without a
 new parser. The complete aggregate row is also recorded under `evidence`, and
 the aggregate verdict records the evidence scope and request summary. The
 `results/` directory is created even when no evidence is available.
+
+Use `--provenance` to record caller-known facts that are not present in the
+card or result, such as whether an endpoint alias resolved to real weights, a
+simulator, or a replay fixture.
+
+```bash
+magnet evaluate_new card.yaml \
+    --provenance '{endpoint: {kind: simulator, catalog: rehearsal}}'
+```
+
+The mapping is copied into aggregate `verdict.json` as `provenance`. Do not use
+it to restate information MAGNET already has as ordinary invocation settings,
+such as the kwdagger backend or container image.
 
 ### Downloading HELM results
 

@@ -1,0 +1,24 @@
+# Real SmolLM endpoints served by vLLM on a GPU. The endpoint aliases match
+# catalog-mock.yaml so the card can use either catalog unchanged.
+models:
+  smol135: {source: hf://HuggingFaceTB/SmolLM2-135M-Instruct}
+  smol360: {source: hf://HuggingFaceTB/SmolLM2-360M-Instruct}
+
+endpoints:
+  smol-135:
+    engine: vllm
+    model: smol135
+    runtime:
+      max_model_len: 2048
+      gpu_memory_utilization: 0.2
+      extra_args: ['--enforce-eager']
+    reclaim: {policy: stop}
+
+  smol-360:
+    engine: vllm
+    model: smol360
+    runtime:
+      max_model_len: 2048
+      gpu_memory_utilization: 0.2
+      extra_args: ['--enforce-eager']
+    reclaim: {policy: stop}

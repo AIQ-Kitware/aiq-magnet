@@ -47,6 +47,8 @@ class HelmRunAnalysis(ub.NiceRepr):
         Optional human-friendly label used in summaries.
 
     Example:
+        >>> # This module imports without HELM; the analysis it wraps does not.
+        >>> # xdoctest: +REQUIRES(module:helm)
         >>> from magnet.backends.helm.helm_outputs import HelmRun
         >>> from magnet.backends.helm.helm_run_analysis import HelmRunAnalysis
         >>> run = HelmRun.demo()

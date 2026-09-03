@@ -1,3 +1,5 @@
+import pytest
+pytest.importorskip('helm', reason="needs the helm extra: pip install 'aiq-magnet[helm]'")  # noqa: E402
 def test_small_helm_output_fixture():
     """The shared HELM loader fixture is local and contains real JSON shapes."""
     from magnet.demo.helm_demodata import ensure_helm_fixture_outputs

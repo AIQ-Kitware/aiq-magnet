@@ -1,0 +1,68 @@
+name: smollm_example
+title: "Two SmolLM endpoints answer a dummy dataset"
+
+description: |
+  Two SmolLM2 endpoints answer the same generated addition questions. The
+  evaluation checks request coverage and reports arithmetic accuracy and
+  cross-endpoint agreement.
+
+version: 1.0
+
+organizations:
+  - Kitware
+
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+
+tags:
+  - example
+  - leasing
+  - containers
+  - smollm
+
+links:
+  - title: "MAGNET"
+    url: "https://github.com/AIQ-Kitware/aiq-magnet"
+    type: "software"
+  - title: "SmolLM2-135M-Instruct"
+    url: "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct"
+    type: "model"
+  - title: "SmolLM2-360M-Instruct"
+    url: "https://huggingface.co/HuggingFaceTB/SmolLM2-360M-Instruct"
+    type: "model"
+
+claim:
+  python: |
+    c = compare
+    assert c.coverage == 1.0, (
+        f"{c.endpoints}: only {c.coverage:.0%} of items came back")
+
+evidence:
+  scope: requested
+
+symbols:
+  compare.agreement:
+    metadata:
+      display_name: "Cross-model agreement"
+      display: True
+      define_metric:
+        objective: maximize
+        aggregation_strategy:
+          type: 'mean'
+
+  compare.coverage:
+    metadata:
+      display_name: "Items answered by every endpoint"
+      display: True
+
+kwdagger:
+  result_node: compare
+  pipeline: "smollm_example.pipeline.smollm_pipeline()"
+
+  # Endpoint values are infer-stack catalog aliases. Override this default
+  # matrix with `--params='matrix: {ask.endpoint: [...]}'`.
+  matrix:
+    ask.endpoint:
+      - smol-135
+      - smol-360
