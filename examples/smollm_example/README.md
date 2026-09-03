@@ -133,6 +133,16 @@ because both simulated endpoints return the same canned sequence, seed
 regardless. **Neither number means anything here**, which is why the card
 claims about neither.
 
+### CI smoke test
+
+GitHub Actions runs the exact containerized mock path with `./run.sh --mock`
+on an ordinary `ubuntu-latest` runner. The job installs MAGNET with the
+`leasing` extra, initializes infer-stack's Compose backend, disables Open WebUI
+(the UI is outside this example's execution path), and leaves the LiteLLM
+gateway enabled. This exercises `run.sh`, the node image build, kwdagger,
+per-node leasing, the simulator containers, the gateway, and the final claim
+without requiring a GPU.
+
 ## Why the DAG is Python
 
 A leasing node has to be told which of its parameters holds a catalog alias,
