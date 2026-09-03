@@ -150,6 +150,9 @@ mod_name = "magnet"
 repo_name = "aiq-magnet"
 pkg_name = "aiq-magnet"
 
+typed = true
+typecheck_extra_paths = ["tests"]
+typecheck_install_extras = ["tests", "helm"]
 os = ["linux"]
 
 min_python = "3.11"
@@ -165,8 +168,15 @@ use_pyproject_requirements = true
 ci_versions_minimal_strict = ""
 ci_versions_minimal_loose = ""
 
-linter = false
+linter = true
 
 enable_gpg = false
 ci_pypi_trusted_publishing = true
 deploy_pypi = true
+
+skip_autogen = [
+    ".github/dependabot.yml",
+    "publish.sh",
+    "run_doctests.sh",
+    "run_linter.sh",
+]

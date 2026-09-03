@@ -104,7 +104,7 @@ def shortest_unique_prefixes(items, sep=None, allow_simple=True, min_length=0, a
     for item in items:
         final_node, trace = trie._get_node(item)
         for key, node in trace:
-            node.value += 1
+            node.value += 1  # ty: ignore[unsupported-operator]
 
     # if not isinstance(node.value, int):
     #     node.value = 0
@@ -114,7 +114,7 @@ def shortest_unique_prefixes(items, sep=None, allow_simple=True, min_length=0, a
     unique = []
     for item in items:
         freq = None
-        for prefix, freq in trie.prefixes(item):
+        for prefix, freq in trie.prefixes(item):  # ty: ignore[not-iterable]
             if freq == 1:
                 if sep is None:
                     prefix_length = len(prefix)
