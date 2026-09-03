@@ -67,6 +67,14 @@ def test_a_lease_only_node_has_no_container_capability():
     assert not isinstance(node, containers.ContainerCapability)
 
 
+def test_lease_rendering_does_not_require_infer_stack_on_path(monkeypatch):
+    """Rendering describes a later job; it must not inspect this host's PATH."""
+    monkeypatch.setenv('PATH', '')
+    node = _node(Infer, {'model_id': 'mock/tiny-1b',
+                         'extractor_model_id': None})
+    assert node.command.startswith('infer-stack run ')
+
+
 def test_the_node_leases_the_models_it_names():
     node = _node(Infer, {'model_id': 'mock/tiny-1b',
                          'extractor_model_id': 'mock/extractor-70b'})
