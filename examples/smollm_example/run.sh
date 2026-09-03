@@ -49,7 +49,6 @@ EOF
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 examples="$(cd "$here/.." && pwd)"
-repo="$(cd "$examples/.." && pwd)"
 
 # This example lives beside magnet, not inside it -- it is a *consumer* of
 # magnet, the way a team's own repository is, and it is imported the same way:
@@ -145,14 +144,15 @@ if ! infer-stack status 2>/dev/null | grep -qE '^\s*backend:\s*(compose|kubeai)'
     exit 1
 fi
 
-# Built here rather than named, because an image tag that exists on the machine
-# that built it is exactly the kind of thing that does not travel. The build is
-# a slim Python base plus MAGNET's core -- no GPU, no weights, no extras. This
-# image runs the evaluation nodes; infer-stack serves the models separately.
+# The node image installs MAGNET from the commit pinned in Dockerfile and copies
+# only this example's CLI package. The Docker build context is this directory,
+# not the repository root, so changing cards, catalogs, docs, or unrelated
+# MAGNET source does not invalidate the image. infer-stack serves models
+# separately on the host.
 container_args=()
 if [[ "$container" == 1 ]]; then
     image=magnet-smollm-example:latest
-    docker build -f "$here/Dockerfile" -t "$image" "$repo"
+    docker build -f "$here/Dockerfile" -t "$image" "$here"
     # Mount the working directory at its own absolute path: kwdagger bakes
     # absolute output paths into every command, so keeping them identical means
     # nothing has to be rewritten and a path in a log is one you can open.
@@ -163,7 +163,7 @@ if [[ "$container" == 1 ]]; then
         # host path it names does not exist in the image -- the example is
         # COPYed in and already on the image's path. Clear it rather than let
         # a broken host path shadow that.
-        --container_env='{"PYTHONPATH": "/opt/magnet/examples"}'
+        --container_env='{"PYTHONPATH": "/opt/examples"}'
     )
 fi
 

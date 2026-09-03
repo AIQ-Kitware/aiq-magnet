@@ -1,8 +1,5 @@
-.git
-.tox
-*.egg-info
-build
-dist
-htmlcov
-**/__pycache__
-**/*.pyc
+# The node image only executes the example's Python CLI package.
+*
+!__init__.py
+!cli/
+!cli/**

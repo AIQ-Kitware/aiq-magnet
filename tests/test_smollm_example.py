@@ -266,15 +266,34 @@ def test_run_sh_defaults_to_gpu_and_container(tmp_path):
     assert proc.returncode == 0, proc.stderr
     invoked = calls.read_text().splitlines()
     assert 'nvidia-smi:-L' in invoked
-    assert any(line.startswith('docker:build ') for line in invoked)
+    docker_build = next(
+        line for line in invoked if line.startswith('docker:build ')
+    )
+    assert docker_build.split()[-1] == str(CARD_FPATH.parent)
     python_call = next(line for line in invoked if line.startswith('python:'))
     assert 'catalog.yaml' in python_call
     assert 'catalog-mock.yaml' not in python_call
     assert '--container_image=magnet-smollm-example:latest' in python_call
     assert '--container_mounts=' in python_call
     assert (
-        '--container_env={"PYTHONPATH": "/opt/magnet/examples"}' in python_call
+        '--container_env={"PYTHONPATH": "/opt/examples"}' in python_call
     )
+
+
+def test_node_image_is_decoupled_from_the_repository_checkout():
+    """Catalog/card edits must not invalidate MAGNET installation in the image."""
+    dockerfile = (CARD_FPATH.parent / 'Dockerfile').read_text()
+    dockerignore = (CARD_FPATH.parent / 'Dockerfile.dockerignore').read_text()
+
+    assert 'ARG MAGNET_INSTALL=' in dockerfile
+    assert 'cf9cc968d7a88470657e7938addfb3a1a6d0f986' in dockerfile
+    assert 'RUN pip install "$MAGNET_INSTALL"' in dockerfile
+    assert 'COPY . ' not in dockerfile
+    assert 'COPY __init__.py ' in dockerfile
+    assert 'COPY cli ' in dockerfile
+    assert '!cli/**' in dockerignore
+    assert dockerignore.lstrip().startswith('#')
+    assert '\n*\n' in dockerignore
 
 
 def test_run_sh_help_needs_no_runtime_prerequisites(tmp_path):

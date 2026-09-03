@@ -149,17 +149,28 @@ reads.
 
 `./run.sh` builds the `Dockerfile` beside this file and runs every node command
 inside it by default. `./run.sh --no-container` opts out and runs those commands
-on the host instead. The image is built rather than named, because an image tag
-that exists on the machine that built it is exactly the kind of thing that does
-not travel.
+on the host instead.
 
-The image is small — a slim Python base plus MAGNET's core, no GPU and no
-weights — because parsing HELM output and leasing endpoints are both extras
-that a card like this one does not need. Note what it does *not* install:
-infer-stack. `infer-stack run` executes on the host, outside the container;
-all that reaches inside is `OPENAI_BASE_URL` and `OPENAI_API_KEY`, and the node
-talks to that endpoint over plain HTTP. If the image ever needs infer-stack,
-something has been layered the wrong way round.
+The build context is **only this example directory**, and the Dockerfile copies
+only `__init__.py` and `cli/`. The card, pipeline, catalogs, README, `run.sh`, the
+rest of the MAGNET checkout, and run outputs never enter the image. In
+particular, adding an infer-stack endpoint to `catalog.yaml` or overriding the
+kwdagger matrix does not invalidate the node image.
+
+MAGNET itself is installed before those files are copied, from a GitHub archive
+pinned to commit `cf9cc968d7a88470657e7938addfb3a1a6d0f986`. This keeps the
+pre-release example reproducible without baking the current checkout into the
+image. Once `aiq-magnet` is released, the intended change is just the Dockerfile
+argument default, for example:
+
+```dockerfile
+ARG MAGNET_INSTALL="aiq-magnet==0.1.0"
+```
+
+The image remains a slim Python base plus MAGNET's core, with no GPU or model
+weights. It also does not install infer-stack. `infer-stack run` executes on
+the host, outside the container; all that reaches inside is `OPENAI_BASE_URL`
+and `OPENAI_API_KEY`, and the node talks to that endpoint over plain HTTP.
 
 Observed with the default container mode on the guest VM: four containerized
 node cells, two leases, and the leases only on `ask`.

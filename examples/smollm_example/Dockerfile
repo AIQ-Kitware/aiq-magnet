@@ -3,36 +3,30 @@
 #   ./run.sh                    builds this and uses it by default
 #   ./run.sh --no-container     skips it and runs node commands on the host
 #
-# Small on purpose. MAGNET's core is cards, claims and kwdagger execution --
-# `pip install .` with no extras -- so this is a slim Python base plus about
-# eighteen pure-Python packages. It is not a GPU image and it holds no weights.
-#
-# Note what is NOT installed: the `leasing` extra. `infer-stack run` executes
-# on the HOST, outside this container -- acquiring a lease needs the Docker
-# daemon and the shared ledger, and the container is what the lease wraps. All
-# that reaches in here is OPENAI_BASE_URL and OPENAI_API_KEY, and the node
-# talks to that endpoint over plain HTTP. If this image ever needs infer-stack,
-# something has been layered the wrong way round.
-#
-# The build context is the magnet repository root, so `pip install` sees the
-# sources and the COPY picks up `examples/` as well -- this example lives beside
-# magnet rather than inside it, so it is not installed by `pip install .` and has
-# to be put on the path itself. Nothing from the host is baked in beyond that.
+# MAGNET is installed from a pinned source artifact instead of COPYing the
+# checkout into the image. That keeps the node image independent of local card,
+# catalog, documentation, and run-output changes. Once aiq-magnet is released,
+# replace this default with a pinned package requirement such as
+# `aiq-magnet==0.1.0`.
 FROM python:3.12-slim
+
+ARG MAGNET_INSTALL="https://github.com/Erotemic/aiq-magnet/archive/cf9cc968d7a88470657e7938addfb3a1a6d0f986.tar.gz"
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
-WORKDIR /opt/magnet
-COPY . /opt/magnet
-RUN pip install .
+RUN pip install "$MAGNET_INSTALL"
 
-# The example is a package beside magnet, not part of it, exactly as a team's
-# own repository would be. `python -m smollm_example.cli.*` finds it here.
-ENV PYTHONPATH=/opt/magnet/examples
+# Only the executable part of the example belongs in the node image. The card,
+# pipeline, catalogs, README, and run.sh are orchestration inputs used on the
+# host and should not invalidate this image when they change.
+WORKDIR /opt/examples
+COPY __init__.py /opt/examples/smollm_example/__init__.py
+COPY cli /opt/examples/smollm_example/cli
+ENV PYTHONPATH=/opt/examples
 
 # A node command is run with `-w "$PWD"` and its working directory bind-mounted
 # at the same absolute path it has on the host, so kwdagger's absolute output
-# paths resolve identically inside and out. Nothing here assumes a location.
+# paths resolve identically inside and out.
 WORKDIR /
