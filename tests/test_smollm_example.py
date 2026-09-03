@@ -351,7 +351,7 @@ def test_run_sh_accepts_an_untracked_real_catalog(tmp_path):
 
 
 def test_local_catalogs_are_ignored():
-    gitignore = (CARD_FPATH.parents[1] / '.gitignore').read_text()
+    gitignore = (CARD_FPATH.parents[2] / '.gitignore').read_text()
     assert 'examples/smollm_example/catalog.local*.yaml' in gitignore
 
 
