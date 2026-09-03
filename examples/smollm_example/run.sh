@@ -44,6 +44,8 @@ Examples:
 
 Environment:
   SMOLLM_RUNS     Output root (default: ./runs/smollm)
+  SMOLLM_CATALOG  Real-model catalog path (default: ./catalog.yaml). Use an
+                  untracked catalog.local.yaml for custom endpoints.
 EOF
 }
 
@@ -121,11 +123,21 @@ done
 require_commands magnet infer-stack
 
 if [[ "$mock" == 1 ]]; then
+    # The mock catalog is a checked-in fixture. Custom real-model experiments
+    # should not rewrite it or the checked-in real catalog.
     catalog="$here/catalog-mock.yaml"
 else
     require_nvidia_gpu
-    catalog="$here/catalog.yaml"
+    catalog="${SMOLLM_CATALOG:-$here/catalog.yaml}"
 fi
+
+if [[ ! -f "$catalog" ]]; then
+    printf 'SmolLM catalog does not exist: %s\n' "$catalog" >&2
+    exit 1
+fi
+# Generated kwdagger jobs run from artifact directories, so a caller-supplied
+# relative catalog path would stop resolving there. Export an absolute path.
+catalog="$(cd "$(dirname "$catalog")" && pwd)/$(basename "$catalog")"
 
 if [[ "$container" == 1 ]] && ! command -v docker >/dev/null 2>&1; then
     cat >&2 <<'MSG'

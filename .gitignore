@@ -15,3 +15,4 @@ evaluation_runs
 data
 
 examples/smollm_example/runs
+examples/smollm_example/catalog.local*.yaml

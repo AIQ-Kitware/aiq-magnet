@@ -102,8 +102,8 @@ kwdagger:
   #
   #   ./run.sh --params='matrix: {ask.endpoint: [smol-135]}'
   #
-  # README.md also shows how to add a new endpoint to catalog.yaml with the
-  # infer-stack CLI and sweep that alias here.
+  # README.md also shows how to make an untracked local catalog, add an
+  # endpoint with the infer-stack CLI, and sweep that alias here.
   matrix:
     ask.endpoint:
       - smol-135

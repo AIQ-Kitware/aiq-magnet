@@ -58,6 +58,12 @@ class Ask(LeasedYamlProcessNode):
     executable = 'python -m smollm_example.cli.ask_model'
     params = AskModelCLI
     endpoint_params = ('endpoint',)
+    # This demo always uses kwdagger's serial backend, so its own cells never
+    # contend with each other. Waiting in infer-stack's admission queue would
+    # only hide external/stale leases; fail fast instead so the user can inspect
+    # `infer-stack leases`. Keep a finite backstop for hard-killed jobs.
+    lease_queue = False
+    lease_ttl = '1h'
 
 
 class Compare(ContainerYamlProcessNode):
