@@ -68,7 +68,7 @@ Being inside is also what lets the container inherit `OPENAI_BASE_URL` and
 
 ```
 test -e answers.json || \
-infer-stack run --endpoint smol-135 --ttl 8h --queue ${SLURM_JOB_GPUS:+...} -- \
+infer-stack run --endpoint smol-135 --ttl 1h ${SLURM_JOB_GPUS:+...} -- \
     docker run --rm --network host -v /repo:/repo -e OPENAI_BASE_URL ... <image> \
         python -m smollm_example.cli.ask_model --endpoint=smol-135 ...
 ```
@@ -76,6 +76,12 @@ infer-stack run --endpoint smol-135 --ttl 8h --queue ${SLURM_JOB_GPUS:+...} -- \
 Cache guard outermost, so a node whose output already exists neither leases nor
 starts a container. The `${SLURM_JOB_GPUS...}` word is unexpanded on purpose:
 the allocation it names does not exist yet on the host that rendered the string.
+
+The example uses kwdagger's serial backend, so `ask` deliberately does **not**
+pass infer-stack's `--queue`: its cells cannot contend with each other. If old
+leases occupy the GPUs, the example fails on placement instead of waiting for
+capacity. The one-hour lease TTL is only a backstop for a hard-killed process;
+`infer-stack run` releases normally in its `finally` path.
 
 **The endpoint is an ordinary matrix axis.** `ask.endpoint` sweeps like any
 other parameter, and naming it in `endpoint_params` is what also makes its
@@ -91,18 +97,24 @@ default rather than a fixed model list. For example, run only the 135M endpoint:
 ./run.sh --params='matrix: {ask.endpoint: [smol-135]}'
 ```
 
-The matrix contains **endpoint aliases**, not Hugging Face model IDs. To try a
-model that is not already in this example's real catalog, first use infer-stack's
-catalog CLI to ensure the model and endpoint entries exist. From this directory,
-this adds a small Qwen instruct model under the stable alias `qwen-05`:
+The matrix contains **endpoint aliases**, not Hugging Face model IDs. The two
+checked-in catalogs are read-only example fixtures; do not point infer-stack's
+catalog editor at them. The editor rewrites YAML structurally, which discards
+comments even when the resulting catalog is semantically equivalent.
+
+For a custom real model, make an ignored local copy first, then let the
+infer-stack CLI ensure the model and endpoint entries exist. From this directory:
 
 ```bash
+LOCAL_CATALOG="$PWD/catalog.local.yaml"
+test -e "$LOCAL_CATALOG" || cp catalog.yaml "$LOCAL_CATALOG"
+
 infer-stack catalog model add qwen05 \
-    --catalog="$PWD/catalog.yaml" \
+    --catalog="$LOCAL_CATALOG" \
     --source=hf://Qwen/Qwen2.5-0.5B-Instruct
 
 infer-stack catalog endpoint add qwen-05 \
-    --catalog="$PWD/catalog.yaml" \
+    --catalog="$LOCAL_CATALOG" \
     --model=qwen05 \
     --max-model-len=2048 \
     --gpu-mem=0.2 \
@@ -110,23 +122,34 @@ infer-stack catalog endpoint add qwen-05 \
     --reclaim=stop
 ```
 
-Those `catalog ... add` commands are safe to rerun. If the named entry already
-has exactly that definition, infer-stack reports it as up to date; if it exists
-with a different definition, the command fails and shows the differing fields
-instead of overwriting it. The catalog editor validates the result before it
-writes the file.
+`catalog.local*.yaml` is gitignored. Those `catalog ... add` commands are safe
+to rerun: an identical existing definition is reported as already up to date,
+while a conflicting definition fails and shows the differing fields rather than
+overwriting it.
 
-Now the kwdagger matrix can select the new endpoint just like either shipped
-SmolLM endpoint:
+If an earlier experiment already rewrote the tracked `catalog.yaml`, preserve
+its custom entries in the ignored local file and restore the documented fixture:
 
 ```bash
-./run.sh --params='matrix: {ask.endpoint: [qwen-05]}'
+cp catalog.yaml catalog.local.yaml
+git restore -- catalog.yaml
+```
+
+The restored file gets its comments back from Git; continue editing only
+`catalog.local.yaml` through the infer-stack CLI.
+
+Point `run.sh` at that local catalog and override the kwdagger matrix:
+
+```bash
+SMOLLM_CATALOG="$LOCAL_CATALOG" \
+    ./run.sh --params='matrix: {ask.endpoint: [qwen-05]}'
 ```
 
 or compare models from different families in one sweep:
 
 ```bash
-./run.sh --params='matrix: {ask.endpoint: [smol-135, qwen-05]}'
+SMOLLM_CATALOG="$LOCAL_CATALOG" \
+    ./run.sh --params='matrix: {ask.endpoint: [smol-135, qwen-05]}'
 ```
 
 No pipeline or node code changes. `ask.endpoint` controls both the kwdagger
@@ -214,6 +237,25 @@ artifacts cannot turn the smoke test into a cache-only run. Artifacts are kept
 under `runs/dev-smoke-<timestamp>/` by default; set `SMOLLM_TEST_RUNS` to choose
 another root.
 
+Before starting, `test.sh` refuses to run if infer-stack reports any active
+leases. This default is non-destructive because a developer may have unrelated
+work using the same daemon. On a dedicated developer machine, opt into a clean
+start with:
+
+```bash
+./test.sh --release
+```
+
+`--release` runs `infer-stack release --all --yes --evict` before the smoke
+variants, clearing active leases and idle deployments. If a variant itself
+leaks a lease, later variants are skipped rather than entering a capacity wait.
+A failed variant that leaves the lease pool clean does not prevent the remaining
+variants from running.
+
+At exit, `test.sh` always enumerates all four variants in order, with their
+real/mock endpoint mode, container/host node mode, status, and artifact path.
+Variants not reached because of a lease leak are reported as skipped.
+
 The two containerized variants run first. The first may build the node image;
 the second should reuse it. Switching from the real catalog to the mock catalog
 does not change the image build context, so `pip install` should remain cached.
@@ -269,5 +311,6 @@ kwdagger, containers or leases.
 | `cli/make_items.py` | the dummy dataset, generated from a seed |
 | `cli/ask_model.py` | one leased endpoint, every question, over plain `urllib` |
 | `cli/compare_answers.py` | the gather manifest reduced to coverage and agreement |
-| `catalog.yaml` | `smol-135` / `smol-360` on vLLM, on a GPU |
-| `catalog-mock.yaml` | the same two aliases, simulated, no GPU |
+| `catalog.yaml` | checked-in real-model fixture: `smol-135` / `smol-360` on vLLM |
+| `catalog-mock.yaml` | checked-in mock fixture with the same two aliases |
+| `catalog.local*.yaml` | ignored local copies for custom endpoint experiments |

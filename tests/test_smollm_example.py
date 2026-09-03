@@ -161,6 +161,16 @@ def test_the_endpoint_axis_is_what_gets_leased(card):
         assert f'--endpoint {alias}' in node.command
 
 
+def test_the_serial_example_does_not_queue_for_external_gpus(card):
+    """Serial cells cannot contend with each other; stale leases should fail fast."""
+    node = _configured_nodes(card)['ask']
+    node.configure({'endpoint': 'smol-135'})
+    assert node.lease_queue is False
+    assert node.lease_ttl == '1h'
+    assert '--queue' not in node.command
+    assert '--ttl 1h' in node.command
+
+
 def test_it_runs_on_the_host_when_nothing_is_configured(card):
     """The same card during development: no image, no lease, no wrappers."""
     nodes = _configured_nodes(card, image='', leasing_on=False)
@@ -296,6 +306,66 @@ def test_node_image_is_decoupled_from_the_repository_checkout():
     assert '\n*\n' in dockerignore
 
 
+def test_run_sh_accepts_an_untracked_real_catalog(tmp_path):
+    """Custom model experiments select another catalog without editing the fixture."""
+    bindir = ub.Path(tmp_path) / 'bin'
+    bindir.mkdir()
+    calls = ub.Path(tmp_path) / 'calls.txt'
+    custom_catalog = ub.Path(tmp_path) / 'catalog.local.yaml'
+    custom_catalog.write_text('models: {}\nendpoints: {}\n')
+
+    _write_executable(bindir / 'magnet', '#!/bin/sh\nexit 97\n')
+    _write_executable(
+        bindir / 'infer-stack',
+        '#!/bin/sh\n'
+        f'printf "infer-stack:%s\\n" "$*" >> {calls}\n'
+        'if [ "$1" = status ]; then printf "backend: compose\\n"; exit 0; fi\n'
+        'exit 98\n',
+    )
+    _write_executable(
+        bindir / 'nvidia-smi',
+        '#!/bin/sh\n'
+        'if [ "$1" = -L ]; then printf "GPU 0: Fake GPU (UUID: GPU-fake)\\n"; exit 0; fi\n'
+        'exit 2\n',
+    )
+    _write_executable(
+        bindir / 'python',
+        '#!/bin/sh\n'
+        f'printf "python:catalog=%s args=%s\\n" "$INFER_STACK_CATALOG" "$*" >> {calls}\n'
+        'exit 0\n',
+    )
+
+    env = _child_env(SMOLLM_CATALOG=str(custom_catalog))
+    env['PATH'] = f'{bindir}:/usr/bin:/bin'
+    run_sh = CARD_FPATH.parent / 'run.sh'
+    proc = subprocess.run(
+        ['bash', run_sh, '--no-container', '--dry_run=1'],
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    python_call = next(
+        line for line in calls.read_text().splitlines()
+        if line.startswith('python:')
+    )
+    assert f'catalog={custom_catalog}' in python_call
+
+
+def test_local_catalogs_are_ignored():
+    gitignore = (CARD_FPATH.parents[1] / '.gitignore').read_text()
+    assert 'examples/smollm_example/catalog.local*.yaml' in gitignore
+
+
+def test_developer_smoke_test_release_is_explicit_and_summarized():
+    text = (CARD_FPATH.parent / 'test.sh').read_text()
+    assert 'infer-stack leases --json' in text
+    assert 'require_clean_lease_pool "after $name"' in text
+    assert 'infer-stack release --all --yes --evict' in text
+    assert '--release)' in text
+    assert 'SmolLM developer smoke variants' in text
+    for name in ('real-container', 'mock-container', 'real-host', 'mock-host'):
+        assert name in text
+
+
 def test_run_sh_help_needs_no_runtime_prerequisites(tmp_path):
     """Help is wrapper documentation, so it must not probe the machine."""
     env = _child_env()
@@ -312,6 +382,7 @@ def test_run_sh_help_needs_no_runtime_prerequisites(tmp_path):
     assert '--params=' in proc.stdout
     assert 'ask.endpoint' in proc.stdout
     assert 'SMOLLM_RUNS' in proc.stdout
+    assert 'SMOLLM_CATALOG' in proc.stdout
     assert 'requires MAGNET' not in proc.stderr
 
 
