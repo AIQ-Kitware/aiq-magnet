@@ -198,6 +198,26 @@ because both simulated endpoints return the same canned sequence, seed
 regardless. **Neither number means anything here**, which is why the card
 claims about neither.
 
+### Developer smoke test
+
+`test.sh` runs all four combinations of real/mock endpoints and
+container/host node execution:
+
+```bash
+./test.sh
+```
+
+This is deliberately a developer-machine test, not a CI entry point. It assumes
+a usable NVIDIA GPU, Docker, MAGNET with the `leasing` extra, and an initialized
+infer-stack backend. Every variant gets a fresh output root so existing kwdagger
+artifacts cannot turn the smoke test into a cache-only run. Artifacts are kept
+under `runs/dev-smoke-<timestamp>/` by default; set `SMOLLM_TEST_RUNS` to choose
+another root.
+
+The two containerized variants run first. The first may build the node image;
+the second should reuse it. Switching from the real catalog to the mock catalog
+does not change the image build context, so `pip install` should remain cached.
+
 ### CI smoke test
 
 GitHub Actions runs the exact containerized mock path with `./run.sh --mock`
@@ -242,6 +262,7 @@ kwdagger, containers or leases.
 | | |
 |---|---|
 | `run.sh` | the whole workflow |
+| `test.sh` | developer-only smoke test for all four real/mock × container/host modes |
 | `Dockerfile` | the node image `run.sh` builds by default: slim Python plus MAGNET core |
 | `smollm_kwdagger.yaml` | the card: claim, evidence scope, sweep |
 | `pipeline.py` | the DAG: three nodes, one gather edge, which one leases |
