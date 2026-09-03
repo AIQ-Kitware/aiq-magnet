@@ -23,7 +23,7 @@ import pytest
 import kwdagger
 
 from magnet import leasing
-from magnet.leasing import LeaseCapability, render_lease_command
+from magnet.leasing import LeaseCapability
 from magnet.containers import host_interpreter
 
 pytestmark = pytest.mark.skipif(
@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 class LeaseOnlyProcessNode(LeaseCapability, kwdagger.ProcessNode):
     @property
     def command(self):
-        return render_lease_command(self, host_interpreter(super().command))
+        return self.wrap_with_lease(host_interpreter(super().command))
 
 
 class Infer(LeaseOnlyProcessNode):
