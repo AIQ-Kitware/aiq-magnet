@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 import magnet.theory as theory
-from magnet.theory.index import Entry, TheoryIndex, load_index
+from magnet.theory.index import Entry, Premise, TheoryIndex, load_index
 from magnet.theory.static import TheoryAnnotationError, extract, extract_tree
 
 
@@ -178,9 +178,12 @@ def test_versioned_index_resolves_entries_and_premises(tmp_path):
     )
     index = load_index(fpath)
     entry = index['Examples.Stability.Theorem']
+    assert entry.formalization is not None
     assert entry.formalization.system == 'lean4'
     assert entry.formalization.revision == 'deadbeef'
-    assert index.resolve('Examples.Stability.Theorem::hbounded').type == 'Bounded xs'
+    premise = index.resolve('Examples.Stability.Theorem::hbounded')
+    assert isinstance(premise, Premise)
+    assert premise.type == 'Bounded xs'
     assert index.unresolved(
         ['Examples.Stability.Theorem::hbounded', 'Examples.Stability.Theorem::hmissing']
     ) == ['Examples.Stability.Theorem::hmissing']

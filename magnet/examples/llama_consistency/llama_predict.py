@@ -61,7 +61,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
     Stub for a prediction algorithm that grabs relevant scores from HELM precomputed results
     """
 
-    base_model: str = kwconf.Value(
+    base_model: str | None = kwconf.Value(
         None,
         required=True,
         help=ub.paragraph(
@@ -72,7 +72,7 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         tags=['algo_param'],
     )
 
-    comp_model: str = kwconf.Value(
+    comp_model: str | None = kwconf.Value(
         None,
         required=True,
         help=ub.paragraph(
@@ -179,10 +179,15 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         )
         run_stats['model'] = run_stats['run_spec.name'].map(helm_models)
 
+        base_model = config.base_model
+        comp_model = config.comp_model
+        if base_model is None or comp_model is None:
+            raise ValueError('base_model and comp_model are required')
+
         # only specific models
         run_stats = run_stats[
-            (run_stats['model'] == config.base_model)
-            | (run_stats['model'] == config.comp_model)
+            (run_stats['model'] == base_model)
+            | (run_stats['model'] == comp_model)
         ]
 
         # average exact_match scores across subjects
@@ -194,14 +199,14 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         base_score = [
             (name, score)
             for name, score in exact_match_scores
-            if name == config.base_model
+            if name == base_model
         ][0][1]
 
         ## comp_score Symbol Resolution
         comp_score = [
             (name, score)
             for name, score in exact_match_scores
-            if name == config.comp_model
+            if name == comp_model
         ][0][1]
 
         # Write comp_score and base_score to results file
@@ -211,9 +216,9 @@ class ExampleLlamaEndpointCLI(kwconf.Config):
         run_data.update({
             'helm_runs_path': config.helm_runs_path,
             'scored_runs': len(helm_lite_runs),
-            'base_model': config.base_model,
+            'base_model': base_model,
             'base_score': base_score,
-            'comp_model': config.comp_model,
+            'comp_model': comp_model,
             'comp_score': comp_score,
             'threshold': config.threshold,
         })

@@ -108,7 +108,7 @@ def _compact_hint(obj: Any, *, maxlen: int = 70) -> str:
     if obj is None:
         return ''
     try:
-        text = ub.urepr(obj, compact=1, nl=0, nobr=1)
+        text = ub.urepr(obj, compact=True, nl=0, nobr=True)
     except Exception:
         text = str(obj)
     text = text.replace(' ', '')
@@ -130,14 +130,15 @@ def stat_name_id(name_obj: Any, *, count: Any = None) -> str:
         str: stable semi-readable id.
     """
     if not isinstance(name_obj, dict):
-        raw = f"invalid_name,{ub.urepr(name_obj, compact=1, nl=0, nobr=1)},"
+        text = ub.urepr(name_obj, compact=True, nl=0, nobr=True)
+        raw = f"invalid_name,{text},"
         obj = ('invalid_name', name_obj, count)
         return nice_hash_id(obj, rawstr=raw)
 
     # Prefer `name` as the human-readable base.
     base = name_obj.get('name', 'nobasename')
-    rest = ub.udict(name_obj) - {'name'}
-    compact = ub.urepr(rest, compact=1, nobr=1, nl=0)
+    rest = {k: v for k, v in name_obj.items() if k != 'name'}
+    compact = ub.urepr(rest, compact=True, nobr=True, nl=0)
     if count is None:
         raw = f"{base},{compact},"
         obj = {'name': name_obj}
@@ -166,7 +167,7 @@ def perturbation_id(pert: Any, *, short_hash: int = 16) -> str | None:
         return prefixed_hash_id(pert, prefix='pert', short_hash=short_hash)
     name = pert.get('name', None) or 'pert'
     # Put the name up front, include a compact hint, and hash the rest.
-    rest = ub.udict(pert) - {'name'}
+    rest = {k: v for k, v in pert.items() if k != 'name'}
     rest_canon = canonicalize_for_hashing(rest)
     hint = _compact_hint(rest_canon)
     prefix = str(name)
@@ -197,7 +198,10 @@ def stat_key(name_obj: Any, *, count: Any = None, short_hash: int = 16) -> str:
 
     # Include a compact representation of any *extra* selectors besides the
     # common ones we already print explicitly (split/sub_split/perturbation).
-    rest = ub.udict(name_obj) - {'name', 'split', 'sub_split', 'perturbation'}
+    rest = {
+        k: v for k, v in name_obj.items()
+        if k not in {'name', 'split', 'sub_split', 'perturbation'}
+    }
     rest_canon = canonicalize_for_hashing(rest)
     rest_hint = _compact_hint(rest_canon)
 

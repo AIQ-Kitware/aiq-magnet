@@ -1,8 +1,10 @@
 """
 Common table helpers (i.e. List[Dict])
 """
-import ubelt as ub
 import math
+from typing import SupportsFloat
+
+import ubelt as ub
 
 
 class UnhashablePlaceholder(str):
@@ -80,7 +82,6 @@ def varied_values(longform, min_variations=0, max_variations=None,
         }
     """
     # Enumerate all defined columns
-    import numbers
 
     longform = _ensure_longform(longform)
 
@@ -102,7 +103,7 @@ def varied_values(longform, min_variations=0, max_variations=None,
             value = row.get(key, default)
             if isinstance(value, list):
                 value = tuple(value)
-            if isinstance(value, numbers.Number) and math.isnan(value):
+            if isinstance(value, SupportsFloat) and math.isnan(value):
                 if dropna:
                     continue
                 else:
@@ -206,7 +207,6 @@ def varied_value_counts(longform, min_variations=0, max_variations=None,
         }
     """
     # Enumerate all defined columns
-    import numbers
 
     longform = _ensure_longform(longform)
 
@@ -230,7 +230,7 @@ def varied_value_counts(longform, min_variations=0, max_variations=None,
             if isinstance(value, list):
                 value = tuple(value)
 
-            if isinstance(value, numbers.Number) and math.isnan(value):
+            if isinstance(value, SupportsFloat) and math.isnan(value):
                 if dropna:
                     continue
                 else:

@@ -3,11 +3,13 @@ Object oriented classes to represent, load, and explore the outputs of helm
 benchmarks.
 """
 from __future__ import annotations
+import importlib
 import os
 import ubelt as ub
 import pandas as pd
 import kwutil
 import dacite
+import msgspec
 
 from magnet.exceptions import require_optional
 require_optional('helm', 'helm', 'the HELM output loaders')
@@ -16,7 +18,8 @@ from helm.benchmark.run_spec import RunSpec
 from helm.benchmark.metrics.statistic import Stat
 from helm.benchmark.metrics.metric import PerInstanceStats
 
-from typing import Generator
+from collections.abc import Iterator
+from typing import Any, cast
 
 try:
     from typing import Self
@@ -29,10 +32,16 @@ from magnet.utils.util_iterable import add_length_hint
 from functools import cached_property
 
 # Pre-register msgspec structure variants of the HELM dataclass types
-ScenarioStateStruct = util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState, dict=True)
-RunSpecStruct = util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
-StatStruct = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
-PerInstanceStatsStruct = util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
+ScenarioStateStruct: type[msgspec.Struct] = (
+    util_msgspec.MSGSPEC_REGISTRY.register(ScenarioState, dict=True)
+)
+RunSpecStruct: type[msgspec.Struct] = (
+    util_msgspec.MSGSPEC_REGISTRY.register(RunSpec)
+)
+StatStruct: type[msgspec.Struct] = util_msgspec.MSGSPEC_REGISTRY.register(Stat)
+PerInstanceStatsStruct: type[msgspec.Struct] = (
+    util_msgspec.MSGSPEC_REGISTRY.register(PerInstanceStats)
+)
 
 
 class HelmOutputs(ub.NiceRepr):
@@ -203,9 +212,11 @@ class HelmOutputs(ub.NiceRepr):
 
         Requires optional dependency: xdev
         """
-        import xdev
-        dirwalker = xdev.DirectoryWalker(self.root_dir,
-                                         exclude_fnames=['lock', '*.lock']).build()
+        xdev = importlib.import_module('xdev')
+        directory_walker = getattr(xdev, 'DirectoryWalker')
+        dirwalker = directory_walker(
+            self.root_dir, exclude_fnames=['lock', '*.lock']
+        ).build()
         dirwalker.write_report(max_depth=4)
 
     def summarize(self):
@@ -302,8 +313,8 @@ class HelmSuite(ub.NiceRepr):
 
     @classmethod
     def demo(cls) -> Self:
-        self = HelmOutputs.demo(method='fixture').suites()[0]
-        return self
+        suite = HelmOutputs.demo(method='fixture').suites()[0]
+        return cls(suite.path)
 
     @classmethod
     def coerce(cls, input) -> Self:
@@ -842,7 +853,7 @@ class _HelmRunDataclassView:
     def __init__(self, parent: HelmRun):
         self.parent = parent
 
-    def per_instance_stats(self) -> Generator[PerInstanceStats, None, None]:
+    def per_instance_stats(self) -> Iterator[PerInstanceStats]:
         """
         per_instance_stats.json contains a serialized list of PerInstanceStats,
         which contains the statistics produced for the metrics for each
@@ -923,7 +934,7 @@ class _HelmRunDataclassView:
         state = dacite.from_dict(ScenarioState, nested)
         return state
 
-    def stats(self) -> Generator[Stat, None, None]:
+    def stats(self) -> Iterator[Stat]:
         """
         stats.json contains a serialized list of PerInstanceStats, which
         contains the statistics produced for the metrics, aggregated across all
@@ -957,17 +968,19 @@ class _HelmRunMsgspecView:
     def __init__(self, parent: HelmRun):
         self.parent = parent
 
-    def per_instance_stats(self) -> list[PerInstanceStatsStruct]:
+    def per_instance_stats(self) -> list[msgspec.Struct]:
         """
         per_instance_stats.json contains a serialized list of PerInstanceStats,
         which contains the statistics produced for the metrics for each
         instance (i.e. input).
         """
         data = (self.parent.path / 'per_instance_stats.json').read_bytes()
-        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[PerInstanceStatsStruct])
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode_list(
+            data, PerInstanceStatsStruct
+        )
         return obj
 
-    def run_spec(self) -> RunSpecStruct:
+    def run_spec(self) -> msgspec.Struct:
         """
         run_spec.json contains the RunSpec, which specifies the scenario,
         adapter and metrics for the run.
@@ -989,7 +1002,7 @@ class _HelmRunMsgspecView:
             helm.benchmark.scenarios.scenario.Scenario from the json file.
             '''))
 
-    def scenario_state(self) -> ScenarioStateStruct:
+    def scenario_state(self) -> msgspec.Struct:
         """
         scenario_state.json contains a serialized ScenarioState, which contains
         every request to and response from the model.
@@ -1012,17 +1025,17 @@ class _HelmRunMsgspecView:
         from magnet.utils import util_msgspec
         data = (self.parent.path / 'scenario_state.json').read_bytes()
         obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, ScenarioStateStruct)
-        ScenarioState.__post_init__(obj)  # Hack
+        ScenarioState.__post_init__(cast(Any, obj))
         return obj
 
-    def stats(self) -> list[StatStruct]:
+    def stats(self) -> list[msgspec.Struct]:
         """
         stats.json contains a serialized list of PerInstanceStats, which
         contains the statistics produced for the metrics, aggregated across all
         instances (i.e. inputs).
         """
         data = (self.parent.path / 'stats.json').read_bytes()
-        obj = util_msgspec.MSGSPEC_REGISTRY.decode(data, list[StatStruct])
+        obj = util_msgspec.MSGSPEC_REGISTRY.decode_list(data, StatStruct)
         return obj
 
 
@@ -1296,8 +1309,8 @@ class HelmRun(ub.NiceRepr):
     @classmethod
     def demo(cls) -> Self:
         suite = HelmOutputs.demo(method='fixture').suites()[0]
-        self = suite.runs()[-1]
-        return self
+        run_path = suite.runs().paths[-1]
+        return cls(run_path)
 
     # Default accessors
 

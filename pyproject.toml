@@ -143,3 +143,30 @@ report.exclude_lines = [
   ".*  # pragma: no cover",
   "pragma: no cover",
 ]
+
+[tool.xcookie]
+tags = ["github", "purepy"]
+mod_name = "magnet"
+repo_name = "aiq-magnet"
+pkg_name = "aiq-magnet"
+
+os = ["linux"]
+
+min_python = "3.11"
+max_python = "3.14"
+main_python = "3.13"
+ci_cpython_versions = ["3.11", "3.13"]
+ci_pypy_versions = []
+
+use_setup_py = false
+use_pyproject_requirements = true
+
+# Preserve the existing CI variant policy.
+ci_versions_minimal_strict = ""
+ci_versions_minimal_loose = ""
+
+linter = false
+
+enable_gpg = false
+ci_pypi_trusted_publishing = true
+deploy_pypi = true

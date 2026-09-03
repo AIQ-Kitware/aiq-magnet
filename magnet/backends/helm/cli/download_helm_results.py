@@ -407,7 +407,7 @@ class FsspecStorageBackend:
     def __init__(self, bucket: str):
         self.bucket = bucket.rstrip('/')
         try:
-            import fsspec  # type: ignore
+            import fsspec
         except Exception as ex:  # pragma: no cover (import-time edge)
             raise ExitError(
                 f'backend=fsspec requested, but fsspec/gcsfs is not installed: {ex}',

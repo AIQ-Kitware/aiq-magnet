@@ -906,7 +906,7 @@ def summary_dict(
             )
         except Exception:
             stat_name_ids.append(
-                ub.urepr(r.get('name', None), compact=1, nl=0, nobr=1)
+                ub.urepr(r.get('name', None), compact=True, nl=0, nobr=True)
             )
     stat_name_ids = sorted(set(stat_name_ids))
 
