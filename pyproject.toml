@@ -151,6 +151,8 @@ repo_name = "aiq-magnet"
 pkg_name = "aiq-magnet"
 
 typed = true
+typecheck_extra_paths = ["tests"]
+typecheck_install_extras = ["tests", "helm"]
 os = ["linux"]
 
 min_python = "3.11"

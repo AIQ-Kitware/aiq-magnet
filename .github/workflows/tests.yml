@@ -49,8 +49,8 @@ jobs:
     - name: Typecheck
       run: |-
         python -m pip install ty
-        pip install --prefer-binary -e ".[tests]"
-        ty check ./magnet
+        pip install --prefer-binary -e ".[tests,helm]"
+        ty check ./magnet ./tests
   build_and_test_sdist:
     ##
     # Build the pure python package from source and test it in the
