@@ -9,12 +9,7 @@ import kwdagger
 import pytest
 
 from magnet import containers, leasing
-from magnet.leasing import (
-    INSIDE_LEASE_ENVVAR,
-    LeaseCapability,
-    leasing_is_enabled,
-    render_lease_command,
-)
+from magnet.leasing import INSIDE_LEASE_ENVVAR, LeaseCapability
 from magnet.containers import host_interpreter
 
 import shlex as _shlex
@@ -28,7 +23,7 @@ class LeaseOnlyProcessNode(LeaseCapability, kwdagger.ProcessNode):
 
     @property
     def command(self):
-        return render_lease_command(self, host_interpreter(super().command))
+        return self.wrap_with_lease(host_interpreter(super().command))
 
 
 class Infer(LeaseOnlyProcessNode):
@@ -68,8 +63,8 @@ def _prefix(command):
 
 def test_a_lease_only_node_has_no_container_capability():
     node = Infer()
-    assert leasing.is_lease_capable(node)
-    assert not containers.is_container_capable(node)
+    assert isinstance(node, leasing.LeaseCapability)
+    assert not isinstance(node, containers.ContainerCapability)
 
 
 def test_the_node_leases_the_models_it_names():
@@ -128,7 +123,7 @@ def test_the_lease_waits_rather_than_failing_when_busy():
 def test_leasing_is_off_inside_an_outer_lease(monkeypatch):
     node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None})
     monkeypatch.setenv(INSIDE_LEASE_ENVVAR, 'lease-abc123')
-    assert not leasing_is_enabled(node)
+    assert not node.leasing_is_enabled()
     assert node.command.startswith(HOST_PY + ' -m pkg.infer')
 
 
@@ -136,7 +131,7 @@ def test_explicit_opt_out(monkeypatch):
     # e.g. a run against OpenRouter, which infer-stack does not manage.
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
     node = _node(Infer, {'model_id': 'm'}, enabled=False)
-    assert not leasing_is_enabled(node)
+    assert not node.leasing_is_enabled()
 
 
 def test_leasing_is_off_unless_asked_for(monkeypatch):
@@ -144,7 +139,7 @@ def test_leasing_is_off_unless_asked_for(monkeypatch):
     monkeypatch.delenv(INSIDE_LEASE_ENVVAR, raising=False)
     node = _node(Infer, {'model_id': 'm', 'extractor_model_id': None},
                  enabled=False)
-    assert not leasing_is_enabled(node)
+    assert not node.leasing_is_enabled()
     assert node.command.startswith(HOST_PY + ' -m pkg.infer')
 
 

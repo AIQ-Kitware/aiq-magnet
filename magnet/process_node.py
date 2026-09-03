@@ -22,12 +22,8 @@ from __future__ import annotations
 
 from kwdagger.yaml_pipeline import YamlProcessNode
 
-from magnet.containers import ContainerCapability, render_container_command
-from magnet.leasing import (
-    LEASE_NODE_SPEC_KEYS,
-    LeaseCapability,
-    render_lease_command,
-)
+from magnet.containers import ContainerCapability, host_interpreter
+from magnet.leasing import LEASE_NODE_SPEC_KEYS, LeaseCapability
 
 __all__ = ['MagnetProcessNode']
 
@@ -56,6 +52,9 @@ class MagnetProcessNode(
     @property
     def command(self) -> str:
         command = super().command
-        command = render_container_command(self, command)
-        command = render_lease_command(self, command)
+        if self.containerization_is_enabled():
+            command = self.wrap_with_container(command)
+        else:
+            command = host_interpreter(command)
+        command = self.wrap_with_lease(command)
         return command

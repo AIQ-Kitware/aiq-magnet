@@ -9,7 +9,6 @@ import kwdagger
 import pytest
 
 from magnet import containers
-from magnet.containers import containerization_is_enabled
 from magnet import leasing
 from magnet.leasing import INSIDE_LEASE_ENVVAR
 from magnet.process_node import MagnetProcessNode
@@ -46,9 +45,9 @@ def _node(cls, config, settings=None, lease=None):
     """A configured node carrying this test's execution settings."""
     node = cls()
     node.configure(config)
-    if containers.is_container_capable(node):
+    if isinstance(node, containers.ContainerCapability):
         node.apply_container_settings(settings or containers.ContainerSettings())
-    if lease is not None and leasing.is_lease_capable(node):
+    if lease is not None and isinstance(node, leasing.LeaseCapability):
         node.apply_lease_settings(lease)
     return node
 
@@ -66,7 +65,7 @@ def _leased(enabled=True):
 
 def test_nodes_run_on_the_host_unless_an_image_is_named():
     node = _node(Work, {'task': 't'})
-    assert not containerization_is_enabled(node)
+    assert not node.containerization_is_enabled()
     assert node.command.startswith(HOST_PY + ' -m pkg.work')
 
 

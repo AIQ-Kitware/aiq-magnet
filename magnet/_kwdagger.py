@@ -517,7 +517,7 @@ def _check_container_settings_apply(
     node_dict = getattr(pipeline, 'node_dict', None) or {}
     inert = sorted(
         name for name, node in node_dict.items()
-        if not containers.is_container_capable(node)
+        if not isinstance(node, containers.ContainerCapability)
     )
     if not node_dict or len(inert) < len(node_dict):
         # A mixed DAG is legitimate -- an analysis step may belong on the host

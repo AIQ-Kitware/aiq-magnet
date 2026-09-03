@@ -37,10 +37,6 @@ from typing import Any
 __all__ = [
     'LeaseCapability',
     'LeaseSettings',
-    'is_lease_capable',
-    'leasing_is_enabled',
-    'render_lease_command',
-    'slurm_gpu_allow_list',
     'INSIDE_LEASE_ENVVAR',
     'GPU_ALLOW_LIST_EXPANSION',
     'LEASE_NODE_SPEC_KEYS',
@@ -97,25 +93,6 @@ LEASE_NODE_SPEC_KEYS = frozenset({
 })
 
 
-def leasing_is_enabled(node: Any = None) -> bool:
-    """Whether this node's command should bracket itself in a lease.
-
-    Requires an explicit opt-in, and stays off inside an outer lease so the
-    two styles cannot nest by accident.
-
-    Example:
-        >>> from magnet.process_node import MagnetProcessNode
-        >>> from magnet.leasing import leasing_is_enabled
-        >>> node = MagnetProcessNode(name='n', executable='true')
-        >>> leasing_is_enabled(node)
-        False
-        >>> node.lease_enabled = True
-        >>> leasing_is_enabled(node)
-        True
-    """
-    if not getattr(node, 'lease_enabled', False):
-        return False
-    return not os.environ.get(INSIDE_LEASE_ENVVAR)
 
 
 #: An unquoted shell word that becomes ``--allowed_gpus=<indices>`` inside a
@@ -143,28 +120,6 @@ GPU_ALLOW_LIST_EXPANSION = (
 )
 
 
-def slurm_gpu_allow_list(node: Any = None) -> str:
-    """
-    Shell text confining infer-stack to the GPUs this job was allocated.
-
-    Returns:
-        str: :data:`GPU_ALLOW_LIST_EXPANSION`, or empty when the node was
-            configured without it.
-
-    Example:
-        >>> from magnet.process_node import MagnetProcessNode
-        >>> from magnet.leasing import slurm_gpu_allow_list
-        >>> node = MagnetProcessNode(name='n', executable='true')
-        >>> slurm_gpu_allow_list(node).startswith('${SLURM_JOB_GPUS')
-        True
-        >>> node.lease_allowed_gpus = False
-        >>> slurm_gpu_allow_list(node)
-        ''
-    """
-    if not getattr(node, 'lease_allowed_gpus', True):
-        return ''
-    return GPU_ALLOW_LIST_EXPANSION
-
 
 class LeaseCapability:
     """
@@ -176,8 +131,8 @@ class LeaseCapability:
     the fact that leasing itself remains independently reusable.
 
     Subclasses declare :attr:`endpoint_params` -- the parameter names whose
-    *values* are catalog aliases. Override :meth:`resolve_endpoints` when the
-    alias is not the parameter value itself.
+    *values* are catalog aliases. Override :meth:`resolve_lease_endpoints`
+    when the alias is not the parameter value itself.
 
     Attributes:
         endpoint_params (tuple[str, ...]): parameter names holding aliases.
@@ -204,6 +159,18 @@ class LeaseCapability:
     lease_enabled: bool = False
     lease_allowed_gpus: bool = True
 
+    def leasing_is_enabled(self) -> bool:
+        """Whether this node should bracket its command in a lease."""
+        if not self.lease_enabled:
+            return False
+        return not os.environ.get(INSIDE_LEASE_ENVVAR)
+
+    def _lease_slurm_gpu_allow_list(self) -> str:
+        """Shell text restricting infer-stack to this Slurm allocation."""
+        if not self.lease_allowed_gpus:
+            return ''
+        return GPU_ALLOW_LIST_EXPANSION
+
     def apply_lease_settings(self, settings: LeaseSettings) -> None:
         """
         Adopt an invocation's leasing settings.
@@ -220,7 +187,7 @@ class LeaseCapability:
         self.lease_enabled = bool(settings.enabled)
         self.lease_allowed_gpus = bool(settings.allowed_gpus)
 
-    def resolve_endpoints(self) -> list[str]:
+    def resolve_lease_endpoints(self) -> list[str]:
         """Catalog aliases this node's job needs, deduplicated, order kept.
 
         Empty values are dropped, so an optional model -- an extractor that
@@ -237,21 +204,21 @@ class LeaseCapability:
                 names.append(value)
         return names
 
-    def render_lease_command(self, command: str) -> str:
+    def wrap_with_lease(self, command: str) -> str:
         """Bracket the command in a lease when one is needed.
 
         The combined :class:`magnet.process_node.MagnetProcessNode` calls this
         after rendering its execution substrate, so a lease wraps Docker rather
         than running inside it. A lease-only node passes a host command here.
         """
-        if not leasing_is_enabled(self):
+        if not self.leasing_is_enabled():
             return command
-        names = self.resolve_endpoints()
+        names = self.resolve_lease_endpoints()
         if not names:
             return command
-        return self._lease_prefix(names) + ' \\\n    ' + command
+        return self._lease_command_prefix(names) + ' \\\n    ' + command
 
-    def _lease_prefix(self, names: list[str]) -> str:
+    def _lease_command_prefix(self, names: list[str]) -> str:
         # The prefix is shell text run later, on a host that may not be this
         # one, so this is a courtesy check, not a guarantee: it catches the
         # common case where the environment rendering the DAG is the one that
@@ -270,7 +237,7 @@ class LeaseCapability:
                 "pip install 'aiq-magnet[leasing]'")
         # ONE --endpoint with a comma-separated list. `infer-stack run` takes a
         # single string, so repeating the flag does not accumulate -- the last
-        # one silently wins and every other model goes unleased, which stays
+        # one wins and every other model goes unleased, which stays
         # invisible until something races for a GPU.
         parts = ['infer-stack', 'run', '--endpoint', shlex.quote(','.join(names))]
         if self.lease_ttl:
@@ -292,23 +259,10 @@ class LeaseCapability:
         # cgroup is ever created and `nvidia-smi -L` inside a 2-GPU allocation
         # lists all four. infer-stack takes its inventory from that list, two
         # nodes place servers on the same card, and one dies with CUDA OOM.
-        allow_list = slurm_gpu_allow_list(self)
+        allow_list = self._lease_slurm_gpu_allow_list()
         if allow_list:
             parts += [allow_list]
         # Everything after `--` is the command; without it a command starting
         # with a dash is parsed as an option to `run`.
         parts += ['--']
         return ' '.join(parts)
-
-
-
-def is_lease_capable(node: Any) -> bool:
-    """Whether ``node`` carries the per-node leasing capability."""
-    return isinstance(node, LeaseCapability)
-
-
-def render_lease_command(node: Any, command: str) -> str:
-    """Apply the lease wrapper for a lease-capable node."""
-    if not isinstance(node, LeaseCapability):
-        return command
-    return node.render_lease_command(command)

@@ -43,12 +43,7 @@ from typing import Any
 __all__ = [
     'ContainerCapability',
     'ContainerSettings',
-    'apply_settings',
-    'is_container_capable',
-    'containerization_is_enabled',
     'host_interpreter',
-    'container_prefix',
-    'render_container_command',
 ]
 
 
@@ -58,7 +53,7 @@ class ContainerSettings:
     What to run node commands in, for nodes that do not say.
 
     One invocation's answer to "where does this run", built from CLI arguments
-    and handed to :func:`apply_settings`, which writes it onto the nodes that
+    and applied with :meth:`apply`, which writes it onto the nodes that
     did not declare their own. Nothing reads it afterwards: by the time a
     command renders, every value it needs is on the node.
 
@@ -90,7 +85,9 @@ class ContainerSettings:
 
     def apply(self, pipeline: Any) -> None:
         """Apply these invocation settings to every container-capable node."""
-        apply_settings(pipeline, self)
+        for node in (getattr(pipeline, 'node_dict', None) or {}).values():
+            if isinstance(node, ContainerCapability):
+                node.apply_container_settings(self)
 
     @classmethod
     def coerce(
@@ -118,43 +115,6 @@ class ContainerSettings:
             forward_env=tuple(_coerce_name_list(forward_env)),
         )
 
-
-def apply_settings(pipeline: Any, settings: ContainerSettings) -> None:
-    """
-    Write an invocation's settings onto the nodes that did not declare
-    their own.
-
-    Called once, after the DAG is built and before anything renders a command.
-    This is the whole reason a node can be configured at all: kwdagger owns node
-    construction -- for a declarative card it is kwdagger's YAML loader that
-    instantiates the class the card names -- so MAGNET has no constructor to
-    pass anything to, and ``command`` is a property that takes no arguments. The
-    DAG is the one place MAGNET holds every node, so it is where configuration
-    is applied.
-
-    Nodes that are not containerizable are skipped rather than refused; naming
-    them is :func:`magnet._kwdagger._check_container_settings_apply`'s job.
-
-    Args:
-        pipeline: the built pipeline whose nodes will render commands.
-        settings: this invocation's defaults.
-
-    Example:
-        >>> from kwdagger.pipeline import coerce_pipeline
-        >>> from magnet.containers import ContainerSettings, apply_settings
-        >>> spec = {'nodes': {'work': {
-        ...     'class': 'magnet.process_node.MagnetProcessNode',
-        ...     'executable': 'python -m pkg.work',
-        ...     'out_paths': {'results_fpath': 'results.json'}}}}
-        >>> pipeline = coerce_pipeline(spec)
-        >>> settings = ContainerSettings.coerce(image='magnet:latest')
-        >>> apply_settings(pipeline, settings)
-        >>> pipeline.node_dict['work'].container_image
-        'magnet:latest'
-    """
-    for node in (getattr(pipeline, 'node_dict', None) or {}).values():
-        if isinstance(node, ContainerCapability):
-            node.apply_container_settings(settings)
 
 
 def _coerce_env_map(raw: Any) -> dict[str, str]:
@@ -185,45 +145,6 @@ def _coerce_name_list(raw: Any) -> list[str]:
     return [str(item).strip() for item in items if str(item).strip()]
 
 
-def node_image(node: Any = None) -> str:
-    """The image this node's command runs in, empty when it runs on the host."""
-    return str(getattr(node, 'container_image', None) or '').strip()
-
-
-def node_mounts(node: Any = None) -> list[str]:
-    """Host paths to bind-mount at their own absolute paths."""
-    return _coerce_name_list(getattr(node, 'container_mounts', None))
-
-
-def declared_env(node: Any = None) -> dict[str, str | None]:
-    """
-    Render-time variables and their values, in a stable order.
-
-    Values are captured here rather than forwarded by name because the
-    environment that will run the command is not this one; see the note in
-    :func:`container_prefix`.
-
-    A declared name with no value keeps a bare ``-e NAME`` (value None in the
-    result): a name that is not set yet can only be a job-time value.
-    """
-    runtime_env = set(
-        _coerce_name_list(getattr(node, 'container_runtime_env', None))
-    )
-    names = _coerce_name_list(getattr(node, 'container_capture_env', None))
-    for name in _coerce_name_list(
-        getattr(node, 'container_forward_env', None)
-    ):
-        if name not in names and name not in runtime_env:
-            names.append(name)
-
-    resolved: dict[str, str | None] = {
-        name: os.environ.get(name) or None for name in names
-    }
-    # An explicit mapping on the node wins over the environment.
-    for name, value in (getattr(node, 'container_env', None) or {}).items():
-        resolved[str(name)] = str(value)
-    return resolved
-
 
 def host_interpreter(command: str) -> str:
     """
@@ -236,7 +157,7 @@ def host_interpreter(command: str) -> str:
     "python: not found" before the node starts. The substitution happens at
     render time, on the node, so a pipeline never has to guess at
     construction which route the run will take. (Three pipelines used to
-    guess by calling :func:`containerization_is_enabled` with no node while
+    guess container state before invocation settings reached the node while
     building their DAG; once settings moved onto the nodes that answer was
     always "host", and their containers were handed a path that did not
     exist inside them.)
@@ -259,72 +180,6 @@ def host_interpreter(command: str) -> str:
     return command
 
 
-def containerization_is_enabled(node: Any = None) -> bool:
-    """
-    Whether node commands should be wrapped in ``docker run``.
-
-    Returns:
-        bool: true when the node names an image, either its own or the one
-            :func:`apply_settings` gave it.
-    """
-    return bool(node_image(node))
-
-
-def container_prefix(node: Any = None) -> str:
-    """The ``docker run`` invocation node commands are appended to.
-
-    Args:
-        node: the node being rendered. Every value comes off it -- its own
-            declaration, or what :func:`apply_settings` wrote there.
-
-    Returns:
-        str: everything up to and including the image name.
-    """
-    image = node_image(node)
-    parts = [
-        'docker', 'run', '--rm',
-        # The lease exports a 127.0.0.1:<port> URL. Host networking makes that
-        # URL true inside the container too, instead of rewriting it to a
-        # compose-network DNS name only some deployments have.
-        '--network', 'host',
-        # Otherwise every artifact comes out root-owned and the next
-        # host-side step cannot delete it.
-        '--user', f'{os.getuid()}:{os.getgid()}',
-    ]
-    for mount in node_mounts(node):
-        parts += ['-v', f'{mount}:{mount}']
-    parts += [
-        # Node configs carry paths relative to the job's cwd, so it must match.
-        '-w', '"$PWD"',
-        # A non-root uid has no home; anything touching a cache dir fails.
-        '-e', 'HOME=/tmp',
-    ]
-    # Two kinds of variable, split by WHEN the value exists.
-    #
-    # Job-time (`container_runtime_env`): `infer-stack run` writes these into
-    # the wrapped command's environment long after this string is rendered, so
-    # they stay a bare `-e NAME`. A captured value would freeze the
-    # orchestrator's shell over the endpoint actually leased.
-    #
-    # Render-time: values exist now and are not recreated later. A tmux worker
-    # inherits the tmux server's environment, not the orchestrator's, so a bare
-    # `-e NAME` forwards nothing and does it silently -- that cost a full run
-    # when OC_BACKEND_FACTORY vanished and every shard routed to a provider it
-    # had no key for.
-    for name in _coerce_name_list(
-        getattr(node, 'container_runtime_env', None)
-    ):
-        parts += ['-e', name]
-    for name, value in declared_env(node).items():
-        if value is None:
-            parts += ['-e', name]
-        else:
-            parts += ['-e', shlex.quote(f'{name}={value}')]
-    docker_args = getattr(node, 'container_docker_args', None)
-    parts += shlex.split(str(docker_args or ''))
-    parts.append(image)
-    return ' '.join(parts)
-
 
 class ContainerCapability:
     """
@@ -336,8 +191,9 @@ class ContainerCapability:
     the fact that the capability itself remains independently reusable.
 
     Every value the command needs lives on the node by the time it renders.
-    A node that declares its own keeps it; :func:`apply_settings` fills the
-    rest in. That is what lets two pipelines in one process differ, and what
+    A node that declares its own keeps it; :meth:`ContainerSettings.apply`
+    fills the rest in. That is what lets two pipelines in one process differ,
+    and what
     keeps a rendered command explainable from the node alone.
     """
 
@@ -371,6 +227,65 @@ class ContainerCapability:
         'TRANSFORMERS_OFFLINE',
         'HF_HUB_OFFLINE',
     )
+
+    def containerization_is_enabled(self) -> bool:
+        """Whether this node should run inside its configured container."""
+        return bool(str(self.container_image or '').strip())
+
+    def _container_mount_paths(self) -> list[str]:
+        """Host paths this node bind-mounts at their absolute paths."""
+        return _coerce_name_list(self.container_mounts)
+
+    def _container_resolved_env(self) -> dict[str, str | None]:
+        """Render-time environment values to embed in ``docker run``."""
+        runtime_env = set(_coerce_name_list(self.container_runtime_env))
+        names = _coerce_name_list(self.container_capture_env)
+        for name in _coerce_name_list(self.container_forward_env):
+            if name not in names and name not in runtime_env:
+                names.append(name)
+
+        resolved: dict[str, str | None] = {
+            name: os.environ.get(name) or None for name in names
+        }
+        for name, value in (self.container_env or {}).items():
+            resolved[str(name)] = str(value)
+        return resolved
+
+    def _container_command_prefix(self) -> str:
+        """Build the ``docker run`` prefix for this node."""
+        image = str(self.container_image or '').strip()
+        parts = [
+            'docker', 'run', '--rm',
+            # infer-stack exports a loopback endpoint; host networking keeps
+            # that endpoint valid inside the container.
+            '--network', 'host',
+            # Keep artifacts writable by subsequent host-side jobs.
+            '--user', f'{os.getuid()}:{os.getgid()}',
+        ]
+        for mount in self._container_mount_paths():
+            parts += ['-v', f'{mount}:{mount}']
+        parts += [
+            '-w', '"$PWD"',
+            '-e', 'HOME=/tmp',
+        ]
+        # Lease-provided variables only exist when the job executes, so they
+        # must be forwarded by name rather than captured while rendering.
+        for name in _coerce_name_list(self.container_runtime_env):
+            parts += ['-e', name]
+        for name, value in self._container_resolved_env().items():
+            if value is None:
+                parts += ['-e', name]
+            else:
+                parts += ['-e', shlex.quote(f'{name}={value}')]
+        parts += shlex.split(str(self.container_docker_args or ''))
+        parts.append(image)
+        return ' '.join(parts)
+
+    def wrap_with_container(self, command: str) -> str:
+        """Wrap ``command`` in Docker when containerization is enabled."""
+        if not self.containerization_is_enabled():
+            return command
+        return self._container_command_prefix() + " \\\n    " + command
 
     def apply_container_settings(self, settings: ContainerSettings) -> None:
         """
@@ -408,15 +323,3 @@ class ContainerCapability:
             if name not in names:
                 names.append(name)
         self.container_forward_env = tuple(names)
-
-
-def is_container_capable(node: Any) -> bool:
-    """Whether ``node`` carries the container execution capability."""
-    return isinstance(node, ContainerCapability)
-
-
-def render_container_command(node: Any, command: str) -> str:
-    """Render the execution substrate: Docker when enabled, host otherwise."""
-    if containerization_is_enabled(node):
-        return container_prefix(node) + " \\\n    " + command
-    return host_interpreter(command)

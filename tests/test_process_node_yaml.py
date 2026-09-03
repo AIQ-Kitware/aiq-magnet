@@ -36,7 +36,7 @@ class BareContainerNode(ContainerCapability, kwdagger.ProcessNode):
 
     @property
     def command(self):
-        return containers.render_container_command(self, super().command)
+        return self.wrap_with_container(super().command)
 
 
 def _spec(node_class=None, **extra):
@@ -70,8 +70,8 @@ def test_magnet_process_node_is_the_one_declarative_integration_surface():
     assert issubclass(MagnetProcessNode, YamlProcessNode)
     node = _node(_spec(MAGNET_CLASS))
     assert isinstance(node, MagnetProcessNode)
-    assert containers.is_container_capable(node)
-    assert leasing.is_lease_capable(node)
+    assert isinstance(node, containers.ContainerCapability)
+    assert isinstance(node, leasing.LeaseCapability)
 
 
 def test_a_plain_yaml_node_still_cannot_containerize():

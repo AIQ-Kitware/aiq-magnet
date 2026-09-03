@@ -66,9 +66,7 @@ def card():
 
 def _configured_nodes(card, *, image=IMAGE, leasing_on=True):
     pipeline = coerce_pipeline(card['kwdagger']['pipeline'])
-    containers.apply_settings(
-        pipeline, ContainerSettings.coerce(image=image, mounts='/repo')
-    )
+    ContainerSettings.coerce(image=image, mounts='/repo').apply(pipeline)
     LeaseSettings(enabled=leasing_on).apply(pipeline)
     return pipeline.node_dict
 
@@ -112,8 +110,8 @@ def test_every_node_can_use_the_image(card):
     it, which is a green run that containerized nothing."""
     for name, node in _configured_nodes(card).items():
         assert isinstance(node, MagnetProcessNode), name
-        assert containers.is_container_capable(node), name
-        assert leasing.is_lease_capable(node), name
+        assert isinstance(node, containers.ContainerCapability), name
+        assert isinstance(node, leasing.LeaseCapability), name
 
 
 def test_the_card_carries_no_wiring(card):

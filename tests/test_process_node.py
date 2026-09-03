@@ -39,7 +39,7 @@ class _ContainerOnly(ContainerCapability, kwdagger.ProcessNode):
 
     @property
     def command(self):
-        return containers.render_container_command(self, super().command)
+        return self.wrap_with_container(super().command)
 
 
 class _LeaseOnly(LeaseCapability, kwdagger.ProcessNode):
@@ -53,14 +53,14 @@ class _LeaseOnly(LeaseCapability, kwdagger.ProcessNode):
     @property
     def command(self):
         base = containers.host_interpreter(super().command)
-        return leasing.render_lease_command(self, base)
+        return self.wrap_with_lease(base)
 
 
 def _node(cls=_Work, settings=None, lease=None):
     node = cls()
-    if containers.is_container_capable(node):
+    if isinstance(node, containers.ContainerCapability):
         node.apply_container_settings(settings or ContainerSettings())
-    if lease is not None and leasing.is_lease_capable(node):
+    if lease is not None and isinstance(node, leasing.LeaseCapability):
         node.apply_lease_settings(lease)
     return node
 
@@ -70,8 +70,8 @@ def test_capability_mixins_can_be_composed_independently(monkeypatch):
     boxed = _ContainerOnly()
     boxed.configure({})
     boxed.apply_container_settings(ContainerSettings.coerce(image='box:latest'))
-    assert containers.is_container_capable(boxed)
-    assert not leasing.is_lease_capable(boxed)
+    assert isinstance(boxed, containers.ContainerCapability)
+    assert not isinstance(boxed, leasing.LeaseCapability)
     assert boxed.command.startswith('docker run --rm ')
     assert 'infer-stack run' not in boxed.command
 
@@ -81,14 +81,14 @@ def test_capability_mixins_can_be_composed_independently(monkeypatch):
     leased = _LeaseOnly()
     leased.configure({'model_id': 'smol-135'})
     leased.apply_lease_settings(LeaseSettings(enabled=True))
-    assert leasing.is_lease_capable(leased)
-    assert not containers.is_container_capable(leased)
+    assert isinstance(leased, leasing.LeaseCapability)
+    assert not isinstance(leased, containers.ContainerCapability)
     assert leased.command.startswith('infer-stack run ')
     assert 'docker run' not in leased.command
 
     integrated = _Work()
-    assert containers.is_container_capable(integrated)
-    assert leasing.is_lease_capable(integrated)
+    assert isinstance(integrated, containers.ContainerCapability)
+    assert isinstance(integrated, leasing.LeaseCapability)
 
 
 def test_nothing_is_read_from_the_old_environment_variables():
@@ -101,19 +101,20 @@ def test_nothing_is_read_from_the_old_environment_variables():
     }
     with mock.patch.dict(os.environ, stale):
         node = _node(_Infer, lease=LeaseSettings())
-        assert containers.containerization_is_enabled(node) is False
-        assert containers.node_mounts(node) == []
+        assert node.containerization_is_enabled() is False
+        assert list(node.container_mounts or []) == []
         assert 'STALE_VAR' not in (node.container_forward_env or ())
-        assert leasing.leasing_is_enabled(node) is False
+        assert node.leasing_is_enabled() is False
 
 
 def test_the_image_comes_from_configuration():
     node = _node(settings=ContainerSettings.coerce(
         image='magnet:latest', mounts='/repo'))
-    assert containers.containerization_is_enabled(node) is True
-    prefix = containers.container_prefix(node)
-    assert prefix.endswith('magnet:latest')
-    assert '-v /repo:/repo' in prefix
+    assert node.containerization_is_enabled() is True
+    wrapped = node.wrap_with_container('true')
+    assert ' magnet:latest ' in wrapped
+    assert wrapped.endswith('true')
+    assert '-v /repo:/repo' in wrapped
 
 
 def test_a_node_still_wins_over_the_invocation():
@@ -122,28 +123,30 @@ def test_a_node_still_wins_over_the_invocation():
     node.apply_container_settings(
         ContainerSettings.coerce(image='invocation:image')
     )
-    assert containers.node_image(node) == 'node:image'
+    assert str(node.container_image or '').strip() == 'node:image'
 
 
 def test_mounts_accept_a_list_or_a_separated_string():
     for spec in (['/a', '/b'], '/a:/b', '/a,/b'):
-        node = _node(settings=ContainerSettings.coerce(mounts=spec))
-        assert containers.node_mounts(node) == ['/a', '/b']
+        node = _node(settings=ContainerSettings.coerce(image='i', mounts=spec))
+        wrapped = node.wrap_with_container('true')
+        assert '-v /a:/a' in wrapped
+        assert '-v /b:/b' in wrapped
 
 
 def test_docker_args_reach_the_prefix():
     node = _node(settings=ContainerSettings.coerce(
         image='i', docker_args='--gpus all'))
-    assert '--gpus all' in containers.container_prefix(node)
+    assert '--gpus all' in node.wrap_with_container('true')
 
 
 def test_leasing_is_off_until_asked_for():
     off = _node(_Infer, lease=LeaseSettings())
     off.configure({'model_id': 'm'})
-    assert leasing.leasing_is_enabled(off) is False
+    assert off.leasing_is_enabled() is False
     asked = _node(_Infer, lease=LeaseSettings(enabled=True))
     asked.configure({'model_id': 'm'})
-    assert leasing.leasing_is_enabled(asked) is True
+    assert asked.leasing_is_enabled() is True
 
 
 def test_leasing_stays_off_inside_someone_elses_lease():
@@ -151,14 +154,14 @@ def test_leasing_stays_off_inside_someone_elses_lease():
     node = _node(_Infer, lease=LeaseSettings(enabled=True))
     node.configure({'model_id': 'm'})
     with mock.patch.dict(os.environ, {leasing.INSIDE_LEASE_ENVVAR: 'abc123'}):
-        assert leasing.leasing_is_enabled(node) is False
+        assert node.leasing_is_enabled() is False
 
 
 def test_the_endpoint_variables_are_still_forwarded_by_name():
     """infer-stack owns these; magnet must not capture a value for them."""
     node = _node(settings=ContainerSettings.coerce(image='i'))
     with mock.patch.dict(os.environ, {'OPENAI_BASE_URL': 'http://stale'}):
-        prefix = containers.container_prefix(node)
+        prefix = node.wrap_with_container('true')
     assert '-e OPENAI_BASE_URL' in prefix
     assert 'http://stale' not in prefix
 
@@ -166,17 +169,17 @@ def test_the_endpoint_variables_are_still_forwarded_by_name():
 def test_two_runs_in_one_process_do_not_share_settings():
     first = _node(settings=ContainerSettings.coerce(image='first:image'))
     second = _node(settings=ContainerSettings.coerce(image='second:image'))
-    assert containers.node_image(first) == 'first:image'
-    assert containers.node_image(second) == 'second:image'
+    assert str(first.container_image or '').strip() == 'first:image'
+    assert str(second.container_image or '').strip() == 'second:image'
 
 
 def test_applying_settings_twice_changes_nothing():
     settings = ContainerSettings.coerce(
         image='i', mounts='/repo', forward_env='A,B')
     node = _node(settings=settings)
-    once = containers.container_prefix(node)
+    once = node.wrap_with_container('true')
     node.apply_container_settings(settings)
-    assert containers.container_prefix(node) == once
+    assert node.wrap_with_container('true') == once
     assert tuple(node.container_forward_env or ()).count('A') == 1
 
 
