@@ -13,3 +13,5 @@ results
 evaluation_runs
 *.tar.gz
 data
+
+examples/smollm_example/runs
