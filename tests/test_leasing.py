@@ -47,7 +47,6 @@ def _node(cls, config, enabled=True):
     """A configured node that leases unless the test says otherwise."""
     node = cls()
     node.configure(config)
-    node.apply_settings(containers.ContainerSettings())
     node.apply_lease_settings(leasing.LeaseSettings(enabled=enabled))
     return node
 
@@ -55,6 +54,12 @@ def _node(cls, config, enabled=True):
 def _prefix(command):
     """The lease wrapper only, without the wrapped command."""
     return command.split(' -- ', 1)[0]
+
+
+def test_a_lease_only_node_has_no_container_capability():
+    node = Infer()
+    assert leasing.is_lease_capable(node)
+    assert not containers.is_container_capable(node)
 
 
 def test_the_node_leases_the_models_it_names():

@@ -22,6 +22,7 @@ from kwdagger.pipeline import coerce_pipeline
 from magnet import containers, leasing
 from magnet.containers import ContainerProcessNode, ContainerSettings
 from magnet.leasing import LeasedProcessNode, LeaseSettings
+from magnet.execution import MagnetProcessNode
 
 
 class _Work(ContainerProcessNode):
@@ -29,17 +30,27 @@ class _Work(ContainerProcessNode):
     executable = 'python -m pkg.work'
 
 
-class _Infer(LeasedProcessNode):
+class _Infer(MagnetProcessNode):
     name = 'infer'
     executable = 'python -m pkg.infer'
 
 
 def _node(cls=_Work, settings=None, lease=None):
     node = cls()
-    node.apply_settings(settings or ContainerSettings())
-    if lease is not None:
+    if containers.is_container_capable(node):
+        node.apply_settings(settings or ContainerSettings())
+    if lease is not None and leasing.is_lease_capable(node):
         node.apply_lease_settings(lease)
     return node
+
+
+def test_standalone_capabilities_do_not_imply_each_other():
+    assert containers.is_container_capable(ContainerProcessNode())
+    assert not leasing.is_lease_capable(ContainerProcessNode())
+    assert leasing.is_lease_capable(LeasedProcessNode())
+    assert not containers.is_container_capable(LeasedProcessNode())
+    assert containers.is_container_capable(MagnetProcessNode())
+    assert leasing.is_lease_capable(MagnetProcessNode())
 
 
 def test_nothing_is_read_from_the_old_environment_variables():

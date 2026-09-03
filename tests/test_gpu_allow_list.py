@@ -21,7 +21,7 @@ from unittest import mock
 
 import pytest
 
-from magnet import containers, leasing
+from magnet import leasing
 from magnet.leasing import LeasedProcessNode
 
 pytestmark = pytest.mark.skipif(
@@ -46,7 +46,6 @@ def _clean_env(monkeypatch):
 def _command(allowed_gpus=True):
     node = Infer()
     node.configure({'model_id': 'm'})
-    node.apply_settings(containers.ContainerSettings())
     node.apply_lease_settings(
         leasing.LeaseSettings(enabled=True, allowed_gpus=allowed_gpus)
     )

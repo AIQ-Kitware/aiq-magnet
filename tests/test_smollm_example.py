@@ -24,6 +24,7 @@ from magnet import containers, leasing
 from magnet.containers import ContainerSettings
 from smollm_example.cli.compare_answers import compare
 from magnet.leasing import LeaseSettings
+from magnet.execution import MagnetYamlProcessNode
 
 import shlex as _shlex
 import sys as _sys
@@ -110,7 +111,9 @@ def test_every_node_can_use_the_image(card):
     """A node that cannot be containerized takes --container_image and drops
     it, which is a green run that containerized nothing."""
     for name, node in _configured_nodes(card).items():
-        assert isinstance(node, containers.ContainerProcessNode), name
+        assert isinstance(node, MagnetYamlProcessNode), name
+        assert containers.is_container_capable(node), name
+        assert leasing.is_lease_capable(node), name
 
 
 def test_the_card_carries_no_wiring(card):

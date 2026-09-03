@@ -272,7 +272,7 @@ class KWDaggerProcessor:
             container_settings or containers.ContainerSettings()
         )
         lease_settings = lease_settings or leasing.LeaseSettings()
-        containers.apply_settings(pipeline, container_settings)
+        container_settings.apply(pipeline)
         lease_settings.apply(pipeline)
 
         # Before anything is submitted: an execution setting that cannot reach
@@ -495,11 +495,11 @@ def _check_container_settings_apply(
     """
     Refuse to run when ``--container_image`` would do nothing.
 
-    Containerization is opt-in per node class: only a
-    :class:`~magnet.containers.ContainerProcessNode` renders the ``docker run``
-    prefix. A card that declares its DAG as data gets kwdagger's
-    ``YamlProcessNode``, a sibling of that class, so the image was accepted,
-    stored, and never read -- a green run that containerized nothing, with no
+    Containerization is opt-in per node capability: only a node carrying
+    :class:`~magnet.containers.ContainerCapability` renders the ``docker run``
+    prefix. A card that declares its DAG as data gets kwdagger's plain
+    ``YamlProcessNode``, which carries no container capability, so the image was
+    accepted, stored, and never read -- a green run that containerized nothing, with no
     warning. Evidence from that run is indistinguishable from evidence produced
     the way the invocation asked for, which is the whole reason it has to be an
     error rather than a note in a log nobody reads.
@@ -517,7 +517,7 @@ def _check_container_settings_apply(
     node_dict = getattr(pipeline, 'node_dict', None) or {}
     inert = sorted(
         name for name, node in node_dict.items()
-        if not isinstance(node, containers.ContainerProcessNode)
+        if not containers.is_container_capable(node)
     )
     if not node_dict or len(inert) < len(node_dict):
         # A mixed DAG is legitimate -- an analysis step may belong on the host
@@ -526,9 +526,9 @@ def _check_container_settings_apply(
         if inert:
             logger.warning(
                 f'--container_image is set, but these nodes cannot use it and '
-                f'will run on the host: {inert}. Give each a `class:` deriving '
-                'from magnet.containers.ContainerProcessNode (declarative '
-                'cards want ContainerYamlProcessNode) if that is not intended.'
+                f'will run on the host: {inert}. Give each a container-capable '
+                '`class:` (normally magnet.execution.MagnetYamlProcessNode) if '
+                'that is not intended.'
             )
         return
 
@@ -537,11 +537,11 @@ def _check_container_settings_apply(
         f'but no node in this pipeline can be containerized, so nothing would '
         f'run in the image and the results would look exactly like a '
         f'containerized run. Nodes: {inert}.\n'
-        'Containerization is opt-in per node class. For a card that inlines '
-        'its DAG, name the class on each node:\n'
-        '    class: magnet.containers.ContainerYamlProcessNode\n'
-        'Use magnet.leasing.LeasedYamlProcessNode for a node that also leases '
-        'an endpoint. Drop --container_image to run on the host.'
+        'Containerization is opt-in per node capability. For a card that '
+        'inlines its DAG and may also lease endpoints, use:\n'
+        '    class: magnet.execution.MagnetYamlProcessNode\n'
+        'Use magnet.containers.ContainerYamlProcessNode for a container-only '
+        'node, or drop --container_image to run on the host.'
     )
 
 

@@ -15,6 +15,7 @@ from magnet.containers import (
 )
 from magnet import leasing
 from magnet.leasing import INSIDE_LEASE_ENVVAR, LeasedProcessNode
+from magnet.execution import MagnetProcessNode
 
 import shlex as _shlex
 import sys as _sys
@@ -30,7 +31,7 @@ class Work(ContainerProcessNode):
     algo_params = {'task': None}
 
 
-class Infer(LeasedProcessNode):
+class Infer(MagnetProcessNode):
     name = 'infer'
     executable = 'python -m pkg.infer'
     endpoint_params = ('model_id',)
@@ -48,8 +49,9 @@ def _node(cls, config, settings=None, lease=None):
     """A configured node carrying this test's execution settings."""
     node = cls()
     node.configure(config)
-    node.apply_settings(settings or containers.ContainerSettings())
-    if lease is not None:
+    if containers.is_container_capable(node):
+        node.apply_settings(settings or containers.ContainerSettings())
+    if lease is not None and leasing.is_lease_capable(node):
         node.apply_lease_settings(lease)
     return node
 
@@ -152,6 +154,18 @@ def test_the_default_env_policy_is_generic_and_overridable():
 
     command = _node(Minimal, {'task': 't'}, _on()).command
     assert 'OPENAI_BASE_URL' not in command
+
+
+def test_container_and_lease_nodes_are_independent_siblings():
+    assert not issubclass(LeasedProcessNode, ContainerProcessNode)
+    assert not issubclass(ContainerProcessNode, LeasedProcessNode)
+    assert containers.is_container_capable(ContainerProcessNode())
+    assert not leasing.is_lease_capable(ContainerProcessNode())
+    assert leasing.is_lease_capable(LeasedProcessNode())
+    assert not containers.is_container_capable(LeasedProcessNode())
+    both = MagnetProcessNode()
+    assert containers.is_container_capable(both)
+    assert leasing.is_lease_capable(both)
 
 
 def test_the_lease_wraps_the_container_not_the_other_way_round(monkeypatch):

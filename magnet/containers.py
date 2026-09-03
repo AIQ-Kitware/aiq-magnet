@@ -23,23 +23,12 @@ The repository is mounted at the same absolute path it has on the host:
 kwdagger bakes absolute output paths into commands, so keeping them identical
 means nothing has to be rewritten and a path in a log is one you can open.
 
-Containerization is opt-in *per node class*: a node inherits from
-:class:`ContainerProcessNode`, or -- for a card that declares its DAG as data
-rather than as Python -- from :class:`ContainerYamlProcessNode`, named in the
-node's ``class`` key.
-
-TODO:
-    Substitute the node class at DAG compile time, so a card need not name an
-    execution class at all: the pipeline would describe the work and the card
-    would describe where it runs. :func:`apply_settings` is already the hook --
-    it holds every node and the invocation's settings, before anything renders
-    a command -- so what is left is swapping the class there rather than only
-    configuring the instance. Two things point the same way. A card that names
-    no container class today is silently *not* containerized however it was
-    invoked, which is a green run that proves nothing. And the environment
-    capture policy on :class:`ContainerProcessNode` is correct and needed on
-    the host path too, where a cmd_queue tmux worker inherits just as little,
-    but is reachable only through :func:`container_prefix`.
+Containerization is an independent execution capability. A pure
+:class:`ContainerProcessNode` has only that capability; a
+:class:`~magnet.leasing.LeasedProcessNode` has only leasing; and
+:class:`magnet.execution.MagnetProcessNode` composes both without either
+capability inheriting the other. Declarative cards have the corresponding YAML
+node classes.
 """
 
 from __future__ import annotations
@@ -56,13 +45,16 @@ import kwdagger
 from kwdagger.yaml_pipeline import YamlProcessNode
 
 __all__ = [
+    'ContainerCapability',
     'ContainerProcessNode',
     'ContainerYamlProcessNode',
     'ContainerSettings',
     'apply_settings',
+    'is_container_capable',
     'containerization_is_enabled',
     'host_interpreter',
     'container_prefix',
+    'render_container_command',
 ]
 
 
@@ -101,6 +93,10 @@ class ContainerSettings:
     #: This is how a pipeline's own configuration reaches its nodes: MAGNET has
     #: no business knowing what those variables are called.
     forward_env: tuple[str, ...] = ()
+
+    def apply(self, pipeline: Any) -> None:
+        """Apply these invocation settings to every container-capable node."""
+        apply_settings(pipeline, self)
 
     @classmethod
     def coerce(
@@ -163,8 +159,8 @@ def apply_settings(pipeline: Any, settings: ContainerSettings) -> None:
         'magnet:latest'
     """
     for node in (getattr(pipeline, 'node_dict', None) or {}).values():
-        if isinstance(node, ContainerProcessNode):
-            node.apply_settings(settings)
+        if isinstance(node, ContainerCapability):
+            node.apply_container_settings(settings)
 
 
 def _coerce_env_map(raw: Any) -> dict[str, str]:
@@ -336,13 +332,14 @@ def container_prefix(node: Any = None) -> str:
     return ' '.join(parts)
 
 
-class ContainerProcessNode(kwdagger.ProcessNode):
+class ContainerCapability:
     """
-    A :class:`kwdagger.ProcessNode` whose command runs in a container.
+    Container-specific state and configuration, independent of node type.
 
-    Inert unless an image is named -- by the node itself, or by
-    :func:`apply_settings` on behalf of the invocation -- so the same pipeline
-    runs on the host during development and in a pinned image for a real run.
+    This mixin owns no ``command`` property and knows nothing about leasing.
+    :class:`ContainerProcessNode` uses it alone, while
+    :class:`magnet.execution.MagnetProcessNode` combines it with the leasing
+    capability.
 
     Every value the command needs lives on the node by the time it renders.
     A node that declares its own keeps it; :func:`apply_settings` fills the
@@ -381,7 +378,7 @@ class ContainerProcessNode(kwdagger.ProcessNode):
         'HF_HUB_OFFLINE',
     )
 
-    def apply_settings(self, settings: ContainerSettings) -> None:
+    def apply_container_settings(self, settings: ContainerSettings) -> None:
         """
         Adopt an invocation's settings for anything this node did not declare.
 
@@ -418,19 +415,29 @@ class ContainerProcessNode(kwdagger.ProcessNode):
                 names.append(name)
         self.container_forward_env = tuple(names)
 
-    def _wrap_command(self, command: str) -> str:
-        """Hook for subclasses that add another layer (see
-        :class:`magnet.leasing.LeasedProcessNode`)."""
-        return command
+    def apply_settings(self, settings: ContainerSettings) -> None:
+        """Compatibility alias for :meth:`apply_container_settings`."""
+        self.apply_container_settings(settings)
+
+
+def is_container_capable(node: Any) -> bool:
+    """Whether ``node`` carries the container execution capability."""
+    return isinstance(node, ContainerCapability)
+
+
+def render_container_command(node: Any, command: str) -> str:
+    """Render the execution substrate: Docker when enabled, host otherwise."""
+    if containerization_is_enabled(node):
+        return container_prefix(node) + " \\\n    " + command
+    return host_interpreter(command)
+
+
+class ContainerProcessNode(ContainerCapability, kwdagger.ProcessNode):
+    """A process node with container execution capability only."""
 
     @property
     def command(self) -> str:
-        base = super().command
-        if containerization_is_enabled(self):
-            base = container_prefix(self) + ' \\\n    ' + base
-        else:
-            base = host_interpreter(base)
-        return self._wrap_command(base)
+        return render_container_command(self, super().command)
 
 
 class ContainerYamlProcessNode(ContainerProcessNode, YamlProcessNode):

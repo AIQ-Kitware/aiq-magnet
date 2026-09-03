@@ -281,13 +281,19 @@ Once 0.4.1 lands, `pipeline.py` can go and the card can say it directly:
 
 ```yaml
 ask:
-  class: magnet.leasing.LeasedYamlProcessNode
+  class: magnet.execution.MagnetYamlProcessNode
   endpoint_params: [endpoint]
   executable: "python -m smollm_example.cli.ask_model"
 ```
 
 Nothing in `cli/` changes when it does. `tests/test_yaml_container_nodes.py`
 pins that destination and skips itself on a kwdagger that cannot do it yet.
+
+All three Python DAG nodes already use `MagnetYamlProcessNode`. Containerization
+and endpoint leasing are independent capabilities on that node: the invocation
+may enable either, both, or neither. Only `Ask.endpoint_params` names an
+endpoint, so enabling leasing leaves `Items` and `Compare` unwrapped while the
+same container setting can still apply to all three.
 
 ## Files
 

@@ -33,18 +33,23 @@ import os
 import shlex
 from typing import Any
 
+import kwdagger
 from kwdagger.yaml_pipeline import YamlProcessNode
 
-from magnet.containers import ContainerProcessNode
+from magnet.containers import host_interpreter
 
 __all__ = [
+    'LeaseCapability',
     'LeasedProcessNode',
     'LeasedYamlProcessNode',
     'LeaseSettings',
+    'is_lease_capable',
     'leasing_is_enabled',
+    'render_lease_command',
     'slurm_gpu_allow_list',
     'INSIDE_LEASE_ENVVAR',
     'GPU_ALLOW_LIST_EXPANSION',
+    'LEASE_NODE_SPEC_KEYS',
 ]
 
 
@@ -80,7 +85,7 @@ class LeaseSettings:
     def apply(self, pipeline: Any) -> None:
         """Apply these invocation settings to every leasable node in a DAG."""
         for node in (getattr(pipeline, 'node_dict', None) or {}).values():
-            if isinstance(node, LeasedProcessNode):
+            if isinstance(node, LeaseCapability):
                 node.apply_lease_settings(self)
 
 
@@ -88,6 +93,14 @@ class LeaseSettings:
 #: someone else's lease, which holds every endpoint it named, so acquiring
 #: again per node is pure overhead.
 INSIDE_LEASE_ENVVAR = 'INFER_STACK_LEASE_ID'
+
+#: YAML keys owned by the leasing capability.
+LEASE_NODE_SPEC_KEYS = frozenset({
+    'endpoint_params',
+    'lease_ttl',
+    'lease_timeout',
+    'lease_queue',
+})
 
 
 def leasing_is_enabled(node: Any = None) -> bool:
@@ -157,13 +170,14 @@ def slurm_gpu_allow_list(node: Any = None) -> str:
     return GPU_ALLOW_LIST_EXPANSION
 
 
-class LeasedProcessNode(ContainerProcessNode):
+class LeaseCapability:
     """
-    A node that acquires its endpoints for its own job.
+    Lease-specific state and command wrapping, independent of node type.
 
-    Also a :class:`~magnet.containers.ContainerProcessNode`, so a node holding
-    a model can equally run in a pinned image; the lease ends up outside the
-    container.
+    This mixin owns no ``command`` property and performs no container wrapping.
+    :class:`LeasedProcessNode` uses it alone, while
+    :class:`magnet.execution.MagnetProcessNode` composes it with the container
+    capability.
 
     Subclasses declare :attr:`endpoint_params` -- the parameter names whose
     *values* are catalog aliases. Override :meth:`resolve_endpoints` when the
@@ -198,10 +212,9 @@ class LeasedProcessNode(ContainerProcessNode):
         """
         Adopt an invocation's leasing settings.
 
-        Distinct from
-        :meth:`~magnet.containers.ContainerProcessNode.apply_settings` because a
-        leased node is also a containerized one and takes both, from two
-        separate settings objects.
+        Leasing and containerization are separate invocation policies. A
+        combined MAGNET node may receive both settings objects, but neither
+        capability depends on the other.
 
         Unlike the container settings there is no "the node already declared
         one" case to respect: leasing is a property of the invocation, not of
@@ -228,15 +241,12 @@ class LeasedProcessNode(ContainerProcessNode):
                 names.append(value)
         return names
 
-    def _wrap_command(self, command: str) -> str:
+    def render_lease_command(self, command: str) -> str:
         """Bracket the command in a lease when one is needed.
 
-        Called by :class:`~magnet.containers.ContainerProcessNode` *after* it
-        applies any ``docker run`` wrapper, so the lease ends up outside the
-        container. That order matters: acquiring a lease needs the Docker
-        daemon and the shared ledger, both on the host, and being inside means
-        the container inherits OPENAI_BASE_URL / OPENAI_API_KEY from the lease
-        with no extra plumbing.
+        The combined :class:`magnet.execution.MagnetProcessNode` calls this
+        after rendering its execution substrate, so a lease wraps Docker rather
+        than running inside it. A lease-only node passes a host command here.
         """
         if not leasing_is_enabled(self):
             return command
@@ -295,15 +305,35 @@ class LeasedProcessNode(ContainerProcessNode):
         return ' '.join(parts)
 
 
+
+def is_lease_capable(node: Any) -> bool:
+    """Whether ``node`` carries the per-node leasing capability."""
+    return isinstance(node, LeaseCapability)
+
+
+def render_lease_command(node: Any, command: str) -> str:
+    """Apply the lease wrapper for a lease-capable node."""
+    if not isinstance(node, LeaseCapability):
+        return command
+    return node.render_lease_command(command)
+
+
+class LeasedProcessNode(LeaseCapability, kwdagger.ProcessNode):
+    """A process node with endpoint leasing capability only."""
+
+    @property
+    def command(self) -> str:
+        base = host_interpreter(super().command)
+        return render_lease_command(self, base)
+
+
 class LeasedYamlProcessNode(LeasedProcessNode, YamlProcessNode):
     """
-    A leased, containerized node that a card can declare in YAML.
+    A lease-capable node that a card can declare in YAML.
 
-    The leasing counterpart of
-    :class:`~magnet.containers.ContainerYamlProcessNode`, and the same
-    reasoning: a declarative card's nodes are
-    :class:`~kwdagger.yaml_pipeline.YamlProcessNode`, so they inherited neither
-    the container wrapper nor the lease.
+    This class does not imply containerization. Use
+    :class:`magnet.execution.MagnetYamlProcessNode` when an invocation may apply
+    both container and lease settings to the same declarative node.
 
     :attr:`~LeasedProcessNode.endpoint_params` names the parameters whose
     values are catalog aliases, and it is card data: which parameter holds an
@@ -325,11 +355,6 @@ class LeasedYamlProcessNode(LeasedProcessNode, YamlProcessNode):
     #: The leasing knobs a card may set directly. kwdagger validates a node
     #: spec against its own key list plus whatever the named class adds here,
     #: which is what keeps these out of Python.
-    extra_node_spec_keys = frozenset({
-        'endpoint_params',
-        'lease_ttl',
-        'lease_timeout',
-        'lease_queue',
-    })
+    extra_node_spec_keys = LEASE_NODE_SPEC_KEYS
 
 
