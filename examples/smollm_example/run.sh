@@ -23,6 +23,28 @@ repo="$(cd "$examples/.." && pwd)"
 # by being on the path. `pipeline.py` and the node commands both need it.
 export PYTHONPATH="$examples${PYTHONPATH:+:$PYTHONPATH}"
 
+require_commands() {
+    local missing=()
+    local command_name
+    for command_name in "$@"; do
+        if ! command -v "$command_name" >/dev/null 2>&1; then
+            missing+=("$command_name")
+        fi
+    done
+    if ((${#missing[@]})); then
+        printf 'This example requires MAGNET and infer-stack on PATH. Missing:' >&2
+        printf ' %s' "${missing[@]}" >&2
+        printf '\n' >&2
+        printf 'Install aiq-magnet with its leasing extra in the active environment.\n' >&2
+        exit 127
+    fi
+}
+
+# Detect prerequisites without invoking their CLIs. Calling a modal CLI with no
+# subcommand prints its usage text and turns a simple presence check into a
+# spurious error.
+require_commands magnet infer-stack
+
 catalog="$here/catalog-mock.yaml"
 container=0
 while [[ "${1:-}" == --gpu || "${1:-}" == --container ]]; do
@@ -68,7 +90,7 @@ export INFER_STACK_CATALOG="$catalog"
 exec python -m magnet.evaluation_new \
     --path="$here/smollm_kwdagger.yaml" \
     --output_path="${SMOLLM_RUNS:-./runs/smollm}" \
-    --per_node_leasing=1 \
+    --per_node_leasing \
     --backend=serial \
     "${container_args[@]}" \
     "$@"

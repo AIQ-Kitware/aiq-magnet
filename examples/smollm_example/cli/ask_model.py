@@ -144,7 +144,7 @@ class AskModelCLI(kwconf.Config):
             raise SystemExit(ub.paragraph(
                 f"""
                 {BASE_URL_ENVVAR} is unset, so this command is not running
-                inside a lease. Schedule the card with --per_node_leasing=1,
+                inside a lease. Schedule the card with --per_node_leasing,
                 or wrap this invocation in `infer-stack run --endpoint
                 <alias> --`. Without it there is no server to ask.
                 """

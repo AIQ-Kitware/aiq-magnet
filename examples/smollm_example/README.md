@@ -16,7 +16,15 @@ image for them is pulled on demand.
 
 The flags combine; anything else goes through to `magnet evaluate_new`.
 
-The only setup is one line per machine, and `run.sh` tells you if you need it:
+`run.sh` expects `magnet` and `infer-stack` to already be installed in the
+active environment. Installing MAGNET with its leasing extra provides both:
+
+```bash
+pip install 'aiq-magnet[leasing]'
+```
+
+Then infer-stack needs one machine-level backend choice. `run.sh` checks this
+before scheduling anything and prints the command if it is missing:
 
 ```bash
 infer-stack config init --yes --backend compose

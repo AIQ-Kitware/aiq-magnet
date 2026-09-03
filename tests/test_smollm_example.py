@@ -171,6 +171,69 @@ def test_it_runs_on_the_host_when_nothing_is_configured(card):
     assert command.startswith(HOST_PY + ' -m smollm_example')
 
 
+def _write_executable(path, text):
+    path.write_text(text)
+    path.chmod(0o755)
+
+
+def test_run_sh_checks_commands_without_invoking_them(tmp_path):
+    """Presence checks use ``command -v``; only infer-stack status is run."""
+    bindir = ub.Path(tmp_path) / 'bin'
+    bindir.mkdir()
+    calls = ub.Path(tmp_path) / 'calls.txt'
+
+    _write_executable(
+        bindir / 'magnet',
+        f'#!/bin/sh\necho "magnet:$*" >> {calls}\nexit 97\n',
+    )
+    infer_stack_script = (
+        '#!/bin/sh\n'
+        f'printf "infer-stack:%s\\n" "$*" >> {calls}\n'
+        'if [ "$1" = status ]; then\n'
+        '    printf "backend: compose\\n"\n'
+        '    exit 0\n'
+        'fi\n'
+        'exit 98\n'
+    )
+    _write_executable(bindir / 'infer-stack', infer_stack_script)
+    _write_executable(
+        bindir / 'python',
+        f'#!/bin/sh\necho "python:$*" >> {calls}\nexit 0\n',
+    )
+
+    env = _child_env()
+    env['PATH'] = f'{bindir}:/usr/bin:/bin'
+    run_sh = CARD_FPATH.parent / 'run.sh'
+    proc = subprocess.run(
+        ['bash', run_sh, '--dry_run=1'],
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    invoked = calls.read_text().splitlines()
+    assert not any(line.startswith('magnet:') for line in invoked)
+    assert 'infer-stack:status' in invoked
+    python_call = next(line for line in invoked if line.startswith('python:'))
+    assert '--per_node_leasing ' in python_call + ' '
+    assert '--per_node_leasing=1' not in python_call
+
+
+def test_run_sh_reports_all_missing_commands(tmp_path):
+    """A missing environment fails once with one useful prerequisite error."""
+    bindir = ub.Path(tmp_path) / 'bin'
+    bindir.mkdir()
+    env = _child_env()
+    env['PATH'] = f'{bindir}:/usr/bin:/bin'
+    run_sh = CARD_FPATH.parent / 'run.sh'
+    proc = subprocess.run(
+        ['bash', run_sh, '--dry_run=1'],
+        capture_output=True, text=True, env=env,
+    )
+    assert proc.returncode == 127
+    assert 'requires MAGNET and infer-stack on PATH' in proc.stderr
+    assert 'Missing: magnet infer-stack' in proc.stderr
+    assert 'usage:' not in proc.stderr.lower()
+
+
 # --- what the example computes ---------------------------------------------
 
 
