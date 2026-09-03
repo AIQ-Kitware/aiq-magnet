@@ -18,7 +18,7 @@ pipeline over its own artifacts does not pull torch to run it:
 pip install aiq-magnet              # cards, claims, theory, kwdagger, containers
 pip install 'aiq-magnet[helm]'      # + HELM output loaders, predictors, materialize, demo data (crfm-helm, torch)
 pip install 'aiq-magnet[leasing]'   # + infer-stack, for --per_node_leasing
-pip install 'aiq-magnet[optional]'  # helm + leasing + plotly (what [optional] always meant)
+pip install 'aiq-magnet[optional]'  # helm + leasing
 pip install 'aiq-magnet[all]'       # everything, plus the test tools
 ```
 

@@ -68,12 +68,10 @@ optional-dependencies.helm = [
 # never imports the package, so the executable has to be in the same
 # environment.
 optional-dependencies.leasing = [ "infer-stack>=0.7.0" ]
-# What `[optional]` installed before helm and leasing became extras (plotly
-# is unused by magnet itself and kept for whoever installed it this way).
+# Convenience extra for the full optional runtime surface.
 optional-dependencies.optional = [
   "aiq-magnet[helm]",
   "aiq-magnet[leasing]",
-  "plotly>=6.5.2",
 ]
 optional-dependencies.tests = [
   "coverage>=7.3",
