@@ -290,6 +290,8 @@ def test_run_sh_help_needs_no_runtime_prerequisites(tmp_path):
     assert 'Usage: ./run.sh' in proc.stdout
     assert '--mock' in proc.stdout
     assert '--no-container' in proc.stdout
+    assert '--params=' in proc.stdout
+    assert 'ask.endpoint' in proc.stdout
     assert 'SMOLLM_RUNS' in proc.stdout
     assert 'requires MAGNET' not in proc.stderr
 

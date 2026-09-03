@@ -38,6 +38,9 @@ Examples:
   ./run.sh --no-container
   ./run.sh --mock --no-container
   ./run.sh --dry_run=1
+  ./run.sh --params='matrix: {ask.endpoint: [smol-135]}'
+                  Override the kwdagger matrix; endpoint values are infer-stack
+                  catalog aliases. See README.md for adding a custom model.
 
 Environment:
   SMOLLM_RUNS     Output root (default: ./runs/smollm)

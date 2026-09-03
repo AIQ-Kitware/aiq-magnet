@@ -81,6 +81,60 @@ the allocation it names does not exist yet on the host that rendered the string.
 other parameter, and naming it in `endpoint_params` is what also makes its
 value the catalog alias that cell acquires.
 
+### Override the matrix
+
+`run.sh` passes `--params` through to `magnet evaluate_new`, where it is
+merged into the card's `kwdagger:` block. That makes the shipped matrix a
+default rather than a fixed model list. For example, run only the 135M endpoint:
+
+```bash
+./run.sh --params='matrix: {ask.endpoint: [smol-135]}'
+```
+
+The matrix contains **endpoint aliases**, not Hugging Face model IDs. To try a
+model that is not already in this example's real catalog, first use infer-stack's
+catalog CLI to ensure the model and endpoint entries exist. From this directory,
+this adds a small Qwen instruct model under the stable alias `qwen-05`:
+
+```bash
+infer-stack catalog model add qwen05 \
+    --catalog="$PWD/catalog.yaml" \
+    --source=hf://Qwen/Qwen2.5-0.5B-Instruct
+
+infer-stack catalog endpoint add qwen-05 \
+    --catalog="$PWD/catalog.yaml" \
+    --model=qwen05 \
+    --max-model-len=2048 \
+    --gpu-mem=0.2 \
+    --extra-args='--enforce-eager --dtype=half' \
+    --reclaim=stop
+```
+
+Those `catalog ... add` commands are safe to rerun. If the named entry already
+has exactly that definition, infer-stack reports it as up to date; if it exists
+with a different definition, the command fails and shows the differing fields
+instead of overwriting it. The catalog editor validates the result before it
+writes the file.
+
+Now the kwdagger matrix can select the new endpoint just like either shipped
+SmolLM endpoint:
+
+```bash
+./run.sh --params='matrix: {ask.endpoint: [qwen-05]}'
+```
+
+or compare models from different families in one sweep:
+
+```bash
+./run.sh --params='matrix: {ask.endpoint: [smol-135, qwen-05]}'
+```
+
+No pipeline or node code changes. `ask.endpoint` controls both the kwdagger
+matrix cell and the alias leased by infer-stack. The example node uses the
+OpenAI chat-completions API, so an instruct/chat model such as the Qwen example
+is the simplest substitution; a base completion model such as GPT-2 would need
+additional serving/chat-template decisions that distract from this example.
+
 **A gather edge turns N cells into one comparison.** `group_by: []` hands the
 single `compare` cell every endpoint's answers as a manifest, so the comparison
 names exactly what it read rather than globbing a directory.
