@@ -33,15 +33,9 @@ import os
 import shlex
 from typing import Any
 
-import kwdagger
-from kwdagger.yaml_pipeline import YamlProcessNode
-
-from magnet.containers import host_interpreter
 
 __all__ = [
     'LeaseCapability',
-    'LeasedProcessNode',
-    'LeasedYamlProcessNode',
     'LeaseSettings',
     'is_lease_capable',
     'leasing_is_enabled',
@@ -110,8 +104,9 @@ def leasing_is_enabled(node: Any = None) -> bool:
     two styles cannot nest by accident.
 
     Example:
-        >>> from magnet.leasing import LeasedProcessNode, leasing_is_enabled
-        >>> node = LeasedProcessNode(name='n', executable='true')
+        >>> from magnet.process_node import MagnetProcessNode
+        >>> from magnet.leasing import leasing_is_enabled
+        >>> node = MagnetProcessNode(name='n', executable='true')
         >>> leasing_is_enabled(node)
         False
         >>> node.lease_enabled = True
@@ -157,8 +152,9 @@ def slurm_gpu_allow_list(node: Any = None) -> str:
             configured without it.
 
     Example:
-        >>> from magnet.leasing import LeasedProcessNode, slurm_gpu_allow_list
-        >>> node = LeasedProcessNode(name='n', executable='true')
+        >>> from magnet.process_node import MagnetProcessNode
+        >>> from magnet.leasing import slurm_gpu_allow_list
+        >>> node = MagnetProcessNode(name='n', executable='true')
         >>> slurm_gpu_allow_list(node).startswith('${SLURM_JOB_GPUS')
         True
         >>> node.lease_allowed_gpus = False
@@ -175,9 +171,9 @@ class LeaseCapability:
     Lease-specific state and command wrapping, independent of node type.
 
     This mixin owns no ``command`` property and performs no container wrapping.
-    :class:`LeasedProcessNode` uses it alone, while
-    :class:`magnet.execution.MagnetProcessNode` composes it with the container
-    capability.
+    :class:`magnet.process_node.MagnetProcessNode` is the supported integration
+    surface. Tests also compose this mixin with a bare kwdagger node to pin
+    the fact that leasing itself remains independently reusable.
 
     Subclasses declare :attr:`endpoint_params` -- the parameter names whose
     *values* are catalog aliases. Override :meth:`resolve_endpoints` when the
@@ -244,7 +240,7 @@ class LeaseCapability:
     def render_lease_command(self, command: str) -> str:
         """Bracket the command in a lease when one is needed.
 
-        The combined :class:`magnet.execution.MagnetProcessNode` calls this
+        The combined :class:`magnet.process_node.MagnetProcessNode` calls this
         after rendering its execution substrate, so a lease wraps Docker rather
         than running inside it. A lease-only node passes a host command here.
         """
@@ -316,45 +312,3 @@ def render_lease_command(node: Any, command: str) -> str:
     if not isinstance(node, LeaseCapability):
         return command
     return node.render_lease_command(command)
-
-
-class LeasedProcessNode(LeaseCapability, kwdagger.ProcessNode):
-    """A process node with endpoint leasing capability only."""
-
-    @property
-    def command(self) -> str:
-        base = host_interpreter(super().command)
-        return render_lease_command(self, base)
-
-
-class LeasedYamlProcessNode(LeasedProcessNode, YamlProcessNode):
-    """
-    A lease-capable node that a card can declare in YAML.
-
-    This class does not imply containerization. Use
-    :class:`magnet.execution.MagnetYamlProcessNode` when an invocation may apply
-    both container and lease settings to the same declarative node.
-
-    :attr:`~LeasedProcessNode.endpoint_params` names the parameters whose
-    values are catalog aliases, and it is card data: which parameter holds an
-    alias is a fact about the card, not about Python. So it is declared in the
-    node spec like anything else::
-
-        nodes:
-          infer:
-            class: magnet.leasing.LeasedYamlProcessNode
-            endpoint_params: [model_id]
-            executable: "python -m pkg.infer"
-            out_paths: {results_fpath: results.json}
-
-    kwdagger's node-spec allow-list is closed, so this class widens it with
-    :attr:`extra_node_spec_keys` (kwdagger >= 0.4.2). Nothing about leasing
-    needs a subclass any more.
-    """
-
-    #: The leasing knobs a card may set directly. kwdagger validates a node
-    #: spec against its own key list plus whatever the named class adds here,
-    #: which is what keeps these out of Python.
-    extra_node_spec_keys = LEASE_NODE_SPEC_KEYS
-
-

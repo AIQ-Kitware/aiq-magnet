@@ -11,9 +11,11 @@ import pytest
 from magnet import containers, leasing
 from magnet.leasing import (
     INSIDE_LEASE_ENVVAR,
-    LeasedProcessNode,
+    LeaseCapability,
     leasing_is_enabled,
+    render_lease_command,
 )
+from magnet.containers import host_interpreter
 
 import shlex as _shlex
 import sys as _sys
@@ -21,14 +23,22 @@ import sys as _sys
 HOST_PY = _shlex.quote(_sys.executable)
 
 
-class Infer(LeasedProcessNode):
+class LeaseOnlyProcessNode(LeaseCapability, kwdagger.ProcessNode):
+    """Test-only proof that leasing does not require containerization."""
+
+    @property
+    def command(self):
+        return render_lease_command(self, host_interpreter(super().command))
+
+
+class Infer(LeaseOnlyProcessNode):
     name = 'infer'
     executable = 'python -m pkg.infer'
     endpoint_params = ('model_id', 'extractor_model_id')
     algo_params = {'model_id': None, 'extractor_model_id': None}
 
 
-class Analyse(LeasedProcessNode):
+class Analyse(LeaseOnlyProcessNode):
     """A node that touches no model: it must never hold one."""
 
     name = 'analyse'
@@ -72,8 +82,9 @@ def test_the_node_leases_the_models_it_names():
     # last model and leave the rest unleased.
     assert _prefix(command).count('--endpoint') == 1
     assert '--endpoint mock/tiny-1b,mock/extractor-70b' in command
-    # The original command survives intact after the `--`.
-    assert 'python -m pkg.infer' in command.split(' -- ', 1)[1]
+    # The host route resolves bare `python` to the active interpreter while
+    # preserving the original module invocation after the lease wrapper.
+    assert HOST_PY + ' -m pkg.infer' in command.split(' -- ', 1)[1]
     assert '--model_id=mock/tiny-1b' in command
 
 

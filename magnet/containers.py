@@ -23,12 +23,10 @@ The repository is mounted at the same absolute path it has on the host:
 kwdagger bakes absolute output paths into commands, so keeping them identical
 means nothing has to be rewritten and a path in a log is one you can open.
 
-Containerization is an independent execution capability. A pure
-:class:`ContainerProcessNode` has only that capability; a
-:class:`~magnet.leasing.LeasedProcessNode` has only leasing; and
-:class:`magnet.execution.MagnetProcessNode` composes both without either
-capability inheriting the other. Declarative cards have the corresponding YAML
-node classes.
+Containerization is an independent execution capability. The mixin here
+contains only container state and settings; it does not inherit or know
+about leasing. :class:`magnet.process_node.MagnetProcessNode` is the normal
+integration surface that composes this capability with leasing.
 """
 
 from __future__ import annotations
@@ -41,13 +39,9 @@ import sys
 from collections.abc import Mapping
 from typing import Any
 
-import kwdagger
-from kwdagger.yaml_pipeline import YamlProcessNode
 
 __all__ = [
     'ContainerCapability',
-    'ContainerProcessNode',
-    'ContainerYamlProcessNode',
     'ContainerSettings',
     'apply_settings',
     'is_container_capable',
@@ -149,7 +143,7 @@ def apply_settings(pipeline: Any, settings: ContainerSettings) -> None:
         >>> from kwdagger.pipeline import coerce_pipeline
         >>> from magnet.containers import ContainerSettings, apply_settings
         >>> spec = {'nodes': {'work': {
-        ...     'class': 'magnet.containers.ContainerYamlProcessNode',
+        ...     'class': 'magnet.process_node.MagnetProcessNode',
         ...     'executable': 'python -m pkg.work',
         ...     'out_paths': {'results_fpath': 'results.json'}}}}
         >>> pipeline = coerce_pipeline(spec)
@@ -337,9 +331,9 @@ class ContainerCapability:
     Container-specific state and configuration, independent of node type.
 
     This mixin owns no ``command`` property and knows nothing about leasing.
-    :class:`ContainerProcessNode` uses it alone, while
-    :class:`magnet.execution.MagnetProcessNode` combines it with the leasing
-    capability.
+    :class:`magnet.process_node.MagnetProcessNode` is the supported integration
+    surface. Tests also compose this mixin with a bare kwdagger node to pin
+    the fact that the capability itself remains independently reusable.
 
     Every value the command needs lives on the node by the time it renders.
     A node that declares its own keeps it; :func:`apply_settings` fills the
@@ -389,12 +383,12 @@ class ContainerCapability:
         applying twice is the same as applying once.
 
         Example:
-            >>> from magnet.containers import ContainerProcessNode
+            >>> from magnet.process_node import MagnetProcessNode
             >>> from magnet.containers import ContainerSettings
-            >>> node = ContainerProcessNode(name='n', executable='true')
+            >>> node = MagnetProcessNode(name='n', executable='true')
             >>> node.container_image = 'declared:latest'
             >>> settings = ContainerSettings.coerce(image='other:latest')
-            >>> node.apply_settings(settings)
+            >>> node.apply_container_settings(settings)
             >>> node.container_image
             'declared:latest'
         """
@@ -415,10 +409,6 @@ class ContainerCapability:
                 names.append(name)
         self.container_forward_env = tuple(names)
 
-    def apply_settings(self, settings: ContainerSettings) -> None:
-        """Compatibility alias for :meth:`apply_container_settings`."""
-        self.apply_container_settings(settings)
-
 
 def is_container_capable(node: Any) -> bool:
     """Whether ``node`` carries the container execution capability."""
@@ -430,45 +420,3 @@ def render_container_command(node: Any, command: str) -> str:
     if containerization_is_enabled(node):
         return container_prefix(node) + " \\\n    " + command
     return host_interpreter(command)
-
-
-class ContainerProcessNode(ContainerCapability, kwdagger.ProcessNode):
-    """A process node with container execution capability only."""
-
-    @property
-    def command(self) -> str:
-        return render_container_command(self, super().command)
-
-
-class ContainerYamlProcessNode(ContainerProcessNode, YamlProcessNode):
-    """
-    A containerized node that a card can declare in YAML.
-
-    :class:`ContainerProcessNode` is a sibling of
-    :class:`~kwdagger.yaml_pipeline.YamlProcessNode`, not an ancestor, and a
-    declarative card gets the latter. So a card that inlines its DAG under
-    ``kwdagger.pipeline.nodes`` produced nodes whose ``command`` was
-    :class:`~kwdagger.ProcessNode`'s, and ``--container_image`` was accepted,
-    stored, and never read: a green run that never containerized.
-
-    Naming this class is what a card does about it::
-
-        nodes:
-          my_node:
-            class: magnet.containers.ContainerYamlProcessNode
-            executable: "python -m pkg.work"
-            out_paths: {results_fpath: results.json}
-            load_result: "pkg.results.load"
-
-    kwdagger's loader rejects the declarative extras (``metrics``, ``result``,
-    ``load_result``, ``vantage_points``) for any ``class`` that is not a
-    :class:`~kwdagger.yaml_pipeline.YamlProcessNode`, which is why inheriting
-    from both is the fix rather than an alias. Containerized execution and
-    declarative readout were mutually exclusive before this class existed.
-
-    Still inert unless an image is named -- by the node or by
-    :func:`apply_settings` -- so the same card runs on the host during
-    development.
-    """
-
-

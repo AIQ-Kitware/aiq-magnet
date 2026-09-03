@@ -20,16 +20,24 @@ import textwrap
 from unittest import mock
 
 import pytest
+import kwdagger
 
 from magnet import leasing
-from magnet.leasing import LeasedProcessNode
+from magnet.leasing import LeaseCapability, render_lease_command
+from magnet.containers import host_interpreter
 
 pytestmark = pytest.mark.skipif(
     not os.path.exists('/bin/bash'), reason='needs bash'
 )
 
 
-class Infer(LeasedProcessNode):
+class LeaseOnlyProcessNode(LeaseCapability, kwdagger.ProcessNode):
+    @property
+    def command(self):
+        return render_lease_command(self, host_interpreter(super().command))
+
+
+class Infer(LeaseOnlyProcessNode):
     name = 'infer'
     executable = 'infer'
     algo_params = {'model_id': None}

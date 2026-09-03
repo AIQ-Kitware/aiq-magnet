@@ -1,31 +1,25 @@
 """
-Execution configuration arrives as CLI arguments and lands on the node.
+Process-node configuration arrives as CLI arguments and lands on the node.
 
-What to run a node in, and whether it leases its own endpoints, is
-configuration a caller passes. It used to be read from MAGNET_NODE_* /
-MAGNET_PER_NODE_LEASING, which hid where a value came from; then from
-process-wide settings, which hid *which* run a value belonged to. It now
-travels as a :class:`~magnet.containers.ContainerSettings` /
-:class:`~magnet.leasing.LeaseSettings` and is written onto the DAG's nodes
-before anything renders a command.
-
-Facts about the surrounding machine -- the GPU count, whether infer-stack
-already wrapped us -- are still discovered, because only the machine can
-state them.
+Containerization and endpoint leasing are independent capabilities. MAGNET's
+normal integration surface carries both; the capability mixins remain usable
+on their own without creating a public class for every combination.
 """
 
 import os
+import shutil
 from unittest import mock
 
+import kwdagger
 from kwdagger.pipeline import coerce_pipeline
 
 from magnet import containers, leasing
-from magnet.containers import ContainerProcessNode, ContainerSettings
-from magnet.leasing import LeasedProcessNode, LeaseSettings
-from magnet.execution import MagnetProcessNode
+from magnet.containers import ContainerCapability, ContainerSettings
+from magnet.leasing import LeaseCapability, LeaseSettings
+from magnet.process_node import MagnetProcessNode
 
 
-class _Work(ContainerProcessNode):
+class _Work(MagnetProcessNode):
     name = 'work'
     executable = 'python -m pkg.work'
 
@@ -33,24 +27,68 @@ class _Work(ContainerProcessNode):
 class _Infer(MagnetProcessNode):
     name = 'infer'
     executable = 'python -m pkg.infer'
+    algo_params = {'model_id': None}
+    endpoint_params = ('model_id',)
+
+
+class _ContainerOnly(ContainerCapability, kwdagger.ProcessNode):
+    """Test-only proof that the container capability stands alone."""
+
+    name = 'container_only'
+    executable = 'python -m pkg.work'
+
+    @property
+    def command(self):
+        return containers.render_container_command(self, super().command)
+
+
+class _LeaseOnly(LeaseCapability, kwdagger.ProcessNode):
+    """Test-only proof that the leasing capability stands alone."""
+
+    name = 'lease_only'
+    executable = 'python -m pkg.infer'
+    algo_params = {'model_id': None}
+    endpoint_params = ('model_id',)
+
+    @property
+    def command(self):
+        base = containers.host_interpreter(super().command)
+        return leasing.render_lease_command(self, base)
 
 
 def _node(cls=_Work, settings=None, lease=None):
     node = cls()
     if containers.is_container_capable(node):
-        node.apply_settings(settings or ContainerSettings())
+        node.apply_container_settings(settings or ContainerSettings())
     if lease is not None and leasing.is_lease_capable(node):
         node.apply_lease_settings(lease)
     return node
 
 
-def test_standalone_capabilities_do_not_imply_each_other():
-    assert containers.is_container_capable(ContainerProcessNode())
-    assert not leasing.is_lease_capable(ContainerProcessNode())
-    assert leasing.is_lease_capable(LeasedProcessNode())
-    assert not containers.is_container_capable(LeasedProcessNode())
-    assert containers.is_container_capable(MagnetProcessNode())
-    assert leasing.is_lease_capable(MagnetProcessNode())
+def test_capability_mixins_can_be_composed_independently(monkeypatch):
+    """The architecture is orthogonal even though MAGNET exposes one node."""
+    boxed = _ContainerOnly()
+    boxed.configure({})
+    boxed.apply_container_settings(ContainerSettings.coerce(image='box:latest'))
+    assert containers.is_container_capable(boxed)
+    assert not leasing.is_lease_capable(boxed)
+    assert boxed.command.startswith('docker run --rm ')
+    assert 'infer-stack run' not in boxed.command
+
+    # Rendering a lease prefix checks whether infer-stack exists. This test is
+    # about composition, so provide a harmless positive discovery result.
+    monkeypatch.setattr(shutil, 'which', lambda name: f'/fake/{name}')
+    leased = _LeaseOnly()
+    leased.configure({'model_id': 'smol-135'})
+    leased.apply_lease_settings(LeaseSettings(enabled=True))
+    assert leasing.is_lease_capable(leased)
+    assert not containers.is_container_capable(leased)
+    assert leased.command.startswith('infer-stack run ')
+    assert 'docker run' not in leased.command
+
+    integrated = _Work()
+    assert containers.is_container_capable(integrated)
+    assert leasing.is_lease_capable(integrated)
 
 
 def test_nothing_is_read_from_the_old_environment_variables():
@@ -81,7 +119,9 @@ def test_the_image_comes_from_configuration():
 def test_a_node_still_wins_over_the_invocation():
     node = _Work()
     node.container_image = 'node:image'
-    node.apply_settings(ContainerSettings.coerce(image='invocation:image'))
+    node.apply_container_settings(
+        ContainerSettings.coerce(image='invocation:image')
+    )
     assert containers.node_image(node) == 'node:image'
 
 
@@ -99,14 +139,17 @@ def test_docker_args_reach_the_prefix():
 
 def test_leasing_is_off_until_asked_for():
     off = _node(_Infer, lease=LeaseSettings())
+    off.configure({'model_id': 'm'})
     assert leasing.leasing_is_enabled(off) is False
     asked = _node(_Infer, lease=LeaseSettings(enabled=True))
+    asked.configure({'model_id': 'm'})
     assert leasing.leasing_is_enabled(asked) is True
 
 
 def test_leasing_stays_off_inside_someone_elses_lease():
     """An ambient fact only infer-stack can state, so it stays an env var."""
     node = _node(_Infer, lease=LeaseSettings(enabled=True))
+    node.configure({'model_id': 'm'})
     with mock.patch.dict(os.environ, {leasing.INSIDE_LEASE_ENVVAR: 'abc123'}):
         assert leasing.leasing_is_enabled(node) is False
 
@@ -121,13 +164,6 @@ def test_the_endpoint_variables_are_still_forwarded_by_name():
 
 
 def test_two_runs_in_one_process_do_not_share_settings():
-    """The reason none of this is process state.
-
-    With a module-level setting, configuring the second run silently rewrote
-    where the first one would say it ran. Nothing here is reachable from
-    anywhere but the node, so there is nothing to reset between runs and no
-    order in which these two can interfere.
-    """
     first = _node(settings=ContainerSettings.coerce(image='first:image'))
     second = _node(settings=ContainerSettings.coerce(image='second:image'))
     assert containers.node_image(first) == 'first:image'
@@ -135,26 +171,20 @@ def test_two_runs_in_one_process_do_not_share_settings():
 
 
 def test_applying_settings_twice_changes_nothing():
-    """apply_settings runs once per schedule, but must not depend on that."""
     settings = ContainerSettings.coerce(
         image='i', mounts='/repo', forward_env='A,B')
     node = _node(settings=settings)
     once = containers.container_prefix(node)
-    node.apply_settings(settings)
+    node.apply_container_settings(settings)
     assert containers.container_prefix(node) == once
     assert tuple(node.container_forward_env or ()).count('A') == 1
 
 
 def test_settings_reach_every_node_of_a_built_dag():
-    """What apply_settings is for: the DAG is where MAGNET holds the nodes.
-
-    kwdagger constructs them -- for a declarative card, from the class the card
-    names -- so there is no constructor to pass anything to and ``command``
-    takes no arguments.
-    """
+    """The one MAGNET class works as kwdagger's declarative class too."""
     spec = {'nodes': {
         'work': {
-            'class': 'magnet.containers.ContainerYamlProcessNode',
+            'class': 'magnet.process_node.MagnetProcessNode',
             'executable': 'python -m pkg.work',
             'out_paths': {'results_fpath': 'results.json'},
         },
@@ -164,9 +194,7 @@ def test_settings_reach_every_node_of_a_built_dag():
         },
     }}
     pipeline = coerce_pipeline(spec)
-    containers.apply_settings(pipeline, ContainerSettings.coerce(image='i:tag'))
+    ContainerSettings.coerce(image='i:tag').apply(pipeline)
 
     assert pipeline.node_dict['work'].container_image == 'i:tag'
-    # A node that cannot be containerized is skipped, not forced. Naming it is
-    # _check_container_settings_apply's job.
     assert not hasattr(pipeline.node_dict['plain'], 'container_image')

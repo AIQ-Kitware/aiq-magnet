@@ -498,9 +498,9 @@ def _check_container_settings_apply(
     Containerization is opt-in per node capability: only a node carrying
     :class:`~magnet.containers.ContainerCapability` renders the ``docker run``
     prefix. A card that declares its DAG as data gets kwdagger's plain
-    ``YamlProcessNode``, which carries no container capability, so the image was
-    accepted, stored, and never read -- a green run that containerized nothing, with no
-    warning. Evidence from that run is indistinguishable from evidence produced
+    ``YamlProcessNode``, which carries no container capability, so the image
+    was accepted, stored, and never read -- a green run that containerized
+    nothing, with no warning. Evidence from that run is indistinguishable from evidence produced
     the way the invocation asked for, which is the whole reason it has to be an
     error rather than a note in a log nobody reads.
 
@@ -527,7 +527,7 @@ def _check_container_settings_apply(
             logger.warning(
                 f'--container_image is set, but these nodes cannot use it and '
                 f'will run on the host: {inert}. Give each a container-capable '
-                '`class:` (normally magnet.execution.MagnetYamlProcessNode) if '
+                '`class:` (normally magnet.process_node.MagnetProcessNode) if '
                 'that is not intended.'
             )
         return
@@ -539,9 +539,8 @@ def _check_container_settings_apply(
         f'containerized run. Nodes: {inert}.\n'
         'Containerization is opt-in per node capability. For a card that '
         'inlines its DAG and may also lease endpoints, use:\n'
-        '    class: magnet.execution.MagnetYamlProcessNode\n'
-        'Use magnet.containers.ContainerYamlProcessNode for a container-only '
-        'node, or drop --container_image to run on the host.'
+        '    class: magnet.process_node.MagnetProcessNode\n'
+        'Drop --container_image to run on the host.'
     )
 
 

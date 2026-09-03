@@ -9,13 +9,10 @@ import kwdagger
 import pytest
 
 from magnet import containers
-from magnet.containers import (
-    ContainerProcessNode,
-    containerization_is_enabled,
-)
+from magnet.containers import containerization_is_enabled
 from magnet import leasing
-from magnet.leasing import INSIDE_LEASE_ENVVAR, LeasedProcessNode
-from magnet.execution import MagnetProcessNode
+from magnet.leasing import INSIDE_LEASE_ENVVAR
+from magnet.process_node import MagnetProcessNode
 
 import shlex as _shlex
 import sys as _sys
@@ -25,7 +22,7 @@ HOST_PY = _shlex.quote(_sys.executable)
 IMAGE = 'aiq-eval-node:latest'
 
 
-class Work(ContainerProcessNode):
+class Work(MagnetProcessNode):
     name = 'work'
     executable = 'python -m pkg.work'
     algo_params = {'task': None}
@@ -50,7 +47,7 @@ def _node(cls, config, settings=None, lease=None):
     node = cls()
     node.configure(config)
     if containers.is_container_capable(node):
-        node.apply_settings(settings or containers.ContainerSettings())
+        node.apply_container_settings(settings or containers.ContainerSettings())
     if lease is not None and leasing.is_lease_capable(node):
         node.apply_lease_settings(lease)
     return node
@@ -103,7 +100,7 @@ def test_the_command_runs_in_the_image():
     assert 'python -m pkg.work' in rest
 
 
-def test_the_repo_is_mounted_at_its_own_path(monkeypatch):
+def test_the_repo_is_mounted_at_its_own_path():
     """kwdagger bakes absolute paths into every command; they have to
     resolve to the same files inside the container."""
     command = _node(Work, {'task': 't'}, _on(mounts='/a/repo:/b/data')).command
@@ -156,19 +153,7 @@ def test_the_default_env_policy_is_generic_and_overridable():
     assert 'OPENAI_BASE_URL' not in command
 
 
-def test_container_and_lease_nodes_are_independent_siblings():
-    assert not issubclass(LeasedProcessNode, ContainerProcessNode)
-    assert not issubclass(ContainerProcessNode, LeasedProcessNode)
-    assert containers.is_container_capable(ContainerProcessNode())
-    assert not leasing.is_lease_capable(ContainerProcessNode())
-    assert leasing.is_lease_capable(LeasedProcessNode())
-    assert not containers.is_container_capable(LeasedProcessNode())
-    both = MagnetProcessNode()
-    assert containers.is_container_capable(both)
-    assert leasing.is_lease_capable(both)
-
-
-def test_the_lease_wraps_the_container_not_the_other_way_round(monkeypatch):
+def test_the_lease_wraps_the_container_not_the_other_way_round():
     """Acquiring needs the Docker daemon and the ledger, both on the host.
 
     Inside-out would mean a container reaching for the host's daemon; and

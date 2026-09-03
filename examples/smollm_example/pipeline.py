@@ -5,7 +5,8 @@ The scaffolding half of this example. Everything that talks to a file or an
 endpoint lives in :mod:`smollm_example.cli`; this module says how those
 programs are wired together and which parameters name external endpoints.
 Host versus container and leasing on versus off are invocation policies, not
-node types in this DAG.
+node types in this DAG. Every step uses the same ``MagnetProcessNode``
+integration surface; ``endpoint_params`` is the only leasing-specific fact.
 
 Written in Python rather than declared in the card for one reason: a leasing
 node has to be told which of its parameters holds a catalog alias, and
@@ -24,7 +25,7 @@ declaration via ``params``, so the tags on
 
 import kwdagger
 
-from magnet.execution import MagnetYamlProcessNode
+from magnet.process_node import MagnetProcessNode
 
 from smollm_example.cli.ask_model import AskModelCLI
 from smollm_example.cli.compare_answers import (
@@ -35,7 +36,7 @@ from smollm_example.cli.make_items import MakeItemsCLI
 __all__ = ['Items', 'Ask', 'Compare', 'smollm_pipeline']
 
 
-class Items(MagnetYamlProcessNode):
+class Items(MagnetProcessNode):
     """Write the dummy dataset. Needs no model, so it holds no GPU."""
 
     name = 'items'
@@ -43,7 +44,7 @@ class Items(MagnetYamlProcessNode):
     params = MakeItemsCLI
 
 
-class Ask(MagnetYamlProcessNode):
+class Ask(MagnetProcessNode):
     """Ask one endpoint every question, inside a lease for that endpoint.
 
     ``endpoint_params`` is what makes this node lease at all: it names the
@@ -67,7 +68,7 @@ class Ask(MagnetYamlProcessNode):
     lease_ttl = '1h'
 
 
-class Compare(MagnetYamlProcessNode):
+class Compare(MagnetProcessNode):
     """Reduce every endpoint's answers. Needs no model either."""
 
     name = 'compare'
