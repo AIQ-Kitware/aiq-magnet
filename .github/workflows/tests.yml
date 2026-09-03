@@ -24,6 +24,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint_job:
+    ##
+    # Run quick linting and typing checks.
+    # To disable all linting add "linter=false" to the xcookie config.
+    # To disable type checks add "notypes" to the xcookie tags.
+    ##
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v6.0.2
+    - name: Set up Python 3.13 for linting
+      uses: actions/setup-python@v6.2.0
+      with:
+        python-version: '3.13'
+    - name: Install dependencies
+      run: |-
+        python -m pip install pip uv -U
+        python -m uv pip install flake8
+    - name: Lint with flake8
+      run: |-
+        # stop the build if there are Python syntax errors or undefined names
+        flake8 ./magnet --count --select=E9,F63,F7,F82 --show-source --statistics
+    - name: Typecheck
+      run: |-
+        python -m pip install ty
+        pip install --prefer-binary -e ".[tests]"
+        ty check ./magnet
   build_and_test_sdist:
     ##
     # Build the pure python package from source and test it in the
