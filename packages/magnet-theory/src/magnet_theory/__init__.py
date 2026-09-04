@@ -4,7 +4,7 @@ from __future__ import annotations
 from types import TracebackType
 from typing import Literal, Self, TypeVar
 
-__version__ = '0.0.2'
+__version__ = '0.1.0'
 
 __all__ = [
     'PREMISE_RELATIONS',
