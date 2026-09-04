@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 import magnet.theory as theory
+import magnet_theory
 from magnet.theory.index import Entry, Premise, TheoryIndex, load_index
 from magnet.theory.static import TheoryAnnotationError, extract, extract_tree
 
@@ -23,17 +24,13 @@ def test_annotations_are_runtime_inert():
     assert (link.relation, link.ref) == ('checks', 'A.Statement::hpremise')
 
 
-def test_annotation_module_is_dependency_free_and_copyable(tmp_path):
-    from magnet.theory import annotations
-
-    source = Path(annotations.__file__).read_text()
+def test_annotation_package_is_dependency_free_and_compatible():
+    source = Path(magnet_theory.__file__).read_text()
     assert 'import magnet' not in source
-    vendored = tmp_path / 'magnet_theory.py'
-    vendored.write_text(source)
-    namespace = {}
-    exec(compile(source, str(vendored), 'exec'), namespace)
-    assert namespace['tests'].__test__ is False
-    assert namespace['satisfies']('A::h').ref == 'A::h'
+    assert getattr(magnet_theory.tests, '__test__') is False
+    assert magnet_theory.satisfies('A::h').ref == 'A::h'
+    assert theory.tests is magnet_theory.tests
+    assert theory.assumes is magnet_theory.assumes
 
 
 SOURCE = textwrap.dedent(

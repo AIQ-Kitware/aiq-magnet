@@ -8,6 +8,10 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+* Published the inert theory annotation vocabulary as the zero-runtime-dependency
+  `magnet-theory` distribution (`import magnet_theory`). The full `aiq-magnet`
+  package depends on and reexports the same vocabulary, and xcookie workspace CI
+  builds, isolates, and publishes both distributions from this repository.
 * Added `magnet evaluate_new`, a kwdagger-only migration path that forwards selected `kwdagger schedule` controls directly: `--params`, `--backend`, `--tmux_workers`, `--skip_existing`, `--cache`, and `--max_configs`. It rejects legacy `pipeline:` computation and symbol sweeps while still feeding result-node values into the existing claim/verdict tail.
 * Added `magnet evaluate_legacy` as the explicit name for the historical evaluator; `magnet evaluate` remains its compatibility alias.
 * New evaluation recipes declare `kwdagger.result_node`: the node whose

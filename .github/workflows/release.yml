@@ -80,6 +80,29 @@ jobs:
       with:
         name: wheels-${{ matrix.os }}-${{ matrix.arch }}
         path: ./wheelhouse/aiq_magnet*.whl
+  workspace_magnet_theory:
+    name: Build magnet-theory
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v6.0.2
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v6.2.0
+      with:
+        python-version: '3.13'
+    - name: Build magnet-theory
+      shell: bash
+      run: |-
+        python -m pip install pip uv -U
+        python -m uv pip install setuptools>=77 wheel build twine
+        python -m build --sdist --wheel --outdir workspace_wheelhouse/magnet_theory ./packages/magnet-theory
+        python -m twine check workspace_wheelhouse/magnet_theory/*
+    - uses: actions/upload-artifact@v6.0.0
+      name: Upload magnet-theory distributions
+      with:
+        name: workspace-magnet-theory-release
+        if-no-files-found: error
+        path: workspace_wheelhouse/magnet_theory/*
   test_deploy:
     name: Deploy Test
     runs-on: ubuntu-latest
@@ -87,6 +110,7 @@ jobs:
     needs:
     - build_purepy_wheels
     - build_sdist
+    - workspace_magnet_theory
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
@@ -101,9 +125,22 @@ jobs:
       with:
         name: sdist_wheels
         path: wheelhouse
+    - uses: actions/download-artifact@v7.0.0
+      name: Download magnet-theory
+      with:
+        name: workspace-magnet-theory-release
+        path: workspace_release/magnet_theory
     - name: Show files to upload
       shell: bash
-      run: ls -la wheelhouse
+      run: |-
+        ls -la wheelhouse
+        find workspace_release -maxdepth 3 -type f -print
+    - name: Publish magnet-theory to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: workspace_release/magnet_theory
+        skip-existing: true
+        repository-url: https://test.pypi.org/legacy/
     - name: Prepare publish directory
       shell: bash
       run: |-
@@ -128,6 +165,12 @@ jobs:
           wheelhouse/*.whl
           wheelhouse/*.zip
           wheelhouse/*.tar.gz
+    - uses: actions/upload-artifact@v6.0.0
+      name: Upload workspace distributions
+      with:
+        name: deploy_workspace_artifacts
+        if-no-files-found: error
+        path: workspace_release/**/*
     permissions:
       contents: read
       id-token: write
@@ -139,6 +182,7 @@ jobs:
     needs:
     - build_purepy_wheels
     - build_sdist
+    - workspace_magnet_theory
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
@@ -153,9 +197,21 @@ jobs:
       with:
         name: sdist_wheels
         path: wheelhouse
+    - uses: actions/download-artifact@v7.0.0
+      name: Download magnet-theory
+      with:
+        name: workspace-magnet-theory-release
+        path: workspace_release/magnet_theory
     - name: Show files to upload
       shell: bash
-      run: ls -la wheelhouse
+      run: |-
+        ls -la wheelhouse
+        find workspace_release -maxdepth 3 -type f -print
+    - name: Publish magnet-theory to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: workspace_release/magnet_theory
+        skip-existing: true
     - name: Prepare publish directory
       shell: bash
       run: |-
@@ -179,6 +235,12 @@ jobs:
           wheelhouse/*.whl
           wheelhouse/*.zip
           wheelhouse/*.tar.gz
+    - uses: actions/upload-artifact@v6.0.0
+      name: Upload workspace distributions
+      with:
+        name: deploy_workspace_artifacts
+        if-no-files-found: error
+        path: workspace_release/**/*
     permissions:
       contents: read
       id-token: write
@@ -199,9 +261,16 @@ jobs:
       with:
         name: deploy_artifacts
         path: wheelhouse
+    - uses: actions/download-artifact@v7.0.0
+      name: Download workspace distributions
+      with:
+        name: deploy_workspace_artifacts
+        path: workspace_release
     - name: Show files to release
       shell: bash
-      run: ls -la wheelhouse
+      run: |-
+        ls -la wheelhouse
+        find workspace_release -maxdepth 3 -type f -print
     - run: 'echo "Automatic Release Notes. TODO: improve" > ${{ github.workspace }}-CHANGELOG.txt'
     - name: Resolve Release Tag
       id: release_meta
@@ -252,6 +321,7 @@ jobs:
           wheelhouse/*.ots
           wheelhouse/*.zip
           wheelhouse/*.tar.gz
+          workspace_release/**/*
 
 
 ###
@@ -315,6 +385,10 @@ jobs:
 #        https://pypi.org/manage/project/aiq-magnet/settings/publishing/
 #      Account publishing page:
 #        https://pypi.org/manage/account/publishing/
+#
+#      If workspace_members publishes additional distributions,
+#      register this same repository/workflow/environment tuple as a
+#      trusted publisher for each workspace PyPI project as well.
 #
 #   3. In TestPyPI, add a trusted publisher for this project:
 #        owner: AIQ-Kitware

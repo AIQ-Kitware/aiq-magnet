@@ -10,6 +10,12 @@ resolution-markers = [
     "python_full_version >= '4'",
 ]
 
+[manifest]
+members = [
+    "aiq-magnet",
+    "magnet-theory",
+]
+
 [[package]]
 name = "absl-py"
 version = "2.4.0"
@@ -171,6 +177,7 @@ dependencies = [
     { name = "kwutil" },
     { name = "lazy-loader" },
     { name = "loguru" },
+    { name = "magnet-theory" },
     { name = "msgspec" },
     { name = "orjson" },
     { name = "pandas" },
@@ -244,6 +251,7 @@ requires-dist = [
     { name = "kwutil", specifier = ">=0.3.8" },
     { name = "lazy-loader", specifier = ">=0.4" },
     { name = "loguru", specifier = ">=0.7.3" },
+    { name = "magnet-theory", editable = "packages/magnet-theory" },
     { name = "msgspec", specifier = ">=0.19" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=0.16.1" },
     { name = "orjson", specifier = ">=3.10.15" },
@@ -268,6 +276,10 @@ requires-dist = [
     { name = "xdoctest", marker = "extra == 'tests'", specifier = ">=1.2" },
 ]
 provides-extras = ["all", "docs", "helm", "leasing", "optional", "tests"]
+
+[[package]]
+name = "magnet-theory"
+source = { editable = "packages/magnet-theory" }
 
 [[package]]
 name = "alabaster"
