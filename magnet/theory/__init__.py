@@ -1,7 +1,7 @@
 """Static theory links, indexes, validation, and reporting for MAGNET.
 
 The annotation vocabulary itself lives in the dependency-free
-``magnet-theory`` distribution. This module reexports those runtime no-ops for
+``aiq-magnet-theory`` distribution. This module reexports those runtime no-ops for
 compatibility while MAGNET provides the machinery that interprets them.
 
 Example:

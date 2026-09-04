@@ -12,7 +12,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 * Added schema validation for evaluation cards and recipes.
 * Added logging with `--verbose` flag
 * Added model, dataset, and metric metadata, including metric aggregation and optimization objectives.
-* Added links from empirical evaluations to theoretical statements and named premises, with theory annotations also available through the standalone `magnet-theory` package.
+* Added links from empirical evaluations to theoretical statements and named premises, with theory annotations also available through the standalone `aiq-magnet-theory` package.
 * Added per-node container execution and optional infer-stack endpoint leasing for KWDagger pipelines.
 * Expanded HELM materialization to support replay from resolved `run_spec.json` files, local model-deployment substitution, registry metadata passthrough, and materialization from local or public results.
 

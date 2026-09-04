@@ -13,7 +13,7 @@ resolution-markers = [
 [manifest]
 members = [
     "aiq-magnet",
-    "magnet-theory",
+    "aiq-magnet-theory",
 ]
 
 [[package]]
@@ -169,6 +169,7 @@ wheels = [
 name = "aiq-magnet"
 source = { editable = "." }
 dependencies = [
+    { name = "aiq-magnet-theory" },
     { name = "dacite" },
     { name = "fsspec" },
     { name = "joblib" },
@@ -177,7 +178,6 @@ dependencies = [
     { name = "kwutil" },
     { name = "lazy-loader" },
     { name = "loguru" },
-    { name = "magnet-theory" },
     { name = "msgspec" },
     { name = "orjson" },
     { name = "pandas" },
@@ -239,6 +239,7 @@ requires-dist = [
     { name = "aiq-magnet", extras = ["leasing"], marker = "extra == 'optional'" },
     { name = "aiq-magnet", extras = ["optional"], marker = "extra == 'all'" },
     { name = "aiq-magnet", extras = ["tests"], marker = "extra == 'all'" },
+    { name = "aiq-magnet-theory", editable = "packages/aiq-magnet-theory" },
     { name = "coverage", marker = "extra == 'tests'", specifier = ">=7.3" },
     { name = "crfm-helm", marker = "extra == 'helm'", specifier = ">=0.5.8" },
     { name = "dacite", specifier = ">=1.9.2" },
@@ -251,7 +252,6 @@ requires-dist = [
     { name = "kwutil", specifier = ">=0.3.8" },
     { name = "lazy-loader", specifier = ">=0.4" },
     { name = "loguru", specifier = ">=0.7.3" },
-    { name = "magnet-theory", editable = "packages/magnet-theory" },
     { name = "msgspec", specifier = ">=0.19" },
     { name = "myst-parser", marker = "extra == 'docs'", specifier = ">=0.16.1" },
     { name = "orjson", specifier = ">=3.10.15" },
@@ -278,8 +278,8 @@ requires-dist = [
 provides-extras = ["all", "docs", "helm", "leasing", "optional", "tests"]
 
 [[package]]
-name = "magnet-theory"
-source = { editable = "packages/magnet-theory" }
+name = "aiq-magnet-theory"
+source = { editable = "packages/aiq-magnet-theory" }
 
 [[package]]
 name = "alabaster"
