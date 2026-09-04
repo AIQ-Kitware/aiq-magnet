@@ -965,6 +965,7 @@ Source references
 * `current Llama pipeline card`_
 * `current Llama KWDagger recipe`_
 * `current Llama KWDagger README`_
+* `KWDagger Tutorials`_
 
 .. _v0.0.2 tag: https://github.com/AIQ-Kitware/aiq-magnet/releases/tag/v0.0.2
 .. _v0.0.2 to target-main comparison: https://github.com/AIQ-Kitware/aiq-magnet/compare/9141dc1146ef9b55045527dae95bf41fed837996...5c92d9fc180e1d5deb1c5ec7cd8dc3a64e328e13
