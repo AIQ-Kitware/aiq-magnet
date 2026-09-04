@@ -598,10 +598,10 @@ For each node, identify:
    Inputs supplied by upstream edges or on-disk dependencies. These are either supplied by the user directly (i.e. by specifying the values in the parameter matrix) or by connecting (drawing an edge) from an out_path to an in_path.
 
 ``out_paths``
-   Named output artifacts.
+   Named output artifacts. The default values for these should be relative paths for where they are stored in a kwdagger output node. 
 
 ``primary_out_key``
-   The output KWDagger treats as the node's primary completion/result artifact.
+   The output KWDagger treats as the node's primary completion/result artifact. This is how kwdagger finds the filepath to pass to your load result function. 
 
 ``load_result``
    An optional import path used to load an artifact into aggregate columns.
