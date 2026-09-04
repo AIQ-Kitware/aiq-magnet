@@ -19,7 +19,7 @@ import time
 import kwconf
 import ubelt as ub
 
-import magnet.theory as theory
+import magnet_theory as theory
 
 
 class FibonacciPerformanceCLI(kwconf.Config):

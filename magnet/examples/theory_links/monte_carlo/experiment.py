@@ -14,7 +14,7 @@ from math import pi
 import kwconf
 import ubelt as ub
 
-import magnet.theory as theory
+import magnet_theory as theory
 
 class MonteCarloCLI(kwconf.Config):
     r"""

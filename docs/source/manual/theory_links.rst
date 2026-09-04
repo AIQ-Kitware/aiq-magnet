@@ -49,7 +49,7 @@ Use a statement relation as a decorator or context manager:
 
 .. code:: python
 
-    import magnet.theory as theory
+    import magnet_theory as theory
 
     @theory.tests('Examples.Stability.FiniteClaim')
     def evaluate_stability(...):
@@ -84,7 +84,7 @@ of a Lean sampling theorem:
 
 .. code:: python
 
-    import magnet.theory as theory
+    import magnet_theory as theory
 
     @theory.satisfies(
         'Examples.Circle.MonteCarloConsistency::hindicator',
@@ -279,21 +279,28 @@ obligations that remain.
 Annotating without depending on MAGNET
 --------------------------------------
 
-``magnet/theory/annotations.py`` is dependency-free. A team repository can copy
-that exact file as ``magnet_theory.py`` and keep the same annotation syntax:
+The annotation vocabulary is published separately as ``magnet-theory``. It has
+no runtime dependencies and does not import MAGNET, so an application can add
+just that package:
+
+.. code:: bash
+
+    pip install magnet-theory
+
+Annotated code imports the standalone package directly:
 
 .. code:: python
 
-    from .. import magnet_theory as theory
+    import magnet_theory as theory
 
     @theory.tests('Examples.Stability.Theorem')
     @theory.assumes('Examples.Stability.Theorem::hiid')
     def experiment():
         ...
 
-The extractor also accepts ``import magnet_theory as theory``. The vendored
-file and MAGNET use the same implementation rather than parallel copies of the
-annotation API.
+The full ``aiq-magnet`` distribution depends on the same version of
+``magnet-theory`` and reexports the decorators through ``magnet.theory`` for
+compatibility. The static extractor recognizes either import spelling.
 
 
 What counts as an annotation

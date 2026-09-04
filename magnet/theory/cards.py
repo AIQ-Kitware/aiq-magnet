@@ -3,7 +3,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from magnet.theory.annotations import STATEMENT_RELATIONS
+from magnet_theory import STATEMENT_RELATIONS
 from magnet.theory.index import TheoryIndex, load_indexes, parse_entries
 from magnet.theory.links import Link, split_ref
 from magnet.theory.static import extract

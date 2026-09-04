@@ -1,0 +1,37 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = ["setuptools>=77"]
+
+[project]
+name = "magnet-theory"
+description = "Dependency-free theory annotations for MAGNET"
+readme = "README.md"
+license.text = "Apache 2"
+authors = [{name = "MAGNET Kitware", email = "aiq-ta2@kitware.com"}]
+requires-python = ">=3.11"
+dynamic = ["version"]
+dependencies = []
+classifiers = [
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/AIQ-Kitware/aiq-magnet/"
+Repository = "https://github.com/AIQ-Kitware/aiq-magnet/"
+
+[tool.setuptools]
+dynamic.version.attr = "magnet_theory.__version__"
+packages.find.where = ["src"]
+packages.find.include = ["magnet_theory*"]
+package-data.magnet_theory = ["py.typed"]
+
+[tool.xcookie]
+mod_name = "magnet_theory"
+rel_mod_parent_dpath = "src"
+typed = true
+typecheck_extra_paths = ["tests"]
+deploy_pypi = true
