@@ -176,6 +176,7 @@ def _build_fixture_run(
             instance_stats.append(
                 Stat(MetricName(metric_name, split=stat_split)).add(value)
             )
+        assert instance.id is not None
         per_instance_stats.append(PerInstanceStats(
             instance_id=instance.id,
             perturbation=None,
@@ -233,7 +234,9 @@ def ensure_helm_fixture_outputs(**kwargs):
     hash_id = ub.hash_data(depends)[0:12]
     base_dpath = ub.Path.appdir('magnet/tests/helm_output/fixture').ensuredir()
     dpath = (base_dpath / hash_id).ensuredir()
-    stamp = ub.CacheStamp('helm_fixture_outputs', depends=depends, dpath=dpath)
+    stamp = ub.CacheStamp(
+        'helm_fixture_outputs', depends=ub.hash_data(depends), dpath=dpath
+    )
 
     if stamp.expired():
         benchmark_dpath = dpath / 'benchmark_output'
@@ -286,7 +289,9 @@ def ensure_helm_llama_fixture_outputs():
     hash_id = ub.hash_data(depends)[0:12]
     base_dpath = ub.Path.appdir('magnet/tests/helm_llama_fixture').ensuredir()
     root = (base_dpath / hash_id).ensuredir()
-    stamp = ub.CacheStamp('helm_llama_fixture', depends=depends, dpath=root)
+    stamp = ub.CacheStamp(
+        'helm_llama_fixture', depends=ub.hash_data(depends), dpath=root
+    )
 
     if stamp.expired():
         lite_dpath = root / 'lite' / 'benchmark_output' / 'runs'
@@ -389,7 +394,9 @@ def ensure_helm_remote_store_fixture():
     hash_id = ub.hash_data(depends)[0:12]
     base_dpath = ub.Path.appdir('magnet/tests/helm_remote_fixture').ensuredir()
     bucket = (base_dpath / hash_id).ensuredir()
-    stamp = ub.CacheStamp('helm_remote_fixture', depends=depends, dpath=bucket)
+    stamp = ub.CacheStamp(
+        'helm_remote_fixture', depends=ub.hash_data(depends), dpath=bucket
+    )
 
     if stamp.expired():
         for child in list(bucket.iterdir()):
@@ -459,7 +466,9 @@ def ensure_helm_demo_outputs(**kwargs):
     hash_id = ub.hash_data(config_dict)[0:12]
     dpath = (base_dpath / hash_id).ensuredir()
 
-    stamp = ub.CacheStamp('helm_demo_outputs', depends=config_dict, dpath=dpath)
+    stamp = ub.CacheStamp(
+        'helm_demo_outputs', depends=ub.hash_data(config_dict), dpath=dpath
+    )
     if stamp.expired():
 
         base_cmd = ["helm-run", "--run-entries"] + config.run_entries + [
@@ -485,7 +494,7 @@ def grab_helm_demo_outputs():
     the ``ensure_*_fixture`` helpers above.
     """
     import ubelt as ub
-    from magnet.backends.helm import download_helm_results
+    from magnet.backends.helm.cli import download_helm_results
     base_dpath = ub.Path.appdir('magnet/tests/helm_output/downloaded').ensuredir()
     stamp = ub.CacheStamp('helm_demo_downloads', depends=['version1'],
                           dpath=base_dpath)

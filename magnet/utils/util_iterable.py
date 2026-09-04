@@ -66,6 +66,7 @@ T = TypeVar("T")
 
 class _LengthHintMixin(Generic[T]):
     _remaining: int
+    _wrapped: Any
 
     def __length_hint__(self) -> int:
         return max(0, self._remaining)

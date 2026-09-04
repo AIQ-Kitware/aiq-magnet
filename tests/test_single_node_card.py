@@ -2,7 +2,9 @@
 The smallest useful kwdagger card: one node, declared inline.
 """
 
+import os
 import textwrap
+from collections.abc import Iterable
 
 import pytest
 import ubelt as ub
@@ -19,8 +21,27 @@ out.write_text(json.dumps({'result': {'metrics': {'score': float(args['seed']) /
 """
 
 
-def _card_data(script, seeds, result_node='emit'):
-    data = {
+def _card_data(
+    script: str | os.PathLike[str],
+    seeds: Iterable[int],
+    result_node: str | None = 'emit',
+) -> dict[str, object]:
+    kwdagger: dict[str, object] = {
+        'pipeline': {
+            'nodes': {
+                'emit': {
+                    'executable': f'python {script}',
+                    'algo_params': {'seed': 1},
+                    'out_paths': {'results_fpath': 'results.json'},
+                    'primary_out_key': 'results_fpath',
+                },
+            },
+        },
+        'matrix': {'emit.seed': list(seeds)},
+    }
+    if result_node is not None:
+        kwdagger['result_node'] = result_node
+    return {
         'name': 'probe',
         'title': 'probe',
         'description': 'probe',
@@ -30,23 +51,9 @@ def _card_data(script, seeds, result_node='emit'):
         'links': [],
         'tags': ['test'],
         'claim': {'python': 'assert metrics.emit.score < 100'},
-        'kwdagger': {
-            'pipeline': {
-                'nodes': {
-                    'emit': {
-                        'executable': f'python {script}',
-                        'algo_params': {'seed': 1},
-                        'out_paths': {'results_fpath': 'results.json'},
-                        'primary_out_key': 'results_fpath',
-                    },
-                },
-            },
-            'matrix': {'emit.seed': list(seeds)},
-        },
+        'kwdagger': kwdagger,
     }
-    if result_node is not None:
-        data['kwdagger']['result_node'] = result_node
-    return data
+
 
 
 @pytest.fixture

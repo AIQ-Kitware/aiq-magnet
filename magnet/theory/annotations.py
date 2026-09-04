@@ -76,7 +76,7 @@ def tests(ref, *, note=''):
 
 
 # pytest collects module-level callables whose names start with ``test``.
-tests.__test__ = False
+setattr(tests, '__test__', False)
 
 
 def approximates(ref, *, note=''):

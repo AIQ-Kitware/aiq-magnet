@@ -81,6 +81,7 @@ def test_symbol_dependency_aliases_validate(simple_card, dependency_key):
         },
     }
     validated = EvaluationCardSchema.model_validate(card)
+    assert validated.symbols is not None
     assert validated.symbols['y'].depends_on == ['x']
 
 
@@ -97,6 +98,7 @@ def test_symbol_dependency_aliases_may_agree(simple_card):
         },
     }
     validated = EvaluationCardSchema.model_validate(card)
+    assert validated.symbols is not None
     assert validated.symbols['y'].depends_on == ['x']
 
 
@@ -130,11 +132,13 @@ def kwdagger_card():
 
 def test_a_kwdagger_card_validates(kwdagger_card):
     card = EvaluationCardSchema.model_validate(kwdagger_card)
+    assert card.kwdagger is not None
     assert card.kwdagger.result_node == 'llama_compare'
 
 
 def test_a_kwdagger_recipe_validates(kwdagger_card):
     recipe = NewEvaluationRecipeSchema.model_validate(kwdagger_card)
+    assert recipe.kwdagger is not None
     assert recipe.kwdagger.result_node == 'llama_compare'
 
 
@@ -188,6 +192,7 @@ def test_shared_schema_allows_legacy_kwdagger_without_result_node(kwdagger_card)
     card = EvaluationCardSchema.model_validate(
         {**kwdagger_card, 'kwdagger': kwdagger}
     )
+    assert card.kwdagger is not None
     assert card.kwdagger.result_node is None
 
 
@@ -217,7 +222,9 @@ def test_kwdagger_param_grid_keys_magnet_does_not_read_are_passed_through(
     kwdagger = {**kwdagger_card['kwdagger'], 'include': include}
     card = EvaluationCardSchema.model_validate(
         {**kwdagger_card, 'kwdagger': kwdagger})
-    assert card.kwdagger.include == include
+    assert card.kwdagger is not None
+    assert card.kwdagger.model_extra is not None
+    assert card.kwdagger.model_extra['include'] == include
 
 
 

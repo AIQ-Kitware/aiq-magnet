@@ -35,7 +35,7 @@ class ExampleLlamaConsistencyCompareCLI(kwconf.Config):
     stage is computationally necessary.
     """
 
-    scores_fpath: str = kwconf.Value(
+    scores_fpath: str | None = kwconf.Value(
         None, required=True, help='scores written by llama_predict',
         tags=['in_path'])
 

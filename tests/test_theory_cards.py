@@ -63,7 +63,9 @@ def test_monte_carlo_example_demonstrates_static_premise_accounting():
 
     root = EXAMPLES / 'monte_carlo'
     card = yaml.safe_load((root / 'card.yaml').read_text())
-    report = report_from_card(card, root).to_dict()
+    report_obj = report_from_card(card, root)
+    assert report_obj is not None
+    report = report_obj.to_dict()
     assert report['schema_version'] == 1
     assert [
         (link['relation'], link['ref']) for link in report['statement_links']
@@ -108,7 +110,9 @@ def test_source_paths_are_portable_and_formalization_is_structured():
 
     root = EXAMPLES / 'coin_flip'
     card = yaml.safe_load((root / 'card.yaml').read_text())
-    report = report_from_card(card, root).to_dict()
+    report_obj = report_from_card(card, root)
+    assert report_obj is not None
+    report = report_obj.to_dict()
     link = report['statement_links'][0]
     assert link['qualname'] == 'enumerated_head_counts'
     assert link['file'] == 'experiment.py'
@@ -123,7 +127,9 @@ def test_fibonacci_performance_example_separates_question_from_explanation(tmp_p
 
     root = EXAMPLES / 'fibonacci_performance'
     card = yaml.safe_load((root / 'card.yaml').read_text())
-    report = report_from_card(card, root).to_dict()
+    report_obj = report_from_card(card, root)
+    assert report_obj is not None
+    report = report_obj.to_dict()
     assert [
         (link['relation'], link['ref']) for link in report['statement_links']
     ] == [
@@ -236,7 +242,9 @@ def test_card_and_source_statement_links_share_one_report(tmp_path):
     }
     from magnet.theory.cards import report_from_card
 
-    report = report_from_card(card, tmp_path).to_dict()
+    report_obj = report_from_card(card, tmp_path)
+    assert report_obj is not None
+    report = report_obj.to_dict()
     assert [entry['id'] for entry in report['entries']] == ['From.Card', 'From.File']
     assert [link['relation'] for link in report['statement_links']] == [
         'tests', 'approximates'
@@ -296,7 +304,9 @@ def test_static_premise_coverage_is_computed_from_index_and_source(tmp_path):
     }
     from magnet.theory.cards import report_from_card
 
-    report = report_from_card(card, tmp_path).to_dict()
+    report_obj = report_from_card(card, tmp_path)
+    assert report_obj is not None
+    report = report_obj.to_dict()
     assert [link['relation'] for link in report['statement_links']] == ['tests']
     assert [link['relation'] for link in report['premise_links']] == [
         'satisfies', 'assumes'
@@ -393,6 +403,8 @@ def test_motivates_does_not_create_premise_coverage_obligation(tmp_path):
     }
     from magnet.theory.cards import report_from_card
 
-    report = report_from_card(card, tmp_path).to_dict()
+    report_obj = report_from_card(card, tmp_path)
+    assert report_obj is not None
+    report = report_obj.to_dict()
     assert report['premise_coverage'] == []
     assert report['unattached_premise_links'] == []

@@ -36,6 +36,10 @@ class ExamplePerturbationPredictor(RunPredictor):
 
         eval_run_specs_df = sequestered_test_split.run_specs
         eval_scenario_states_df = sequestered_test_split.scenario_state  # NOQA
+        if train_run_specs_df is None or train_stats_df is None:
+            raise ValueError('training run specs and stats are required')
+        if eval_run_specs_df is None:
+            raise ValueError('evaluation run specs are required')
 
         perturbed_exact_match_stats_df = train_stats_df[
             (train_stats_df['stats.name.name'] == 'exact_match') &

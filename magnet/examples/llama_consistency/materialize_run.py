@@ -78,13 +78,13 @@ def _sidecar_path(name):
 class MaterializeLlamaRunCLI(kwconf.Config):
     """Reuse or compute one MMLU run for one model."""
 
-    model: str = kwconf.Value(
+    model: str | None = kwconf.Value(
         None, required=True, help='HELM model common name, e.g. meta/llama-2-13b')
-    subject: str = kwconf.Value(
+    subject: str | None = kwconf.Value(
         None, required=True, help='MMLU subject, e.g. anatomy')
     method: str = kwconf.Value(
         'multiple_choice_joint', help='HELM adaptation method')
-    precomputed_root: str = kwconf.Value(
+    precomputed_root: str | None = kwconf.Value(
         None, required=True, help='root of the downloaded HELM cache')
 
     # Forwarded to the materializer untouched. They are what computing a run
@@ -117,7 +117,7 @@ class MaterializeLlamaRunCLI(kwconf.Config):
         'reuse_only',
         help='reuse_only | compute_if_missing | force_recompute')
     materialize: str = kwconf.Value('symlink', help='symlink | copy')
-    out_dpath: str = kwconf.Value(
+    out_dpath: str | None = kwconf.Value(
         None, required=True, help='where to materialize the run',
         tags=['out_path'])
     # kwdagger checks completion by the sentinel, so it owns that path and

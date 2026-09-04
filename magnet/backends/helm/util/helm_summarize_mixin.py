@@ -113,7 +113,11 @@ def _merge_mean_count(rows: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
 
 
 class HelmSummarizeMixin:
-    """Mixin that assumes ``self.stats() -> list[dict]`` exists."""
+    """Mixin for objects that provide HELM stat rows."""
+
+    def stats(self) -> Iterable[dict[str, Any]]:
+        """Return HELM stat rows supplied by the concrete class."""
+        raise NotImplementedError
 
     # --- Stat selection -------------------------------------------------
 

@@ -139,7 +139,7 @@ import time
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Iterator, Optional
+from typing import Iterable, Iterator, Optional, cast
 
 import ubelt as ub
 import kwutil
@@ -186,7 +186,7 @@ def _safe_config_dict(config) -> dict:
             return {}
 
 
-def _query_nvidia_smi() -> dict | None:
+def _query_nvidia_smi() -> dict[str, object] | None:
     """
     Best-effort GPU query for reproducibility metadata.
     """
@@ -199,8 +199,13 @@ def _query_nvidia_smi() -> dict | None:
         info = ub.cmd(cmd, verbose=0, system=False, check=False)
         if info.returncode != 0:
             return None
-        gpus = []
-        for line in info.stdout.strip().splitlines():
+        stdout = info.stdout
+        if stdout is None:
+            return None
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode(errors='replace')
+        gpus: list[dict[str, object]] = []
+        for line in stdout.strip().splitlines():
             parts = [p.strip() for p in line.split(',')]
             if len(parts) != 4:
                 continue
@@ -242,8 +247,10 @@ def _capture_process_context(out_dpath: Path, config) -> dict:
         pass
     gpu_info = _query_nvidia_smi()
     if gpu_info:
-        ctx.properties.setdefault('extra', {})
-        ctx.properties['extra']['nvidia_smi'] = gpu_info
+        extra_properties = cast(
+            dict[str, object], ctx.properties.setdefault('extra', {})
+        )
+        extra_properties['nvidia_smi'] = gpu_info
     try:
         process_context_fpath.write_text(kwutil.Json.dumps(ctx.obj, indent=2))
     except Exception:
@@ -1348,7 +1355,7 @@ def ensure_copytree(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
     if dst.exists():
         ub.Path(dst).delete()
-    ub.copytree(src, dst)
+    shutil.copytree(src, dst)
 
 
 def resolve_local_path(out_dpath: Path, local_path: str | os.PathLike[str]) -> Path:

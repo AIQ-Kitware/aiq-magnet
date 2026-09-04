@@ -30,6 +30,8 @@ class ExampleRandomPredictor(RunPredictor):
 
         eval_run_specs_df = sequestered_test_split.run_specs  # NOQA
         eval_scenario_state_df = sequestered_test_split.scenario_state
+        if eval_scenario_state_df is None:
+            raise ValueError('evaluation scenario state is required')
 
         predictions = []
 

@@ -1,12 +1,22 @@
 """
 Helpers to bridge dataclasses and msgspec.Struct
 """
+from __future__ import annotations
+import builtins
 import dataclasses
+import inspect
 import ubelt as ub
 import msgspec
+import types
 import typing
-from typing import get_origin, get_args
-from typing import get_type_hints, List, Dict, Type, Union, Any
+from typing import (
+    Any, TypeVar, Union, cast, get_args, get_origin, get_type_hints,
+)
+
+
+StructType = type[msgspec.Struct]
+DataclassType = type[object]
+T = TypeVar('T')
 
 
 class MsgspecRegistry:
@@ -60,19 +70,34 @@ class MsgspecRegistry:
         ['x']
     """
 
-    def __init__(self):
-        self.cache: Dict[Type, Type] = {}  # dataclass -> struct
+    def __init__(self) -> None:
+        self.cache: dict[DataclassType, StructType] = {}
+        self._hints_cache: dict[DataclassType, dict[str, Any]] = {}
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: DataclassType) -> StructType:
         return self.cache[key]
 
-    def register(self, dc_cls: Type, dict: dict = False) -> Type[msgspec.Struct]:
+    def register(
+        self,
+        dc_cls: DataclassType,
+        dict: bool = False,
+        *,
+        localns: typing.Mapping[str, Any] | None = None,
+    ) -> StructType:
         """Convert dataclass into msgspec.Struct (recursively)."""
         if dc_cls in self.cache:
             return self.cache[dc_cls]
-        return dataclass_to_struct(dc_cls, self.cache, dict=dict)
+        if localns is None:
+            localns = _caller_locals()
+        return dataclass_to_struct(
+            dc_cls,
+            self.cache,
+            dict=dict,
+            localns=localns,
+            hints_cache=self._hints_cache,
+        )
 
-    def to_dataclass(self, obj: Any, target_cls: Type = None) -> Any:
+    def to_dataclass(self, obj: Any, target_cls: Any | None = None) -> Any:
         """
         Recursively convert msgspec.Structs back to dataclasses.
 
@@ -95,24 +120,26 @@ class MsgspecRegistry:
         origin = get_origin(target_cls) or target_cls
 
         # Already correct type?
-        if dataclasses.is_dataclass(origin):
-            if isinstance(obj, origin):
+        if isinstance(origin, type) and dataclasses.is_dataclass(origin):
+            dc_type = cast(type[Any], origin)
+            if isinstance(obj, dc_type):
                 return obj
-            # reconstruct dataclass
-            field_values = {}
-            hints = get_type_hints(origin, include_extras=True)
-            for f in dataclasses.fields(origin):
+            field_values: dict[str, Any] = {}
+            hints = self._hints_cache.get(dc_type)
+            if hints is None:
+                hints = _resolve_type_hints(dc_type)
+            for f in dataclasses.fields(cast(Any, dc_type)):
                 val = getattr(obj, f.name, None)
                 field_values[f.name] = self.to_dataclass(val, hints.get(f.name))
-            return origin(**field_values)
+            return dc_type(**field_values)
 
         # Handle List[T]
-        if isinstance(obj, list) and origin in (list, List):
+        if isinstance(obj, list) and origin is list:
             subtype = get_args(target_cls)[0] if get_args(target_cls) else Any
             return [self.to_dataclass(v, subtype) for v in obj]
 
         # Handle Dict[K, V]
-        if isinstance(obj, dict) and origin in (dict, Dict):
+        if isinstance(obj, dict) and origin is dict:
             k_type, v_type = get_args(target_cls) if get_args(target_cls) else (Any, Any)
             return {self.to_dataclass(k, k_type): self.to_dataclass(v, v_type)
                     for k, v in obj.items()}
@@ -120,11 +147,16 @@ class MsgspecRegistry:
         # Fallback
         return obj
 
-    def decode(self, data: bytes, cls) -> Any:
-        """Load the msgspec results"""
+    def decode(self, data: bytes, cls: type[T]) -> T:
+        """Decode JSON into one registered struct type."""
         decoder = msgspec.json.Decoder(cls)
-        struct_obj = decoder.decode(data)
-        return struct_obj
+        return decoder.decode(data)
+
+    def decode_list(self, data: bytes, cls: type[T]) -> list[T]:
+        """Decode JSON into a list of one registered struct type."""
+        sequence_type = types.GenericAlias(list, cls)
+        decoder = msgspec.json.Decoder(cast(Any, sequence_type))
+        return cast(list[T], decoder.decode(data))
 
     # Broken
     # def from_bytes(self, data: bytes, dc_cls: Type) -> Any:
@@ -134,11 +166,43 @@ class MsgspecRegistry:
     #     return struct_obj
 
 
+
+def _caller_locals() -> dict[str, Any]:
+    """Return a copy of the caller's caller local namespace."""
+    frame = inspect.currentframe()
+    try:
+        if frame is None or frame.f_back is None:
+            return {}
+        caller = frame.f_back.f_back
+        if caller is None:
+            return {}
+        return dict(caller.f_locals)
+    finally:
+        del frame
+
+
+def _resolve_type_hints(
+    dc_cls: DataclassType,
+    localns: typing.Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resolve postponed annotations for module- or locally-defined classes."""
+    resolved_localns = dict(localns or {})
+    resolved_localns.setdefault(dc_cls.__name__, dc_cls)
+    return get_type_hints(
+        dc_cls,
+        localns=resolved_localns,
+        include_extras=True,
+    )
+
+
 def dataclass_to_struct(
-    dc_cls: Type,
-    cache: Dict[Type, Type] = None,
-    dict : bool = False,
-) -> Type[msgspec.Struct]:
+    dc_cls: DataclassType,
+    cache: dict[DataclassType, StructType] | None = None,
+    dict: bool = False,
+    *,
+    localns: typing.Mapping[str, Any] | None = None,
+    hints_cache: dict[DataclassType, dict[str, Any]] | None = None,
+) -> StructType:
     """
     Recursively convert a dataclass into a msgspec.Struct, handling nested
     dataclasses inside Optional, Union, List, Dict, etc.
@@ -181,6 +245,8 @@ def dataclass_to_struct(
     """
     if cache is None:
         cache = {}
+    if localns is None:
+        localns = _caller_locals()
 
     if not dataclasses.is_dataclass(dc_cls):
         raise TypeError(f"{dc_cls} is not a dataclass")
@@ -192,18 +258,25 @@ def dataclass_to_struct(
     frozen = bool(getattr(dparams, "frozen", False))
     dc_eq = bool(getattr(dparams, "eq", True))
 
-    hints = get_type_hints(dc_cls, include_extras=True)
-    annotations = {}
-    namespace = {}
+    hints = _resolve_type_hints(dc_cls, localns)
+    if hints_cache is not None:
+        hints_cache[dc_cls] = hints
+    annotations: builtins.dict[str, Any] = {}
+    namespace: builtins.dict[str, Any] = {}
 
-    def convert_type(tp):
+    def convert_type(tp: Any) -> Any:
         """Recursively convert dataclass types inside annotations."""
         origin = typing.get_origin(tp)
         args = typing.get_args(tp)
 
         # Direct dataclass
-        if dataclasses.is_dataclass(tp):
-            return dataclass_to_struct(tp, cache)
+        if isinstance(tp, type) and dataclasses.is_dataclass(tp):
+            return dataclass_to_struct(
+                tp,
+                cache,
+                localns=localns,
+                hints_cache=hints_cache,
+            )
 
         # Optional[T] / Union[T, None]
         if origin is Union:
@@ -211,23 +284,24 @@ def dataclass_to_struct(
             return Union[new_args]  # rebuild Union
 
         # List[T]
-        if origin in (list, List):
-            return List[convert_type(args[0])]
+        if origin is list:
+            return types.GenericAlias(list, convert_type(args[0]))
 
         # Dict[K, V]
-        if origin in (dict, Dict):
+        if origin is builtins.dict:
             k, v = args
-            return Dict[convert_type(k), convert_type(v)]
+            args = (convert_type(k), convert_type(v))
+            return types.GenericAlias(builtins.dict, args)
 
         return tp
 
-    for field in dataclasses.fields(dc_cls):
+    for field in dataclasses.fields(cast(Any, dc_cls)):
         field_type = convert_type(hints.get(field.name, field.type))
         annotations[field.name] = field_type
 
         if field.default is not dataclasses.MISSING:
             namespace[field.name] = field.default
-        elif field.default_factory is not dataclasses.MISSING:  # type: ignore
+        elif field.default_factory is not dataclasses.MISSING:
             namespace[field.name] = dataclasses.field(default_factory=field.default_factory)
         else:
             # Special case: Optional[...] with no default -> assign None
@@ -239,14 +313,25 @@ def dataclass_to_struct(
     namespace['__annotations__'] = annotations
     namespace['__kw_only__'] = True  # allow mixed required/optional order
 
-    struct_cls = type(dc_cls.__name__, (msgspec.Struct,), namespace,
-                      kw_only=True, dict=dict, frozen=frozen, eq=dc_eq)
+    struct_factory = cast(Any, type)
+    struct_cls = cast(
+        StructType,
+        struct_factory(
+            dc_cls.__name__,
+            (msgspec.Struct,),
+            namespace,
+            kw_only=True,
+            dict=dict,
+            frozen=frozen,
+            eq=dc_eq,
+        ),
+    )
     cache[dc_cls] = struct_cls
     return struct_cls
 
 
-@ub.hash_data.register(msgspec.Struct)
-def _hash_msgspec(data):
+@ub.hash_data.register(msgspec.Struct)  # ty: ignore[unresolved-attribute]
+def _hash_msgspec(data: msgspec.Struct):
     """
     Dataclasses don't dispatch.
 
@@ -292,7 +377,7 @@ def _hash_msgspec(data):
     # Reuse ubelt's existing machinery to recurse into values
     seq = util_hash._hashable_sequence(
         (header, items),
-        extensions=ub.hash_data.extensions,
+        extensions=ub.hash_data.extensions,  # ty: ignore[unresolved-attribute]
         types=util_hash._COMPATIBLE_HASHABLE_SEQUENCE_TYPES_DEFAULT,
     )
     prefix = b'DCLASS'
@@ -303,7 +388,7 @@ def _hash_msgspec(data):
 MSGSPEC_REGISTRY = MsgspecRegistry()
 
 
-def asdict(struct):
+def asdict(struct: msgspec.Struct) -> dict[str, Any]:
     """
     Mirror dataclasses.asdict
     """

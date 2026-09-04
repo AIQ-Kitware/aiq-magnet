@@ -3,12 +3,12 @@ import json
 import os
 import sys
 import warnings
-from collections.abc import Callable
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from graphlib import TopologicalSorter
 from itertools import product
 from statistics import fmean
-from typing import Any, Dict, List, Optional, Self, Tuple, get_args, get_origin
+from typing import Any, Dict, List, Optional, Protocol, Self, Tuple, get_args, get_origin
 
 import kwutil
 import safer
@@ -49,7 +49,7 @@ class EvaluationConfig(kwconf.Config):
       python -m magnet.evaluation magnet/cards/simple.yaml
     """
 
-    path: str = kwconf.Value(
+    path: str | None = kwconf.Value(
         None, required=True, position=1, help='Path to evaluation card YAML'
     )
 
@@ -635,7 +635,7 @@ class Symbol:
     def __init__(self, name: str, spec: Dict[str, Any]) -> None:
         self.name = name
         self.value = spec.get('value')
-        self.sweep = spec.get('sweep')
+        self.sweep: list[Any] | None = spec.get('sweep')
         self.type = spec.get('type', 'List[int]')
         self.definition = spec.get('python', '')
         self.dependencies = self._resolve_dependencies(name, spec)
@@ -779,7 +779,11 @@ class Symbols:
 
         sweep_symbols = aggregate_configuration._find_sweep_symbols()
         if sweep_symbols:
-            sweep_values = [sweep.sweep for sweep in sweep_symbols]
+            sweep_values = [
+                sweep
+                for symbol in sweep_symbols
+                if (sweep := symbol.sweep) is not None
+            ]
             combinations = product(*sweep_values)
 
             for combo in combinations:
@@ -853,7 +857,17 @@ class Symbols:
 
 
 MetricValue = float
-MetricReducer = Callable[[List[float]], MetricValue]
+
+
+class MetricReducer(Protocol):
+    __name__: str
+
+    def __call__(self, values: List[float], /) -> MetricValue:
+        ...
+
+
+class MetricEvaluation(Protocol):
+    symbols: Symbols
 
 
 class Metric:
@@ -911,14 +925,14 @@ class Metric:
 
 def _calculate_metrics(
     metric_definitions: List[Metric],
-    evaluations: List['EvaluationTask'] | List[Dict[str, Any]],
+    evaluations: Sequence[MetricEvaluation | Mapping[str, Any]],
     symbol_metadata: Dict[str, Any],
 ) -> Dict[str, MetricValue]:
     calculated_metrics = {}
     for metric in metric_definitions:
         runs = []
         for evaluation in evaluations:
-            if isinstance(evaluation, dict):
+            if isinstance(evaluation, Mapping):
                 symbols = evaluation
             else:
                 symbols = evaluation.symbols()
@@ -951,13 +965,16 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
     # as an attribute yields a bound method, which silently compares unequal to
     # every mode and turns validation off. See tests/test_kwconf_configs.py.
     validate = args['validate']
+    path = args.path
+    if path is None:
+        raise ValueError('evaluation card path is required')
 
     if validate == 'only':
         try:
-            with open(args.path, 'r') as f:
+            with open(path, 'r') as f:
                 cfg = yaml.safe_load(f)
             EvaluationCardSchema.model_validate(cfg)
-            report_from_card(cfg, root=ub.Path(args.path).parent)
+            report_from_card(cfg, root=ub.Path(path).parent)
             print('Card validation succeeded.')
         except (ValidationError, ValueError, SyntaxError) as e:
             print('Card validation failed.')
@@ -965,13 +982,13 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
             sys.exit(1)
         return
 
-    card = EvaluationCard(args.path, args.output_path, validate=validate)
+    card = EvaluationCard(path, args.output_path, validate=validate)
     if card.has_kwdagger:
         raise SystemExit(
-            f'{args.path}: this card declares a `kwdagger:` pipeline.\n'
+            f'{path}: this card declares a `kwdagger:` pipeline.\n'
             '`magnet evaluate` / `magnet evaluate_legacy` use the legacy '
             'evaluator and do not execute kwdagger cards.\n'
-            f'Use `magnet evaluate_new {args.path}` instead.'
+            f'Use `magnet evaluate_new {path}` instead.'
         )
     if args.override is not None:
         card.replace(args.override)

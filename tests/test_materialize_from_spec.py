@@ -27,6 +27,7 @@ import pytest
 pytest.importorskip("helm")
 
 from helm.common.object_spec import ObjectSpec  # noqa: E402
+from helm.benchmark.scenarios.scenario import ScenarioSpec  # noqa: E402
 
 from magnet.backends.helm.cli.materialize_helm_run_from_spec import (  # noqa: E402
     MaterializeHelmRunFromSpecConfig,
@@ -152,7 +153,7 @@ def _phi2_run_spec():
     )
     return RunSpec(
         name="mmlu:subject=philosophy,model=microsoft_phi-2",
-        scenario_spec=ObjectSpec(class_name="helm.x.Scenario", args={}),
+        scenario_spec=ScenarioSpec(class_name="helm.x.Scenario", args={}),
         adapter_spec=adapter_spec,
         metric_specs=[],
         groups=[],
