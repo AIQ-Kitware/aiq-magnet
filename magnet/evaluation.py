@@ -885,7 +885,7 @@ class Metric:
                 strategy_name = agg_strategy.get('type')
                 parameters = agg_strategy.get('parameters') or {}  # NOQA: unused
                 objective = MetricObjective(
-                    metric_metadata.get('objective', MetricObjective.MINIMIZE)
+                    metric_metadata.get('objective', MetricObjective.MAXIMIZE)
                 )
 
                 match strategy_name:
