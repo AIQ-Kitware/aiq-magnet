@@ -302,24 +302,6 @@ Do not convert an ordinary Python-computed symbol to metadata-only form. Keep
 its ``value``, ``sweep``, or ``python`` definition when MAGNET itself is still
 responsible for resolving it.
 
-``depends`` is an alias for ``depends_on``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Both spellings are accepted:
-
-.. code-block:: yaml
-
-   symbols:
-     score:
-       depends:
-         - model
-         - measurements
-       python: |
-         score = compute_score(model, measurements)
-
-Prefer one spelling consistently within a repository. If both are present on
-the same symbol, their lists must agree.
-
 Recommended legacy-card acceptance sequence
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -369,7 +351,7 @@ is not automatically interpreted as evidence that the claim is false.
 Step 1: add a recipe identity
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A KWDagger recipe may declare ``name`` in addition to the human-readable
+A KWDagger recipe SHOULD declare ``name`` in addition to the human-readable
 ``title``:
 
 .. code-block:: yaml
@@ -596,6 +578,10 @@ This example uses fully qualified metadata keys where the namespace is part of
 the intended meaning. The checked-in Llama recipe uses the shorter
 ``llama_compare.base_score`` form, which is also valid.
 
+While this example uses the inline KWDagger specification, it's also
+possible to reference an external pipeline definition as well.  See
+`KWDagger Tutorials`_ for more details.
+
 Step 4: make artifacts and dependencies explicit
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -670,7 +656,10 @@ KWDagger aggregate rows expose qualified names such as:
 * ``params.<node>.<field>``
 * ``resolved_params.<node>.<field>``
 
-A Python claim can use the fully qualified path or a node view:
+Where ``<node>`` is the name of the KWDagger node
+(e.g. ``llama_compare``), and ``<field>`` is the name of the field or
+parameter (e.g. ``base_score``). A Python claim can use the fully
+qualified path or a node view:
 
 .. code-block:: yaml
 
@@ -960,122 +949,6 @@ KWDagger recipe
   separately.
 * A repeated run exercises the intended cache/reuse behavior.
 
-Merged pull requests reviewed
------------------------------
-
-The following pull requests were merged after the ``v0.0.2`` release PR and are
-included in the review. The impact column is scoped to evaluation-card authors.
-
-.. list-table::
-   :header-rows: 1
-   :widths: 11 18 36 35
-
-   * - PR
-     - Merged
-     - Change
-     - Card-author impact
-   * - `PR 58`_
-     - 2026-05-22
-     - Xcookie update
-     - Packaging/CI maintenance; no card-format migration.
-   * - `PR 61`_
-     - 2026-06-03
-     - ``simple_view`` dictionary support
-     - Improves serializable symbol views and output hashing; generally no card
-       edit.
-   * - `PR 56`_
-     - 2026-06-05
-     - Evaluation-audit/HELM integration work
-     - Backend/materialization improvements; review only if the card uses those
-       HELM paths.
-   * - `PR 60`_
-     - 2026-06-05
-     - Type annotations in ``evaluation.py``
-     - No card-format change.
-   * - `PR 59`_
-     - 2026-07-02
-     - Initial evaluation schema validation
-     - Potentially required: fill missing top-level metadata and address schema
-       failures; validation defaults to error.
-   * - `PR 63`_
-     - 2026-07-30
-     - Production-environment sidecar configurations
-     - Backend-specific; no general card-format change.
-   * - `PR 64`_
-     - 2026-07-31
-     - Aggregate metrics through symbol metadata
-     - Add ``define_metric`` to symbols that should be reduced across rows.
-   * - `PR 62`_
-     - 2026-07-31
-     - MAGNET logging utility
-     - Produces run logs and verbose output; no card-format change.
-   * - `PR 65`_
-     - 2026-08-10
-     - Kwconfig CLI port
-     - Mostly command/config plumbing; use the current option names and strict
-       validation behavior.
-   * - `PR 70`_
-     - 2026-08-11
-     - Fix shadowed ``validate`` option
-     - Makes the requested validation mode actually take effect.
-   * - `PR 67`_
-     - 2026-08-12
-     - Miscellaneous fixes
-     - Predictor sample insufficiency becomes a warning; no core card migration.
-   * - `PR 71`_
-     - 2026-08-13
-     - Parallel metric-resolution fix
-     - Aggregate metrics work with legacy ``--jobs > 1``.
-   * - `PR 75`_
-     - 2026-08-20
-     - ``depends`` alias for ``depends_on``
-     - Either spelling is accepted; both must agree if both are present.
-   * - `PR 79`_
-     - 2026-08-21
-     - Move KWDagger machinery into a private module
-     - Internal refactor; no YAML change.
-   * - `PR 80`_
-     - 2026-08-24
-     - Improved symbol-resolution errors
-     - Better diagnostics for invalid dependency graphs; no required edit.
-   * - `PR 90`_
-     - 2026-08-28
-     - Hermetic HELM doctests
-     - Test isolation; no card-format change.
-   * - `PR 77`_
-     - 2026-08-28
-     - Theory links
-     - Optional ``theory:`` declarations and early link validation.
-   * - `PR 78`_
-     - 2026-09-02
-     - KWDagger cards and ``evaluate_new``
-     - Major migration path: evaluator split, result-node evidence, matrices,
-       qualified namespaces, requested/all evidence scopes, and dashboard
-       compatibility.
-   * - `PR 93`_
-     - 2026-09-03
-     - Symbol ``kind`` metadata
-     - Optional ``model``/``dataset``/``metric`` classification emitted for the
-       dashboard; enables metadata-only output declarations.
-   * - `PR 94`_
-     - 2026-09-03
-     - Containers and inference-stack leasing
-     - Optional ``evaluate_new`` execution controls; no core recipe rewrite is
-       required merely to upgrade.
-
-Known target-revision caveats
------------------------------
-
-* ``define_metric.aggregation_strategy.type: custom`` validates but is not
-  implemented by the metric runtime.
-* Metadata-only short names can warn and select a candidate when matching
-  columns disagree. Fully qualify important labels.
-* ``evaluate_new`` is explicitly transitional: KWDagger feeds aggregate values
-  into the existing Python claim/verdict layer. Do not infer that legacy
-  ``pipeline:`` execution or legacy sweeps are silently supported there.
-* The Llama KWDagger example is a faithful port of the old evaluation shape,
-  not a clean-sheet recommendation for pairwise experimental design.
-
 Source references
 -----------------
 
@@ -1127,3 +1000,5 @@ Source references
 .. _PR 90: https://github.com/AIQ-Kitware/aiq-magnet/pull/90
 .. _PR 93: https://github.com/AIQ-Kitware/aiq-magnet/pull/93
 .. _PR 94: https://github.com/AIQ-Kitware/aiq-magnet/pull/94
+
+.. _KWDagger Tutorials: https://gitlab.kitware.com/computer-vision/kwdagger/-/tree/main/docs/source/manual/tutorials
