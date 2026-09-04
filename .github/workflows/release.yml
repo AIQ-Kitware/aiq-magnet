@@ -80,8 +80,8 @@ jobs:
       with:
         name: wheels-${{ matrix.os }}-${{ matrix.arch }}
         path: ./wheelhouse/aiq_magnet*.whl
-  workspace_magnet_theory:
-    name: Build magnet-theory
+  workspace_aiq_magnet_theory:
+    name: Build aiq-magnet-theory
     runs-on: ubuntu-latest
     steps:
     - name: Checkout source
@@ -90,19 +90,19 @@ jobs:
       uses: actions/setup-python@v6.2.0
       with:
         python-version: '3.13'
-    - name: Build magnet-theory
+    - name: Build aiq-magnet-theory
       shell: bash
       run: |-
         python -m pip install pip uv -U
         python -m uv pip install setuptools>=77 wheel build twine
-        python -m build --sdist --wheel --outdir workspace_wheelhouse/magnet_theory ./packages/magnet-theory
-        python -m twine check workspace_wheelhouse/magnet_theory/*
+        python -m build --sdist --wheel --outdir workspace_wheelhouse/aiq_magnet_theory ./packages/aiq-magnet-theory
+        python -m twine check workspace_wheelhouse/aiq_magnet_theory/*
     - uses: actions/upload-artifact@v6.0.0
-      name: Upload magnet-theory distributions
+      name: Upload aiq-magnet-theory distributions
       with:
-        name: workspace-magnet-theory-release
+        name: workspace-aiq-magnet-theory-release
         if-no-files-found: error
-        path: workspace_wheelhouse/magnet_theory/*
+        path: workspace_wheelhouse/aiq_magnet_theory/*
   test_deploy:
     name: Deploy Test
     runs-on: ubuntu-latest
@@ -110,7 +110,7 @@ jobs:
     needs:
     - build_purepy_wheels
     - build_sdist
-    - workspace_magnet_theory
+    - workspace_aiq_magnet_theory
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
@@ -126,19 +126,19 @@ jobs:
         name: sdist_wheels
         path: wheelhouse
     - uses: actions/download-artifact@v7.0.0
-      name: Download magnet-theory
+      name: Download aiq-magnet-theory
       with:
-        name: workspace-magnet-theory-release
-        path: workspace_release/magnet_theory
+        name: workspace-aiq-magnet-theory-release
+        path: workspace_release/aiq_magnet_theory
     - name: Show files to upload
       shell: bash
       run: |-
         ls -la wheelhouse
         find workspace_release -maxdepth 3 -type f -print
-    - name: Publish magnet-theory to TestPyPI
+    - name: Publish aiq-magnet-theory to TestPyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
-        packages-dir: workspace_release/magnet_theory
+        packages-dir: workspace_release/aiq_magnet_theory
         skip-existing: true
         repository-url: https://test.pypi.org/legacy/
     - name: Prepare publish directory
@@ -182,7 +182,7 @@ jobs:
     needs:
     - build_purepy_wheels
     - build_sdist
-    - workspace_magnet_theory
+    - workspace_aiq_magnet_theory
     steps:
     - name: Checkout source
       uses: actions/checkout@v6.0.2
@@ -198,19 +198,19 @@ jobs:
         name: sdist_wheels
         path: wheelhouse
     - uses: actions/download-artifact@v7.0.0
-      name: Download magnet-theory
+      name: Download aiq-magnet-theory
       with:
-        name: workspace-magnet-theory-release
-        path: workspace_release/magnet_theory
+        name: workspace-aiq-magnet-theory-release
+        path: workspace_release/aiq_magnet_theory
     - name: Show files to upload
       shell: bash
       run: |-
         ls -la wheelhouse
         find workspace_release -maxdepth 3 -type f -print
-    - name: Publish magnet-theory to PyPI
+    - name: Publish aiq-magnet-theory to PyPI
       uses: pypa/gh-action-pypi-publish@release/v1
       with:
-        packages-dir: workspace_release/magnet_theory
+        packages-dir: workspace_release/aiq_magnet_theory
         skip-existing: true
     - name: Prepare publish directory
       shell: bash

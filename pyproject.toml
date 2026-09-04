@@ -26,7 +26,7 @@ dependencies = [
   "kwutil>=0.3.8",
   "lazy-loader>=0.4",
   "loguru>=0.7.3",
-  "magnet-theory==0.1.0",
+  "aiq-magnet-theory==0.1.0",
   "msgspec>=0.19",
   "orjson>=3.10.15",
   "pandas>=2.2.3",
@@ -139,10 +139,10 @@ ini_options.norecursedirs = ".git build __pycache__ dev docs dockerfiles"
 extra-paths = [ "./examples" ]
 
 [tool.uv.workspace]
-members = [ "packages/magnet-theory" ]
+members = [ "packages/aiq-magnet-theory" ]
 
 [tool.uv.sources]
-magnet-theory = { workspace = true }
+aiq-magnet-theory = { workspace = true }
 
 [tool.coverage]
 report.exclude_lines = [
@@ -177,7 +177,7 @@ linter = true
 typecheck_extra_paths = ["tests"]
 typecheck_install_extras = ["tests", "helm"]
 
-workspace_members = ["packages/magnet-theory"]
+workspace_members = ["packages/aiq-magnet-theory"]
 workspace_sync_versions = true
 
 enable_gpg = false

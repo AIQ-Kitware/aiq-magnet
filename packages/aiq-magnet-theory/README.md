@@ -1,6 +1,6 @@
-# magnet-theory
+# aiq-magnet-theory
 
-`magnet-theory` is the dependency-free annotation vocabulary used by MAGNET to
+`aiq-magnet-theory` is the dependency-free annotation vocabulary used by MAGNET to
 connect empirical Python code to theoretical statements and named premises.
 The decorators and context managers are runtime no-ops, so application code can
 annotate itself without depending on the full `aiq-magnet` stack.
@@ -17,7 +17,7 @@ def experiment():
 Install only the annotation package with:
 
 ```bash
-pip install magnet-theory
+pip install aiq-magnet-theory
 ```
 
 The full `aiq-magnet` distribution contains the static parser, theory indexes,

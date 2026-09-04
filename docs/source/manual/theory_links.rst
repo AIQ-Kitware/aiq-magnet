@@ -279,13 +279,13 @@ obligations that remain.
 Annotating without depending on MAGNET
 --------------------------------------
 
-The annotation vocabulary is published separately as ``magnet-theory``. It has
+The annotation vocabulary is published separately as ``aiq-magnet-theory``. It has
 no runtime dependencies and does not import MAGNET, so an application can add
 just that package:
 
 .. code:: bash
 
-    pip install magnet-theory
+    pip install aiq-magnet-theory
 
 Annotated code imports the standalone package directly:
 
@@ -299,7 +299,7 @@ Annotated code imports the standalone package directly:
         ...
 
 The full ``aiq-magnet`` distribution depends on the same version of
-``magnet-theory`` and reexports the decorators through ``magnet.theory`` for
+``aiq-magnet-theory`` and reexports the decorators through ``magnet.theory`` for
 compatibility. The static extractor recognizes either import spelling.
 
 

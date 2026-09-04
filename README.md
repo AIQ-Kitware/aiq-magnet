@@ -14,7 +14,7 @@ execution, and containers. The theory decorators are also published separately
 with no runtime dependencies. HELM integration and endpoint leasing are optional:
 
 ```bash
-pip install magnet-theory           # dependency-free theory decorators only
+pip install aiq-magnet-theory           # dependency-free theory decorators only
 pip install aiq-magnet              # cards, claims, theory, kwdagger, containers
 pip install 'aiq-magnet[helm]'      # + HELM output loaders, predictors, materialize, demo data (crfm-helm, torch)
 pip install 'aiq-magnet[leasing]'   # + infer-stack, for --per_node_leasing
