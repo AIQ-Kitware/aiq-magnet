@@ -2,7 +2,7 @@
 Read theory annotations out of Python source without importing it.
 
 A recognized annotation is a decorator or ``with`` item on the namespace bound
-by ``magnet.theory`` or a vendored ``magnet_theory`` module. References and
+by ``magnet.theory`` or the standalone ``magnet_theory`` package. References and
 optional notes must be literal strings. Once a recognized relation is used as
 an annotation, malformed arguments are errors rather than annotations that
 disappear from the report.
@@ -13,11 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator, Sequence
 
-from magnet.theory.annotations import (
-    PREMISE_RELATIONS,
-    RELATIONS,
-    STATEMENT_RELATIONS,
-)
+from magnet_theory import PREMISE_RELATIONS, RELATIONS, STATEMENT_RELATIONS
 from magnet.theory.links import Link, split_ref
 
 __all__ = ['Link', 'TheoryAnnotationError', 'extract', 'extract_tree']

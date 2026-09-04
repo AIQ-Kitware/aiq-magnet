@@ -15,12 +15,12 @@ mkdir -p requirements/locks
 uv lock
 
 # Strict CI variant extras: tests
-uv export --frozen --no-emit-project --format requirements.txt --no-hashes \
+uv export --frozen --no-emit-workspace --format requirements.txt --no-hashes \
     --extra tests \
     -o requirements/locks/tests.txt
 
 # Strict CI variant extras: tests, optional
-uv export --frozen --no-emit-project --format requirements.txt --no-hashes \
+uv export --frozen --no-emit-workspace --format requirements.txt --no-hashes \
     --extra tests \
     --extra optional \
     -o requirements/locks/tests-optional.txt

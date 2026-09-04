@@ -1,10 +1,8 @@
-"""
-Static annotations describing how empirical code relates to theory.
+"""Static theory links, indexes, validation, and reporting for MAGNET.
 
-The public API is the annotation vocabulary. Statement annotations connect
-practice to a theoretical object; premise annotations explain how empirical
-code treats one named premise of that object. All annotations are runtime
-no-ops and are read from source by MAGNET.
+The annotation vocabulary itself lives in the dependency-free
+``magnet-theory`` distribution. This module reexports those runtime no-ops for
+compatibility while MAGNET provides the machinery that interprets them.
 
 Example:
     >>> import magnet.theory as theory
@@ -15,7 +13,9 @@ Example:
     >>> experiment()
     42
 """
-from magnet.theory.annotations import (
+from __future__ import annotations
+
+from magnet_theory import (
     approximates,
     assumes,
     checks,

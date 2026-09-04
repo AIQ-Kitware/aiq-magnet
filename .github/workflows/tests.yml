@@ -49,6 +49,7 @@ jobs:
     - name: Typecheck
       run: |-
         python -m pip install ty
+        pip install --prefer-binary -e "./packages/magnet-theory"
         pip install --prefer-binary -e ".[tests,helm]"
         ty check ./magnet ./tests
   build_and_test_sdist:
@@ -68,6 +69,7 @@ jobs:
     - name: Upgrade pip
       run: |-
         python -m pip install pip uv -U
+        pip install --prefer-binary -e "./packages/magnet-theory"
         python -m pip install --prefer-binary -e ".[tests]"
     - name: Build sdist
       shell: bash
@@ -247,6 +249,7 @@ jobs:
                 fpath = sdists[-1]
             print(str(fpath).replace(chr(92), chr(47)))
         ")
+        pip install --prefer-binary -e "./packages/magnet-theory"
         echo "WHEEL_FPATH=$WHEEL_FPATH"
         echo "INSTALL_EXTRAS=$INSTALL_EXTRAS"
         echo "USE_UV_LOCK=$USE_UV_LOCK"
@@ -324,5 +327,52 @@ jobs:
       with:
         file: ./coverage.xml
         token: ${{ secrets.CODECOV_TOKEN }}
+  workspace_magnet_theory:
+    name: Build magnet-theory
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout source
+      uses: actions/checkout@v6.0.2
+    - name: Set up Python 3.13
+      uses: actions/setup-python@v6.2.0
+      with:
+        python-version: '3.13'
+    - name: Build magnet-theory
+      shell: bash
+      run: |-
+        python -m pip install pip uv -U
+        python -m uv pip install setuptools>=77 wheel build twine
+        python -m build --sdist --wheel --outdir workspace_wheelhouse/magnet_theory ./packages/magnet-theory
+        python -m twine check workspace_wheelhouse/magnet_theory/*
+    - name: Test magnet-theory in isolation
+      shell: bash
+      run: |-
+        python -m pip install pytest ty
+        WHEEL_FPATH=$(ls workspace_wheelhouse/magnet_theory/magnet_theory*.whl | head -n 1)
+        test -n "$WHEEL_FPATH"
+        python -m pip install --prefer-binary "$WHEEL_FPATH"
+        python -c "import magnet_theory; print(magnet_theory.__file__)"
+        python - <<'PY'
+        import email
+        import glob
+        import zipfile
+        wheel = glob.glob('workspace_wheelhouse/magnet_theory/magnet_theory*.whl')[0]
+        with zipfile.ZipFile(wheel) as zfile:
+            metadata_name = next(name for name in zfile.namelist() if name.endswith('.dist-info/METADATA'))
+            metadata = email.message_from_bytes(zfile.read(metadata_name))
+        requires = metadata.get_all('Requires-Dist') or []
+        if requires:
+            raise SystemExit(f'expected dependency-free wheel, found Requires-Dist: {requires}')
+        PY
+        ty check packages/magnet-theory/src/magnet_theory packages/magnet-theory/tests
+        if [[ -d packages/magnet-theory/tests ]]; then
+            python -m pytest packages/magnet-theory/tests
+        fi
+    - uses: actions/upload-artifact@v6.0.0
+      name: Upload magnet-theory distributions
+      with:
+        name: workspace-magnet-theory
+        if-no-files-found: error
+        path: workspace_wheelhouse/magnet_theory/*
 
 

@@ -13,7 +13,7 @@ from math import comb
 import kwconf
 import ubelt as ub
 
-import magnet.theory as theory
+import magnet_theory as theory
 
 
 class CoinFlipCLI(kwconf.Config):
