@@ -26,7 +26,7 @@ dependencies = [
   "kwutil>=0.3.8",
   "lazy-loader>=0.4",
   "loguru>=0.7.3",
-  "magnet-theory==0.0.2",
+  "magnet-theory==0.1.0",
   "msgspec>=0.19",
   "orjson>=3.10.15",
   "pandas>=2.2.3",
