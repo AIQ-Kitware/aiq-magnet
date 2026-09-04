@@ -28,7 +28,7 @@ The guide distinguishes three card shapes:
    A legacy card with a *top-level* ``pipeline:`` block. This form remains
    executable by the legacy evaluator, but is soft-deprecated.
 
-``KWDagger recipe``
+``KWDagger Recipe Card``
    A card with a *top-level* ``kwdagger:`` block that contains
    ``kwdagger.pipeline``, ``kwdagger.result_node``, and usually
    ``kwdagger.matrix``. This is the format accepted by ``evaluate_new``.
@@ -141,8 +141,7 @@ The current CLI exposes two paths:
    magnet evaluate card.yaml          # compatibility alias for the historical evaluator
    magnet evaluate_new recipe.yaml    # KWDagger-only path
 
-This separation is intentional. It prevents a card from appearing to use the
-new execution/evidence semantics while actually being run by the old evaluator.
+This intentionally separates the new execution/evidence semantics path while it is still experimental. In `0.1.0` the `evaluate` command resolves to `evaluate_legacy` to maintain backwards compatibility during the migration. A future version of MAGNET will remove `evaluate_new` and `evaluate_legacy` and `evaluate` will be the canonical entrypoint for kwdagger-style recipe cards.
 
 Top-level ``pipeline:`` is deprecated, not nested ``kwdagger.pipeline``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -172,7 +171,7 @@ These are different constructs:
        score.model: [model-a, model-b]
 
 The legacy form still runs, but emits a deprecation warning. The KWDagger form
-is not deprecated.
+is the recommended API.
 
 Migration path A: keep a Python-symbol card
 -------------------------------------------
@@ -477,7 +476,7 @@ A ``v0.0.2``-style pipeline card could look like this:
      threshold:
        value: 0.1
 
-For ``evaluate_new``, place the execution graph under ``kwdagger.pipeline`` and
+For a ``v0.1.0`` recipe card using ``evaluate_new``, place the execution graph under ``kwdagger.pipeline`` and
 use KWDagger's declarative ``nodes`` and ``edges`` structure. The following is
 a shortened, annotated form of the current Llama example:
 
@@ -610,7 +609,7 @@ For each node, identify:
    axis or another configuration source.
 
 ``in_paths``
-   Inputs supplied by upstream edges.
+   Inputs supplied by upstream edges or on-disk dependencies. These are either supplied by the user directly (i.e. by specifying the values in the parameter matrix) or by connecting (drawing an edge) from an out_path to an in_path.
 
 ``out_paths``
    Named output artifacts.
