@@ -17,18 +17,24 @@ class Policy(StrEnum):
     WARN = auto()
     IGNORE = auto()
 
+class EvalRunSelectorPolicy(StrEnum):
+    EXCLUDE_ALL_MATCHES = auto()
+    EXCLUDE_EVAL_RUN_ONLY = auto()
+
 class Predictor:
     def __init__(self,
                  num_example_runs=3,
                  num_eval_samples=20,
                  random_seed=1,
                  insufficient_eval_sample_policy=Policy.WARN,
-                 eval_run_selector=None):
+                 eval_run_selector=None,
+                 eval_run_selector_policy=EvalRunSelectorPolicy.EXCLUDE_ALL_MATCHES):
         self.num_example_runs = num_example_runs
         self.num_eval_samples = num_eval_samples
         self.random_seed = random_seed
         self.insufficient_eval_sample_policy = insufficient_eval_sample_policy
         self.eval_run_selector = eval_run_selector
+        self.eval_run_selector_policy = eval_run_selector_policy
 
     def _matches_eval_run_selector(self, run_spec_name: str) -> bool:
         if self.eval_run_selector is None:
@@ -95,7 +101,22 @@ class Predictor:
                     f"No run specs matched eval_run_selector: {self.eval_run_selector!r}"
                 )
             eval_run = rng.choice(eval_candidates)
-            train_candidates = [r for r in selected_run_specs_names if r != eval_run]
+            if self.eval_run_selector_policy == EvalRunSelectorPolicy.EXCLUDE_ALL_MATCHES:
+                eval_candidates_set = set(eval_candidates)
+                train_candidates = [
+                    r for r in selected_run_specs_names
+                    if r not in eval_candidates_set
+                ]
+            elif self.eval_run_selector_policy == EvalRunSelectorPolicy.EXCLUDE_EVAL_RUN_ONLY:
+                train_candidates = [
+                    r for r in selected_run_specs_names
+                    if r != eval_run
+                ]
+            else:
+                raise ValueError(
+                    f"Unknown eval_run_selector_policy: {self.eval_run_selector_policy!r}"
+                )
+
             if len(train_candidates) < self.num_example_runs:
                 raise ValueError(
                     f"Cannot sample {self.num_example_runs} train runs from "
