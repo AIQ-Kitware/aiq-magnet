@@ -354,4 +354,4 @@ class RunPredictor(Predictor):
         run_predictions = self.predict(train_split, sequestered_test_split)
         predicted_stats_df = RunPrediction.to_df(run_predictions)
 
-        self.compare_predicted_to_actual(predicted_stats_df, eval_stats_df)
+        return self.compare_predicted_to_actual(predicted_stats_df, eval_stats_df)
