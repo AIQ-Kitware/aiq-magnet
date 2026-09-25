@@ -92,6 +92,16 @@ class Predictor:
         selected_run_specs_names = list(selected_run_specs_df['run_spec.name'])
 
         if self.eval_run_selector is not None:
+            # The idea here is that the `eval_run_selector` string or
+            # pattern (if set) dictates what eval_runs can be included
+            # in the "eval" set.  A single "eval" run is selected from
+            # this set.  For training run selection there are two
+            # policies, "EXCLUDE_ALL_MATCHES" means that a run is
+            # excluded from "train" set selection if it belongs to the
+            # "eval" set, regardless of it's the single selected eval
+            # run or not.  The "EXCLUDE_EVAL_RUN_ONLY" means that only
+            # the single selected eval run is excluded from training
+            # set selection.
             eval_candidates = [
                 name for name in selected_run_specs_names
                 if self._matches_eval_run_selector(name)
