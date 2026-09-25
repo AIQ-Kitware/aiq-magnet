@@ -18,6 +18,14 @@ class ExampleRandomPredictor(RunPredictor):
         >>> suite_path = outputs.suites()[0].path
         >>> predictor_instance = ExampleRandomPredictor(num_eval_samples=5)
         >>> predictor_instance(helm_suites=suite_path)
+        >>> predictor_instance_w_eval_run_selector = ExampleRandomPredictor(num_eval_samples=5, num_example_runs=2, eval_run_selector="eleutherai_pythia-1b-v0")
+        >>> predictor_output = predictor_instance_w_eval_run_selector(helm_suites=suite_path)
+        >>> "eleutherai_pythia-1b-v0" in predictor_output.iloc[0]['run_spec']
+        True
+        >>> predictor_instance_w_eval_run_selector = ExampleRandomPredictor(num_eval_samples=5, num_example_runs=2, eval_run_selector="philosophy.*eleutherai_pythia-1b-v0")
+        >>> predictor_output = predictor_instance_w_eval_run_selector(helm_suites=suite_path)
+        >>> predictor_output.iloc[0]['run_spec']
+        'mmlu:subject=philosophy,method=multiple_choice_joint,model=eleutherai_pythia-1b-v0'
     """
     def predict(self,
                 train_split: TrainSplit,

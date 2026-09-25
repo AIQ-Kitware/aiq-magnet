@@ -1,3 +1,4 @@
+import re
 from typing import Any
 from enum import StrEnum, auto
 
@@ -16,16 +17,36 @@ class Policy(StrEnum):
     WARN = auto()
     IGNORE = auto()
 
+class EvalRunSelectorPolicy(StrEnum):
+    EXCLUDE_ALL_MATCHES = auto()
+    EXCLUDE_EVAL_RUN_ONLY = auto()
+
 class Predictor:
     def __init__(self,
                  num_example_runs=3,
                  num_eval_samples=20,
                  random_seed=1,
-                 insufficient_eval_sample_policy=Policy.WARN):
+                 insufficient_eval_sample_policy=Policy.WARN,
+                 eval_run_selector=None,
+                 eval_run_selector_policy=EvalRunSelectorPolicy.EXCLUDE_ALL_MATCHES):
         self.num_example_runs = num_example_runs
         self.num_eval_samples = num_eval_samples
         self.random_seed = random_seed
         self.insufficient_eval_sample_policy = insufficient_eval_sample_policy
+        self.eval_run_selector = eval_run_selector
+        self.eval_run_selector_policy = eval_run_selector_policy
+
+    def _matches_eval_run_selector(self, run_spec_name: str) -> bool:
+        if self.eval_run_selector is None:
+            return True
+        if isinstance(self.eval_run_selector, (str, re.Pattern)):
+            return bool(re.search(self.eval_run_selector, run_spec_name))
+        if callable(self.eval_run_selector):
+            return bool(self.eval_run_selector(run_spec_name))
+        raise TypeError(
+            f"eval_run_selector must be a str, re.Pattern, callable, or None; "
+            f"got {type(self.eval_run_selector).__name__}"
+        )
 
     def run_spec_filter(self, run_spec):
         # To be overridden; likely only want to use this filter *OR*
@@ -70,8 +91,51 @@ class Predictor:
 
         selected_run_specs_names = list(selected_run_specs_df['run_spec.name'])
 
-        *train_runs, eval_run = rng.sample(
-            selected_run_specs_names, self.num_example_runs + 1)
+        if self.eval_run_selector is not None:
+            # The idea here is that the `eval_run_selector` string or
+            # pattern (if set) dictates what eval_runs can be included
+            # in the "eval" set.  A single "eval" run is selected from
+            # this set.  For training run selection there are two
+            # policies, "EXCLUDE_ALL_MATCHES" means that a run is
+            # excluded from "train" set selection if it belongs to the
+            # "eval" set, regardless of it's the single selected eval
+            # run or not.  The "EXCLUDE_EVAL_RUN_ONLY" means that only
+            # the single selected eval run is excluded from training
+            # set selection.
+            eval_candidates = [
+                name for name in selected_run_specs_names
+                if self._matches_eval_run_selector(name)
+            ]
+            if not eval_candidates:
+                raise ValueError(
+                    f"No run specs matched eval_run_selector: {self.eval_run_selector!r}"
+                )
+            eval_run = rng.choice(eval_candidates)
+            if self.eval_run_selector_policy == EvalRunSelectorPolicy.EXCLUDE_ALL_MATCHES:
+                eval_candidates_set = set(eval_candidates)
+                train_candidates = [
+                    r for r in selected_run_specs_names
+                    if r not in eval_candidates_set
+                ]
+            elif self.eval_run_selector_policy == EvalRunSelectorPolicy.EXCLUDE_EVAL_RUN_ONLY:
+                train_candidates = [
+                    r for r in selected_run_specs_names
+                    if r != eval_run
+                ]
+            else:
+                raise ValueError(
+                    f"Unknown eval_run_selector_policy: {self.eval_run_selector_policy!r}"
+                )
+
+            if len(train_candidates) < self.num_example_runs:
+                raise ValueError(
+                    f"Cannot sample {self.num_example_runs} train runs from "
+                    f"{len(train_candidates)} remaining runs"
+                )
+            train_runs = rng.sample(train_candidates, self.num_example_runs)
+        else:
+            *train_runs, eval_run = rng.sample(
+                selected_run_specs_names, self.num_example_runs + 1)
 
         train_run_specs_df = selected_run_specs_df[
             selected_run_specs_df['run_spec.name'].isin(train_runs)]
@@ -300,4 +364,4 @@ class RunPredictor(Predictor):
         run_predictions = self.predict(train_split, sequestered_test_split)
         predicted_stats_df = RunPrediction.to_df(run_predictions)
 
-        self.compare_predicted_to_actual(predicted_stats_df, eval_stats_df)
+        return self.compare_predicted_to_actual(predicted_stats_df, eval_stats_df)

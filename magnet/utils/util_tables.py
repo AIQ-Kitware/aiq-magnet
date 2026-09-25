@@ -223,7 +223,7 @@ def varied_value_counts(longform, min_variations=0, max_variations=None,
 
     # Build up the set of unique values for each column
     from collections import Counter
-    varied_counts = ub.ddict(Counter)
+    varied_counts: dict[object, Counter[object]] = ub.ddict(Counter)
     for row in longform:
         for key in columns:
             value = row.get(key, default)
