@@ -30,8 +30,13 @@ Identity (M3):
 
 Evidence (M4/M5): ``evaluation.json`` records *which* run and *how* to project
 it (selector, coverage policy), never the claim-facing values themselves.
-Rows are recomputed from the validated run every time they are loaded, so
-editing ``evaluation.json`` cannot change what a claim sees.
+Every load recomputes the row from the run after full validation, and checks
+the recorded projection, identities, and request against kwdagger's own
+scheduling record for that directory (its ``invoke.sh``). Editing
+``evaluation.json`` therefore cannot change what a claim sees. A node that
+fails any check becomes an ineligible row with the reason (never a score)
+instead of aborting aggregation, and kwdagger's mtime-keyed row cache is
+bypassed so a later change to the run is noticed.
 
 Native reuse is ``magnet_evals.ensure`` against a shared store. Acquisition is
 single-flight in that store, so nodes that differ only in ``select`` (for
@@ -203,6 +208,10 @@ class EvaluationNode(MagnetProcessNode):
         'endpoint': None,
     }
     endpoint_params = ('endpoint',)
+    #: kwdagger's resolved-row cache is keyed on evaluation.json's mtime, so it
+    #: would keep serving a row after the run it came from changed. Rows are
+    #: recomputed from the validated run instead (see MAGNET's row loader).
+    cache_result_rows = False
     in_paths: set[str] = set()
     out_paths = {'out_dpath': '.', 'evaluation_fname': 'evaluation.json'}
     primary_out_key = 'evaluation_fname'
@@ -453,22 +462,103 @@ def evaluation_is_valid(fpath: Path, expected: dict[str, Any] | None = None) -> 
         summary, _ = validated_run(fpath)
     except (InvalidEvaluation, KeyError, TypeError):
         return False
-    for key, value in dict(expected or {}).items():
+    return _matches_expected(summary, dict(expected or {})) is None
+
+
+
+
+def scheduled_record(node_dpath: Any) -> dict[str, Any] | None:
+    """What kwdagger scheduled a node directory with, from its ``invoke.sh``.
+
+    kwdagger writes each node's rendered command to ``invoke.sh``. For an
+    EvaluationNode it holds the done-check's ``--expected`` (selector, coverage
+    policy, computed identities) and ``run_node``'s ``--request``: the record of
+    how that directory was scheduled, whichever recipe or matrix produced it.
+    Returns ``{'expected': ..., 'request': ...}``, or ``None`` without a record.
+    """
+    try:
+        text = (Path(node_dpath) / 'invoke.sh').read_text()
+    except OSError:
+        return None
+    try:
+        tokens = shlex.split(text.replace('\\\n', ' '), comments=True)
+    except ValueError:
+        return None
+    record: dict[str, Any] = {}
+    for token in tokens:
+        for flag, key in (('--expected=', 'expected'), ('--request=', 'request')):
+            if token.startswith(flag) and key not in record:
+                try:
+                    record[key] = json.loads(token[len(flag):])
+                except json.JSONDecodeError:
+                    return None
+    return record if 'expected' in record else None
+
+
+def _matches_expected(summary: dict[str, Any], expected: dict[str, Any]) -> str | None:
+    """The first recorded field that differs from ``expected``, or ``None``."""
+    for key, value in expected.items():
         recorded = summary.get(key)
         if key == 'measurement_identity':
             recorded = (recorded or {}).get('digest')
         if recorded != value:
-            return False
-    return True
+            return key
+    return None
+
+
+def check_scheduled(summary: dict[str, Any], run: Any, record: dict[str, Any] | None) -> None:
+    """Raise unless ``evaluation.json`` and its run match the scheduled record.
+
+    Pins the projection (selector, coverage policy), identities, and request
+    to what kwdagger scheduled, so neither an edited ``evaluation.json`` nor one
+    that points at a run of a different request changes the evidence.
+    """
+    from magnet_evals import EvaluationRequest
+
+    if record is None:
+        raise InvalidEvaluation('no scheduling record (invoke.sh) for this node')
+    mismatch = _matches_expected(summary, record['expected'])
+    if mismatch is not None:
+        raise InvalidEvaluation(f'recorded {mismatch} differs from what was scheduled')
+    if 'request' in record:
+        scheduled = EvaluationRequest.from_dict(record['request']).to_dict()
+        if EvaluationRequest.from_dict(summary.get('request') or {}).to_dict() != scheduled:
+            raise InvalidEvaluation('recorded request differs from the scheduled request')
+        if run.resolved.request.to_dict() != scheduled:
+            raise InvalidEvaluation('referenced run was computed for a different request')
 
 
 def load_evidence(fpath: str | os.PathLike[str]) -> tuple[dict[str, Any], Any]:
-    """``(summary, evidence view)`` of a node, recomputed from its validated run (M4)."""
+    """``(summary, evidence view)`` of a node, recomputed from its validated run (M4).
+
+    Raises :class:`InvalidEvaluation` unless the run validates and it, and the
+    recorded projection, match the node's scheduling record (``invoke.sh``).
+    """
     from magnet.backends.aiq_evals.projection import evidence_view
 
     summary, run = validated_run(fpath)
+    check_scheduled(summary, run, scheduled_record(Path(fpath).parent))
     view = evidence_view(run, summary.get('select'), summary.get('coverage_policy') or 'complete')
     return summary, view
+
+
+def _invalid_row(summary: dict[str, Any], reason: str) -> dict[str, Any]:
+    """An ineligible row for a node whose run no longer validates.
+
+    The artifact exists, so the row is reported (and the claim sees why it has
+    no score) instead of aborting aggregation for every other node.
+    """
+    identity = summary.get('measurement_identity') or {}
+    return {
+        'eligible': False,
+        'ineligible_reasons': f'invalid evaluation: {reason}',
+        'run_status': 'invalid',
+        'engine': (summary.get('request') or {}).get('engine'),
+        'measurement_identity': identity.get('digest') if isinstance(identity, dict) else None,
+        'run_path': summary.get('run_path'),
+        'action': summary.get('action'),
+        'import_identity': summary.get('import_identity'),
+    }
 
 
 def load_evaluation_row(node: Any, node_dpath: Any) -> Any:
@@ -477,9 +567,19 @@ def load_evaluation_row(node: Any, node_dpath: Any) -> Any:
 
     from magnet.backends.aiq_evals.projection import flat_metrics
 
-    summary, view = load_evidence(Path(node_dpath) / node.out_paths[node.primary_out_key])
-    metrics = flat_metrics(view.to_dict())
-    metrics['action'] = summary['action']
-    metrics['import_identity'] = summary.get('import_identity')
+    fpath = Path(node_dpath) / node.out_paths[node.primary_out_key]
+    try:
+        summary = json.loads(fpath.read_text())
+    except (OSError, json.JSONDecodeError) as ex:
+        summary, metrics = {}, _invalid_row({}, f'unreadable {fpath.name}: {ex}')
+    else:
+        try:
+            summary, view = load_evidence(fpath)
+        except (InvalidEvaluation, KeyError, TypeError, ValueError) as ex:
+            metrics = _invalid_row(summary, str(ex))
+        else:
+            metrics = flat_metrics(view.to_dict())
+            metrics['action'] = summary['action']
+            metrics['import_identity'] = summary.get('import_identity')
     flat = util_dotdict.DotDict({f'metrics.{key}': value for key, value in metrics.items()})
     return flat.insert_prefix(node.name, index=1)

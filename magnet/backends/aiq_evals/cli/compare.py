@@ -22,11 +22,18 @@ from pathlib import Path
 
 def _side(fpath: str) -> dict:
     # Recomputed from the validated run, never read back from the node file.
-    from magnet.backends.aiq_evals.pipeline import load_evidence
+    from magnet.backends.aiq_evals.pipeline import (
+        InvalidEvaluation,
+        load_evidence,
+    )
 
-    _, evidence = load_evidence(fpath)
+    try:
+        _, evidence = load_evidence(fpath)
+    except (InvalidEvaluation, KeyError, TypeError, ValueError) as ex:
+        return {'fpath': str(fpath), 'eligible': False, 'ineligible_reasons': f'invalid evaluation: {ex}'}
     view = evidence.to_dict()
     return {
+        'fpath': str(fpath),
         'engine': view['engine'],
         'measurement_identity': view['measurement_identity'],
         'eligible': view['eligible'],
@@ -34,6 +41,18 @@ def _side(fpath: str) -> dict:
         'task': (view.get('selected') or {}).get('task'),
         'metric': (view.get('selected') or {}).get('metric'),
         'value': (view.get('selected') or {}).get('value'),
+    }
+
+
+def compare(left_fpath: str, right_fpath: str, mapping: str) -> dict:
+    left, right = _side(left_fpath), _side(right_fpath)
+    comparable = bool(left['eligible'] and right['eligible'])
+    return {
+        'mapping': mapping,
+        'comparable': comparable,
+        'left': left,
+        'right': right,
+        'difference': (right['value'] - left['value']) if comparable else None,
     }
 
 
@@ -46,15 +65,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.mapping.strip() or args.mapping.strip().lower() in {'none', 'null'}:
         raise SystemExit('a cross-engine comparison needs an explicit --mapping justification')
-    left, right = _side(args.left_fpath), _side(args.right_fpath)
-    comparable = bool(left['eligible'] and right['eligible'])
-    comparison = {
-        'mapping': args.mapping,
-        'comparable': comparable,
-        'left': left,
-        'right': right,
-        'difference': (right['value'] - left['value']) if comparable else None,
-    }
+    comparison = compare(args.left_fpath, args.right_fpath, args.mapping)
     out = Path(args.out_fpath)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(comparison, indent=2, sort_keys=True) + '\n')
@@ -62,10 +73,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def load_kwdagger_result(node, node_dpath):
-    """One flat row: ``metrics.<node>.{comparable,difference,left.*,right.*}``."""
+    """One flat row: ``metrics.<node>.{comparable,difference,left.*,right.*}``.
+
+    Recomputed from both sides' validated runs on every load; comparison.json
+    is only a record of what the comparison saw when it ran.
+    """
     from kwdagger.utils import util_dotdict
 
-    payload = json.loads((Path(node_dpath) / node.out_paths[node.primary_out_key]).read_text())
+    recorded = json.loads((Path(node_dpath) / node.out_paths[node.primary_out_key]).read_text())
+    payload = compare(recorded['left']['fpath'], recorded['right']['fpath'], recorded['mapping'])
     flat = {'comparable': payload['comparable'], 'mapping': payload['mapping']}
     if payload['comparable']:
         flat['difference'] = payload['difference']

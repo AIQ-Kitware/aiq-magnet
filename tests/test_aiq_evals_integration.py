@@ -355,7 +355,7 @@ def test_preflight_runs_through_the_node_container(monkeypatch):
 
 # --- M4: evidence is recomputed from the validated run, never trusted ---------
 
-def _publish(store_root, value, *, task='t', digest='c' * 64):
+def _publish(store_root, value, *, task='t', digest='c' * 64, other=None, coverage='complete'):
     from magnet_evals.artifacts import publish_run
     from magnet_evals.contracts import (
         CoverageFacts,
@@ -374,19 +374,43 @@ def _publish(store_root, value, *, task='t', digest='c' * 64):
     request = EvaluationRequest(engine='helm', task=task, models=(ModelBinding(role='primary', model='m'),))
     resolved = ResolvedEvaluation(request=request, adapter_version='a', engine_version=None,
                                   native_config={}, identity=identity)
-    metric = MetricRecord(task=task, model_role='primary', metric='acc', value=value, denominator=4)
+    metrics = [MetricRecord(task=task, model_role='primary', metric='acc', value=value, denominator=4)]
+    if other is not None:
+        metrics.append(MetricRecord(task=task, model_role='primary', metric='other', value=other, denominator=4))
     result = EvaluationResult(engine='helm', identity=identity, status='succeeded', records=(
-        ResultRecord(task=task, model_role='primary', metrics=(metric,),
-                     coverage=CoverageFacts(status='complete', expected=4, processed=4)),
+        ResultRecord(task=task, model_role='primary', metrics=tuple(metrics),
+                     coverage=CoverageFacts(status=coverage, expected=4, processed=4 if coverage == 'complete' else 3)),
     ))
     path = ResultStore(store_root).run_path(digest)
     return publish_run(path, resolved=resolved, result=result, context=ExecutionContext(output_dir=path))
 
 
-def _evaluation_json(node_dir, run, *, select=None, policy='complete'):
+def _schedule(node_dir, run, *, select=None, policy='complete'):
+    """Write the invoke.sh kwdagger would render for a node scheduled like this."""
+    import shlex
+
     from magnet.backends.aiq_evals.projection import normalize_selector
 
     node_dir.mkdir(parents=True, exist_ok=True)
+    expected = {'select': normalize_selector(select), 'coverage_policy': policy,
+                'measurement_identity': run.resolved.identity.digest}
+    request = json.dumps(run.resolved.request.to_dict(), sort_keys=True)
+    (node_dir / 'invoke.sh').write_text(
+        '#!/bin/bash\n# Root node\n'
+        f'python -m magnet.backends.aiq_evals.cli.check_done {node_dir}/evaluation.json '
+        f'--expected={shlex.quote(json.dumps(expected, sort_keys=True))} || \\\n'
+        'python -m magnet.backends.aiq_evals.cli.run_node \\\n'
+        f'    --request={shlex.quote(request)} \\\n'
+        f'    --coverage_policy={policy}\n'
+    )
+
+
+def _evaluation_json(node_dir, run, *, select=None, policy='complete', schedule=True):
+    from magnet.backends.aiq_evals.projection import normalize_selector
+
+    node_dir.mkdir(parents=True, exist_ok=True)
+    if schedule:
+        _schedule(node_dir, run, select=select, policy=policy)
     fpath = node_dir / 'evaluation.json'
     fpath.write_text(json.dumps({
         'schema': node_mod.EVALUATION_SCHEMA,
@@ -397,14 +421,23 @@ def _evaluation_json(node_dir, run, *, select=None, policy='complete'):
         'import_identity': None,
         'select': normalize_selector(select),
         'coverage_policy': policy,
+        'request': run.resolved.request.to_dict(),
     }))
     return fpath
 
 
 def _row(fpath):
+    """Load a row as kwdagger does (the node's own scheduling record is invoke.sh)."""
     node = SimpleNamespace(name='evaluate', out_paths={'evaluation_fname': 'evaluation.json'},
                            primary_out_key='evaluation_fname')
     return dict(node_mod.load_evaluation_row(node, fpath.parent))
+
+
+def _assert_invalid(row, reason=''):
+    assert row['metrics.evaluate.eligible'] is False
+    assert 'metrics.evaluate.score' not in row
+    assert row['metrics.evaluate.ineligible_reasons'].startswith('invalid evaluation')
+    assert reason in row['metrics.evaluate.ineligible_reasons']
 
 
 def test_edited_evaluation_json_cannot_change_the_evidence(tmp_path):
@@ -422,7 +455,8 @@ def test_edited_evaluation_json_cannot_change_the_evidence(tmp_path):
     assert row['metrics.evaluate.score'] == 0.5 and row['metrics.evaluate.denominator'] == 4
     assert node_mod.evaluation_is_valid(fpath)
 
-    # A changed run reference or identity makes the node invalid (and rerun).
+    # A changed run reference or identity makes the node invalid: it is not
+    # done (and reruns), and a load reports an ineligible row, not a score.
     other = _publish(tmp_path / 'store', 0.9, digest='d' * 64)
     for key, value in (
         ('run_path', str(other.path)),
@@ -430,10 +464,41 @@ def test_edited_evaluation_json_cannot_change_the_evidence(tmp_path):
         ('measurement_identity', {'digest': 'e' * 64}),
     ):
         tampered = {**json.loads(_evaluation_json(tmp_path / 'node', run).read_text()), key: value}
+        _schedule(tmp_path / 'node', run)
         fpath.write_text(json.dumps(tampered))
         assert not node_mod.evaluation_is_valid(fpath), key
-        with pytest.raises(node_mod.InvalidEvaluation):
-            _row(fpath)
+        _assert_invalid(_row(fpath))
+
+
+def test_edited_projection_is_rejected_when_rows_load(tmp_path):
+    # The reviewer's case: partial coverage, scheduled as select=acc/complete.
+    # Rewriting the recorded selector and policy must not make it eligible.
+    run = _publish(tmp_path / 'store', 0.2, other=0.99, coverage='partial')
+    fpath = _evaluation_json(tmp_path / 'node', run, select={'metric': 'acc'})
+    row = _row(fpath)
+    assert row['metrics.evaluate.eligible'] is False and 'metrics.evaluate.score' not in row
+    edited = {**json.loads(fpath.read_text()), 'select': {'metric': 'other'}, 'coverage_policy': 'any'}
+    fpath.write_text(json.dumps(edited))
+    _assert_invalid(_row(fpath), 'differs from what was scheduled')
+    # A node genuinely scheduled that way is eligible.
+    genuine = _evaluation_json(tmp_path / 'node2', run, select={'metric': 'other'}, policy='any')
+    assert _row(genuine)['metrics.evaluate.score'] == 0.99
+    # Without kwdagger's scheduling record, the row cannot be trusted.
+    orphan = _evaluation_json(tmp_path / 'node3', run, schedule=False)
+    _assert_invalid(_row(orphan), 'no scheduling record')
+
+
+def test_a_run_of_another_request_is_rejected_when_rows_load(tmp_path):
+    run = _publish(tmp_path / 'store', 0.5)
+    other = _publish(tmp_path / 'store', 0.9, task='another-task', digest='d' * 64)
+    fpath = _evaluation_json(tmp_path / 'node', run)
+    # Point the node at a valid run of a different request, with consistent identities.
+    swapped = {**json.loads(fpath.read_text()), 'run_path': str(other.path),
+               'normalized_artifact_identity': other.manifest['normalized_artifact_identity'],
+               'measurement_identity': other.resolved.identity.to_dict(),
+               'request': other.resolved.request.to_dict()}
+    fpath.write_text(json.dumps(swapped))
+    _assert_invalid(_row(fpath))
 
 
 def test_edited_run_payload_invalidates_the_node(tmp_path):
@@ -444,8 +509,7 @@ def test_edited_run_payload_invalidates_the_node(tmp_path):
     payload['records'][0]['metrics'][0]['value'] = 0.99
     results.write_text(json.dumps(payload))
     assert not node_mod.evaluation_is_valid(fpath)
-    with pytest.raises(node_mod.InvalidEvaluation, match='does not validate'):
-        _row(fpath)
+    _assert_invalid(_row(fpath), 'does not validate')
 
 
 def test_done_check_pins_the_scheduled_projection(tmp_path):
@@ -461,6 +525,34 @@ def test_done_check_pins_the_scheduled_projection(tmp_path):
         other.write_text(json.dumps(edited))
         assert not node_mod.evaluation_is_valid(other, expected), key
     assert not node_mod.evaluation_is_valid(fpath, {**expected, 'measurement_identity': 'd' * 64})
+
+
+@needs_helm
+def test_rows_are_never_served_from_a_stale_cache(tmp_path):
+    # kwdagger caches resolved rows keyed on evaluation.json's mtime. Loading
+    # without rescheduling (as `evidence.scope: all` does for older nodes) must
+    # still notice that the run changed, and must not abort other rows.
+    recipe, _ = evaluate(helm_recipe(tmp_path), tmp_path / 'out')
+    (row,) = recipe_rows(recipe)
+    assert row['row']['metrics.evaluate.eligible'] is True
+    run_path = Path(row['row']['metrics.evaluate.run_path'])
+    (run_path / 'native' / 'injected.txt').write_text('tamper\n')
+    (again,) = recipe_rows(recipe)
+    assert again['row']['metrics.evaluate.eligible'] is False
+    assert 'metrics.evaluate.score' not in again['row']
+    assert 'invalid evaluation' in again['row']['metrics.evaluate.ineligible_reasons']
+
+
+@needs_helm
+def test_preflight_does_not_need_secret_values(tmp_path, monkeypatch):
+    # A leased node's key exists only inside its lease; scheduling resolves
+    # before that, and identity never needs the value.
+    from magnet.backends.aiq_evals.cli import resolve_node
+
+    monkeypatch.delenv('AIQ_LEASED_KEY', raising=False)
+    request = {**HELM_ALGO, 'schema_version': 1, 'engine_options': {'required_secrets': ['AIQ_LEASED_KEY']}}
+    payload = resolve_node.resolve(request, HELM_PYTHON, None, False)
+    assert payload['measurement_identity']['reusable']
 
 
 # --- ADR-0011: imports keyed by content ----------------------------------------

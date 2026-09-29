@@ -358,6 +358,14 @@ class KWDaggerProcessor:
         from kwdagger.aggregate_loader import build_tables
 
         pipeline = self._coerce_aggregate_pipeline()
+        if any(
+            getattr(node, 'cache_result_rows', True) is False
+            for node in pipeline.node_dict.values()
+        ):
+            # Rows derived from nodes that revalidate their inputs on every load
+            # (aiq-magnet-evals EvaluationNode) must not come from kwdagger's
+            # mtime-keyed row cache.
+            cache_resolved_results = False
         tables_by_node = build_tables(
             self.root_dpath,
             pipeline,

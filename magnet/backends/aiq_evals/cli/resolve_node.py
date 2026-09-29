@@ -50,7 +50,9 @@ def resolve(request_dict: dict, worker_python: str | None, import_source: str | 
     request = EvaluationRequest.from_dict(request_dict)
     with tempfile.TemporaryDirectory(prefix='magnet-preflight-') as scratch:
         context = ExecutionContext(output_dir=Path(scratch), worker_python=worker_python)
-        resolved = asyncio.run(resolve_evaluation_async(request, context))
+        # Identity never needs a secret's value, and a key may only exist inside
+        # the node's later endpoint lease; execution still checks it.
+        resolved = asyncio.run(resolve_evaluation_async(request, context, require_secrets=False))
     identity = resolved.identity
     return {
         'schema': RESOLUTION_SCHEMA,
