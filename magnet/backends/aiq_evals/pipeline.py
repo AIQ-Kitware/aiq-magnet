@@ -25,6 +25,8 @@ Identity (M3):
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import shlex
 import tempfile
@@ -74,6 +76,27 @@ def build_request_dict(config: dict[str, Any]) -> dict[str, Any]:
         'generation': dict(config.get('generation') or {}),
         'engine_options': dict(config.get('engine_options') or {}),
     }
+
+
+_PREFLIGHT: contextvars.ContextVar[bool] = contextvars.ContextVar('magnet_aiq_evals_preflight', default=False)
+
+
+@contextlib.contextmanager
+def preflight_scope(enabled: bool):
+    """Resolve EvaluationNode identities while a real schedule compiles (M3/M9).
+
+    Resolutions are memoized only within one scope, so every schedule
+    re-resolves (task code may have changed) and draws fresh nonces for
+    non-reusable identities. Dry runs pass ``enabled=False``.
+    """
+    token = _PREFLIGHT.set(enabled)
+    cache_clear = getattr(_preflight_digest, 'cache_clear', None)
+    if cache_clear is not None:
+        cache_clear()
+    try:
+        yield
+    finally:
+        _PREFLIGHT.reset(token)
 
 
 @lru_cache(maxsize=None)
@@ -128,9 +151,6 @@ class EvaluationNode(MagnetProcessNode):
     out_paths = {'out_dpath': '.', 'evaluation_fname': 'evaluation.json'}
     primary_out_key = 'evaluation_fname'
 
-    #: Set by ``KWDaggerProcessor.schedule`` for real (non-dry-run) schedules.
-    preflight_resolution = False
-
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         # A recipe's algo_params/perf_params supply values; they must extend,
         # not replace, the parameters this class declares (e.g. the preflight
@@ -140,14 +160,25 @@ class EvaluationNode(MagnetProcessNode):
                 kwargs[key] = {**getattr(type(self), key), **dict(kwargs[key])}
         super().__init__(*args, **kwargs)
 
-    def configure(self, config: Any = None, cache: bool = True, enabled: bool = True) -> Any:
-        if config is not None and self.preflight_resolution and not missing_request_keys(dict(config)):
-            config = dict(config)
-            request = build_request_dict(config)
-            config['measurement_identity'] = _preflight_digest(
-                json.dumps(request, sort_keys=True), config.get('worker_python'), self.name
-            )
-        return super().configure(config, cache=cache, enabled=enabled)
+    @property
+    def final_algo_config(self) -> Any:
+        """Algo params with the preflight-resolved measurement identity (M3).
+
+        kwdagger hashes this mapping into the node id. Inside a real
+        ``preflight_scope`` the request is resolved in the engine worker once
+        per schedule; outside it (dry runs, result loading) nothing resolves.
+        """
+        config = super().final_algo_config
+        if _PREFLIGHT.get() and not missing_request_keys(dict(config)):
+            current = str(config.get('measurement_identity') or '')
+            if current.startswith('unresolved') or not current:
+                config = type(config)(config)
+                request = build_request_dict(dict(config))
+                worker = self.config.get('worker_python') or self.perf_params.get('worker_python')
+                config['measurement_identity'] = _preflight_digest(
+                    json.dumps(request, sort_keys=True), worker, self.name
+                )
+        return config
 
     def _store_dpath(self) -> str:
         store = self.final_config.get('store_dpath')
@@ -184,13 +215,7 @@ class EvaluationNode(MagnetProcessNode):
         argstr = ' \\\n    '.join(f'--{key}={shlex.quote(str(value))}' for key, value in args.items())
         command = f'{self.executable} \\\n    {argstr}'
         # Keep MAGNET's container/interpreter/lease wrapping.
-        if self.containerization_is_enabled():
-            command = self.wrap_with_container(command)
-        else:
-            from magnet.containers import host_interpreter
-
-            command = host_interpreter(command)
-        return self.wrap_with_lease(command)
+        return self.wrap_with_lease(self._wrap_interpreter(command))
 
     @property
     def does_exist(self) -> bool:
@@ -198,6 +223,23 @@ class EvaluationNode(MagnetProcessNode):
         paths = self.final_out_paths
         fpath = paths.get(self.primary_out_key) if paths else None
         return fpath is not None and evaluation_is_valid(Path(fpath))
+
+    def test_is_computed_command(self) -> str | None:
+        """The job-level "done" guard validates the run, not just the marker file."""
+        paths = self.final_out_paths
+        fpath = paths.get(self.primary_out_key) if paths else None
+        if fpath is None:
+            return None
+        return self._wrap_interpreter(
+            f'python -m magnet.backends.aiq_evals.cli.check_done {shlex.quote(str(fpath))}'
+        )
+
+    def _wrap_interpreter(self, command: str) -> str:
+        if self.containerization_is_enabled():
+            return self.wrap_with_container(command)
+        from magnet.containers import host_interpreter
+
+        return host_interpreter(command)
 
     def load_result(self, node_dpath: Any) -> Any:
         return load_evaluation_row(self, node_dpath)

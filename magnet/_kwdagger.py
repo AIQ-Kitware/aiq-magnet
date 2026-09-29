@@ -292,12 +292,6 @@ class KWDaggerProcessor:
         lease_settings = lease_settings or leasing.LeaseSettings()
         container_settings.apply(pipeline)
         lease_settings.apply(pipeline)
-        # aiq-evals EvaluationNodes resolve their measurement identity before
-        # kwdagger hashes them, but never during a dry run, which must not
-        # execute task code (aiq-magnet integration plan M3/M9).
-        from magnet.backends.aiq_evals import apply_preflight
-
-        apply_preflight(pipeline, enabled=not dry_run)
 
         # Before anything is submitted: an execution setting that cannot reach
         # a single node is a failed invocation, not a default.
@@ -313,7 +307,14 @@ class KWDaggerProcessor:
             run=not dry_run,
             **schedule_options,
         )
-        self.request_dag, self.queue = build_schedule(kwd_config)
+        # aiq-evals EvaluationNodes resolve their measurement identity while the
+        # schedule compiles, before kwdagger hashes them into node ids -- but
+        # never in a dry run, which must not execute task code (integration
+        # plan M3/M9).
+        from magnet.backends.aiq_evals import preflight_scope
+
+        with preflight_scope(enabled=not dry_run):
+            self.request_dag, self.queue = build_schedule(kwd_config)
 
     def _coerce_aggregate_pipeline(self) -> Any:
         """Configure the logical pipeline used by kwdagger aggregate loading."""
