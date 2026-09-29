@@ -1,0 +1,83 @@
+# Explicit HELM vs Inspect comparison. See magnet/examples/aiq_evals/README.md.
+name: aiq_evals_mixed_engines
+title: Explicit HELM vs Inspect comparison
+description: 'Two engines, two EvaluationNodes, and an explicit comparison node. Their
+  scores are not treated as interchangeable: `mapping` states why the selected metrics
+  correspond, and the comparison only runs over eligible evidence.'
+version: '1.0'
+organizations:
+- Kitware
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+links:
+- title: aiq-evals
+  url: https://github.com/AIQ-Kitware/aiq-evals
+  type: software
+tags:
+- example
+- aiq-evals
+- helm
+- inspect_ai
+- comparison
+claim:
+  python: assert metrics.evaluate.comparable and abs(metrics.evaluate.difference)
+    <= 1.0
+evidence:
+  scope: requested
+kwdagger:
+  result_node: evaluate
+  pipeline:
+    nodes:
+      helm:
+        class: magnet.backends.aiq_evals.EvaluationNode
+        algo_params:
+          engine: helm
+          task: simple_mcqa
+          task_revision: helm-builtin
+          data_revision: helm-builtin
+          models:
+          - role: primary
+            model: simple/model1
+            revision: local-v1
+          task_options:
+            max_eval_instances: 10
+          select:
+            metric: exact_match
+            group: test
+            score: null
+        perf_params:
+          worker_python: null
+      inspect:
+        class: magnet.backends.aiq_evals.EvaluationNode
+        algo_params:
+          engine: inspect_ai
+          task: python:tests.native.inspect_fixture:generation
+          data_revision: fixture-v1
+          models:
+          - role: primary
+            model: local
+            provider: fixture
+            revision: local-v1
+          engine_options:
+            registration_modules:
+            - tests.native.inspect_fixture
+          select:
+            scorer: match
+            metric: accuracy
+        perf_params:
+          worker_python: null
+      evaluate:
+        executable: python -m magnet.backends.aiq_evals.cli.compare
+        in_paths:
+        - left_fpath
+        - right_fpath
+        algo_params:
+          mapping: both are exact-match accuracy of a scored multiple-choice/QA fixture
+        out_paths:
+          out_fpath: comparison.json
+        primary_out_key: out_fpath
+        load_result: magnet.backends.aiq_evals.cli.compare.load_kwdagger_result
+    edges:
+    - helm.evaluation_fname -> evaluate.left_fpath
+    - inspect.evaluation_fname -> evaluate.right_fpath

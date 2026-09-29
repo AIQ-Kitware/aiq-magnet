@@ -1,0 +1,47 @@
+# Inspect generation through aiq-evals. See magnet/examples/aiq_evals/README.md.
+name: aiq_evals_inspect_generation
+title: Inspect generation through aiq-evals
+description: Inspect scored generation with a local fixture provider. Deterministic
+  fixture tasks from an aiq-evals source checkout (tests/native); set perf_params.worker_python
+  to the engine interpreter.
+version: '1.0'
+organizations:
+- Kitware
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+links:
+- title: aiq-evals
+  url: https://github.com/AIQ-Kitware/aiq-evals
+  type: software
+tags:
+- example
+- aiq-evals
+- inspect_ai
+claim:
+  python: assert metrics.evaluate.score == 1.0
+evidence:
+  scope: requested
+kwdagger:
+  result_node: evaluate
+  pipeline:
+    nodes:
+      evaluate:
+        class: magnet.backends.aiq_evals.EvaluationNode
+        algo_params:
+          engine: inspect_ai
+          task: python:tests.native.inspect_fixture:generation
+          data_revision: fixture-v1
+          models:
+          - role: primary
+            model: local
+            provider: fixture
+            revision: local-v1
+          engine_options:
+            registration_modules:
+            - tests.native.inspect_fixture
+          select:
+            scorer: match
+            metric: accuracy
+        perf_params:
+          worker_python: null
