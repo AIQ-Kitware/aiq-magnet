@@ -292,6 +292,12 @@ class KWDaggerProcessor:
         lease_settings = lease_settings or leasing.LeaseSettings()
         container_settings.apply(pipeline)
         lease_settings.apply(pipeline)
+        # aiq-evals EvaluationNodes resolve their measurement identity before
+        # kwdagger hashes them, but never during a dry run, which must not
+        # execute task code (aiq-magnet integration plan M3/M9).
+        from magnet.backends.aiq_evals import apply_preflight
+
+        apply_preflight(pipeline, enabled=not dry_run)
 
         # Before anything is submitted: an execution setting that cannot reach
         # a single node is a failed invocation, not a default.
