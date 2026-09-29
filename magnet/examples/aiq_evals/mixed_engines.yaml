@@ -1,9 +1,10 @@
-# Explicit HELM vs Inspect comparison. See magnet/examples/aiq_evals/README.md.
+# Explicit HELM vs Inspect comparison through aiq-magnet-evals. See magnet/examples/aiq_evals/README.md.
 name: aiq_evals_mixed_engines
 title: Explicit HELM vs Inspect comparison
-description: 'Two engines, two EvaluationNodes, and an explicit comparison node. Their
-  scores are not treated as interchangeable: `mapping` states why the selected metrics
-  correspond, and the comparison only runs over eligible evidence.'
+description: 'Two engines, two EvaluationNodes, and an explicit comparison node. Their scores are not
+  treated as interchangeable: `mapping` states why the selected metrics correspond, and the comparison
+  only runs over eligible evidence. Set perf_params.worker_python to the engine interpreter (for example
+  with --params); the example tasks ship in the aiq-magnet-evals package.'
 version: '1.0'
 organizations:
 - Kitware
@@ -11,18 +12,17 @@ submitter:
   name: Kitware TA2 Team
   email: aiq-ta2@kitware.com
 links:
-- title: aiq-evals
-  url: https://github.com/AIQ-Kitware/aiq-evals
+- title: aiq-magnet-evals
+  url: https://github.com/Erotemic/aiq-magnet-evals
   type: software
 tags:
 - example
-- aiq-evals
+- aiq-magnet-evals
 - helm
 - inspect_ai
 - comparison
 claim:
-  python: assert metrics.evaluate.comparable and abs(metrics.evaluate.difference)
-    <= 1.0
+  python: assert metrics.evaluate.comparable and abs(metrics.evaluate.difference) <= 1.0
 evidence:
   scope: requested
 kwdagger:
@@ -52,28 +52,31 @@ kwdagger:
         class: magnet.backends.aiq_evals.EvaluationNode
         algo_params:
           engine: inspect_ai
-          task: python:tests.native.inspect_fixture:generation
-          data_revision: fixture-v1
+          task: python:magnet_evals.examples.inspect_tasks:generation
+          data_revision: example-v1
           models:
           - role: primary
             model: local
-            provider: fixture
+            provider: aiq_example
             revision: local-v1
           engine_options:
             registration_modules:
-            - tests.native.inspect_fixture
+            - magnet_evals.examples.inspect_tasks
           select:
             scorer: match
             metric: accuracy
         perf_params:
           worker_python: null
       evaluate:
+        # MagnetProcessNode runs `python` as MAGNET's interpreter (and can be
+        # containerized/leased like the evaluation nodes).
+        class: magnet.process_node.MagnetProcessNode
         executable: python -m magnet.backends.aiq_evals.cli.compare
         in_paths:
         - left_fpath
         - right_fpath
         algo_params:
-          mapping: both are exact-match accuracy of a scored multiple-choice/QA fixture
+          mapping: both are exact-match accuracy of a scored multiple-choice/QA example task
         out_paths:
           out_fpath: comparison.json
         primary_out_key: out_fpath

@@ -92,6 +92,8 @@ dynamic.version.attr = "magnet.__version__"
 # recipe and the README that walks through it.
 package-data.magnet = [
   "cards/*.yaml",
+  "examples/aiq_evals/*.md",
+  "examples/aiq_evals/*.yaml",
   "examples/llama_consistency/*.yaml",
   "examples/llama_consistency/*.md",
   "examples/theory_links/*.md",

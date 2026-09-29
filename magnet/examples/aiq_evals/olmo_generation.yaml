@@ -1,9 +1,8 @@
-# OLMo Eval generation through aiq-evals. See magnet/examples/aiq_evals/README.md.
+# OLMo Eval generation through aiq-magnet-evals. See magnet/examples/aiq_evals/README.md.
 name: aiq_evals_olmo_generation
-title: OLMo Eval generation through aiq-evals
-description: OLMo Eval mock-provider scored generation. Deterministic fixture tasks
-  from an aiq-evals source checkout (tests/native); set perf_params.worker_python
-  to the engine interpreter.
+title: OLMo Eval generation through aiq-magnet-evals
+description: OLMo Eval scored generation with the mock provider. Set perf_params.worker_python to the
+  engine interpreter (for example with --params); the example tasks ship in the aiq-magnet-evals package.
 version: '1.0'
 organizations:
 - Kitware
@@ -11,12 +10,12 @@ submitter:
   name: Kitware TA2 Team
   email: aiq-ta2@kitware.com
 links:
-- title: aiq-evals
-  url: https://github.com/AIQ-Kitware/aiq-evals
+- title: aiq-magnet-evals
+  url: https://github.com/Erotemic/aiq-magnet-evals
   type: software
 tags:
 - example
-- aiq-evals
+- aiq-magnet-evals
 - olmo_eval
 claim:
   python: assert metrics.evaluate.score == 1.0
@@ -30,18 +29,18 @@ kwdagger:
         class: magnet.backends.aiq_evals.EvaluationNode
         algo_params:
           engine: olmo_eval
-          task_revision: fixture-v1
-          data_revision: fixture-v1
-          engine_options:
-            upstream_revision: 73ade80e24f796af55caeb8fd7b75a7f3fd607fd
-            task_modules:
-            - tests.native.olmo_fixture
-          task: aiq_p1_local
+          task: aiq_example_local
+          task_revision: example-v1
+          data_revision: example-v1
           models:
           - role: primary
             model: mock
             provider: mock
             revision: local-v1
+          engine_options:
+            upstream_revision: 73ade80e24f796af55caeb8fd7b75a7f3fd607fd
+            task_modules:
+            - magnet_evals.examples.olmo_tasks
           select:
             metric: contains_42
         perf_params:

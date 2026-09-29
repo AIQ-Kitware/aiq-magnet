@@ -1,9 +1,9 @@
-# Inspect agent/tool evaluation through aiq-evals. See magnet/examples/aiq_evals/README.md.
+# Inspect agent/tool evaluation through aiq-magnet-evals. See magnet/examples/aiq_evals/README.md.
 name: aiq_evals_inspect_agent
-title: Inspect agent/tool evaluation through aiq-evals
-description: Inspect use_tools solver calling a tool inside the local sandbox. Deterministic
-  fixture tasks from an aiq-evals source checkout (tests/native); set perf_params.worker_python
-  to the engine interpreter.
+title: Inspect agent/tool evaluation through aiq-magnet-evals
+description: Inspect use_tools solver calling a tool that runs inside Inspect's local sandbox. Set perf_params.worker_python
+  to the engine interpreter (for example with --params); the example tasks ship in the aiq-magnet-evals
+  package.
 version: '1.0'
 organizations:
 - Kitware
@@ -11,12 +11,12 @@ submitter:
   name: Kitware TA2 Team
   email: aiq-ta2@kitware.com
 links:
-- title: aiq-evals
-  url: https://github.com/AIQ-Kitware/aiq-evals
+- title: aiq-magnet-evals
+  url: https://github.com/Erotemic/aiq-magnet-evals
   type: software
 tags:
 - example
-- aiq-evals
+- aiq-magnet-evals
 - inspect_ai
 - agentic
 claim:
@@ -31,16 +31,16 @@ kwdagger:
         class: magnet.backends.aiq_evals.EvaluationNode
         algo_params:
           engine: inspect_ai
-          task: python:tests.native.inspect_sandbox_fixture:sandbox_task
-          data_revision: fixture-v1
+          task: python:magnet_evals.examples.inspect_tasks:sandbox_task
+          data_revision: example-v1
           models:
           - role: primary
             model: local
-            provider: fixture
+            provider: aiq_example
             revision: local-v1
           engine_options:
             registration_modules:
-            - tests.native.inspect_fixture
+            - magnet_evals.examples.inspect_tasks
           select:
             scorer: match
             metric: accuracy

@@ -1,7 +1,9 @@
-# HELM generation through aiq-evals. See magnet/examples/aiq_evals/README.md.
+# HELM generation through aiq-magnet-evals. See magnet/examples/aiq_evals/README.md.
 name: aiq_evals_helm_generation
-title: HELM generation through aiq-evals
-description: HELM simple_mcqa with the local simple model, obtained via aiq-evals.
+title: HELM generation through aiq-magnet-evals
+description: HELM simple_mcqa with the local simple model, obtained through aiq-magnet-evals. Set perf_params.worker_python
+  to the engine interpreter (for example with --params); the example tasks ship in the aiq-magnet-evals
+  package.
 version: '1.0'
 organizations:
 - Kitware
@@ -9,12 +11,12 @@ submitter:
   name: Kitware TA2 Team
   email: aiq-ta2@kitware.com
 links:
-- title: aiq-evals
-  url: https://github.com/AIQ-Kitware/aiq-evals
+- title: aiq-magnet-evals
+  url: https://github.com/Erotemic/aiq-magnet-evals
   type: software
 tags:
 - example
-- aiq-evals
+- aiq-magnet-evals
 - helm
 claim:
   python: assert metrics.evaluate.score >= 0.0
