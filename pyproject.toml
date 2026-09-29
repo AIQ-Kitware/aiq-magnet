@@ -58,8 +58,9 @@ optional-dependencies.helm = [
   "gcsfs>=2024.9",
   "scikit-learn>=1.7.1",
 ]
-# Evaluation acquisition through aiq-evals (magnet.backends.aiq_evals). Not part
-# of ``optional``/``all`` until aiq-evals is published; install it from source.
+# Evaluation acquisition through aiq-magnet-evals (magnet.backends.aiq_evals). Not
+# part of ``optional``/``all`` until aiq-magnet-evals is published on PyPI; for
+# development uv resolves it from git (see [tool.uv.sources]).
 optional-dependencies.aiq-magnet-evals = [ "aiq-magnet-evals>=0.1.0" ]
 # Per-node infer-stack leasing.
 optional-dependencies.leasing = [ "infer-stack>=0.7.0" ]
@@ -153,6 +154,8 @@ members = [ "packages/aiq-magnet-theory" ]
 
 [tool.uv.sources]
 aiq-magnet-theory = { workspace = true }
+# Not on PyPI yet; development installs and uv.lock resolve it from git.
+aiq-magnet-evals = { git = "https://github.com/Erotemic/aiq-magnet-evals", branch = "main" }
 
 [tool.coverage]
 report.exclude_lines = [
@@ -200,3 +203,18 @@ skip_autogen = [
     "run_doctests.sh",
     "run_linter.sh",
 ]
+
+# MAGNET <-> aiq-magnet-evals integration: real HELM/Inspect/OLMo workers,
+# tmux, and Docker, with MAGNET_REQUIRE_AIQ_EVALS=1 so nothing passes by
+# skipping. The optional CI extras deliberately exclude aiq-magnet-evals, so
+# the regular test jobs cannot cover this. Update AIQ_MAGNET_EVALS_REV together
+# with any change that depends on a new aiq-magnet-evals revision.
+[tool.xcookie.ci_source_checks.aiq-magnet-evals]
+name = "aiq-magnet-evals integration (HELM, Inspect, OLMo workers)"
+python_version = "3.12"
+setup_commands = ["python -m pip install uv", "sudo apt-get install -y tmux"]
+commands = ["dev/ci/aiq_evals_integration.sh"]
+
+[tool.xcookie.ci_source_checks.aiq-magnet-evals.env]
+AIQ_MAGNET_EVALS_REPO = "https://github.com/Erotemic/aiq-magnet-evals.git"
+AIQ_MAGNET_EVALS_REV = "c9e347235eae237126d66302fdcb0e6fca23951c"
