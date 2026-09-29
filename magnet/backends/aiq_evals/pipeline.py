@@ -41,7 +41,18 @@ bypassed so a later change to the run is noticed.
 Native reuse is ``magnet_evals.ensure`` against a shared store. Acquisition is
 single-flight in that store, so nodes that differ only in ``select`` (for
 example a selector matrix) and run concurrently execute the native evaluation
-once; the others wait and reuse it.
+once; the others wait and reuse it. The run must be the acquisition slot the
+node was scheduled for (the canonical run, or the scheduled import's slot), so
+``evaluation.json`` cannot redirect a node to another valid bundle.
+
+Leasing (M8): ``endpoint`` (primary) and ``endpoints`` (``{role: alias}``) name
+infer-stack aliases; one lease holds them all. With leasing enabled the node
+runs a gate on the host that takes the store's acquisition lock and only then
+decides: a stored run is reused without any lease, and otherwise the leased
+child (lease, container, ``run_node``) runs while the gate holds the lock. So
+concurrent nodes for one measurement start one lease, and a run that vanished
+after scheduling is still leased. Per-role endpoints reach the engine where it
+supports them (Inspect auxiliary roles; OLMo Eval primary only; HELM none).
 """
 from __future__ import annotations
 
@@ -114,6 +125,17 @@ def selector_value(select: Any) -> dict[str, Any] | None:
     return select
 
 
+def _decode_mapping(value: Any, name: str) -> dict[str, Any]:
+    """A mapping parameter given as a mapping or JSON text (e.g. from a matrix)."""
+    if value in (None, ''):
+        return {}
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, dict):
+        raise ValueError(f'EvaluationNode {name} must be a mapping; got {value!r}')
+    return value
+
+
 def _truthy(value: Any) -> bool:
     return str(value).strip().lower() in {'1', 'true', 'yes'}
 
@@ -152,12 +174,45 @@ class PreflightError(RuntimeError):
     """Preflight resolution of an EvaluationNode failed."""
 
 
-def run_preflight(command: str) -> dict[str, Any]:
-    """Run a rendered ``resolve_node`` command and parse its resolution."""
-    proc = subprocess.run(['bash', '-c', command], capture_output=True, text=True)
-    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+#: Default bound on one preflight resolution. Resolution imports task code,
+#: which can hang; scheduling must not.
+DEFAULT_PREFLIGHT_TIMEOUT = 900.0
+
+
+def run_preflight(command: str, timeout: float | None = DEFAULT_PREFLIGHT_TIMEOUT) -> dict[str, Any]:
+    """Run a rendered ``resolve_node`` command and parse its resolution.
+
+    The command runs in its own process group. On timeout the group gets
+    SIGTERM (which ``docker run`` forwards to its container) and then SIGKILL,
+    and :class:`PreflightError` is raised.
+    """
+    import signal
+
+    proc = subprocess.Popen(
+        ['bash', '-c', command], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        start_new_session=(os.name == 'posix'),
+    )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        for sig, grace in ((signal.SIGTERM, 10.0), (signal.SIGKILL, None)):
+            try:
+                os.killpg(proc.pid, sig)
+            except ProcessLookupError:
+                break
+            try:
+                proc.communicate(timeout=grace)
+                break
+            except subprocess.TimeoutExpired:
+                continue
+        proc.wait()
+        raise PreflightError(
+            f'EvaluationNode preflight resolution timed out after {timeout} s '
+            f'(perf_params.preflight_timeout_seconds)\ncommand: {command}'
+        ) from None
+    lines = [line for line in stdout.splitlines() if line.strip()]
     if proc.returncode != 0 or not lines:
-        detail = (proc.stderr or proc.stdout).strip()[-4000:]
+        detail = (stderr or stdout).strip()[-4000:]
         raise PreflightError(
             f'EvaluationNode preflight resolution failed (exit {proc.returncode}): {detail}\n'
             f'command: {command}'
@@ -202,12 +257,17 @@ class EvaluationNode(MagnetProcessNode):
         # Engine worker interpreter (engines stay out of MAGNET's environment).
         'worker_python': None,
         'timeout_seconds': None,
+        # Bound on the scheduling-time resolution (seconds); None disables it.
+        'preflight_timeout_seconds': DEFAULT_PREFLIGHT_TIMEOUT,
         'allow_external_symlinks': False,
         # infer-stack catalog alias to lease for the primary model (M8). Operational:
         # the model binding's revision/cache_token is the identity, not the lease.
         'endpoint': None,
+        # Leases for other model roles, {role: alias} (e.g. a separately leased
+        # grader). Supported where the engine accepts per-role endpoints (Inspect).
+        'endpoints': None,
     }
-    endpoint_params = ('endpoint',)
+    endpoint_params = ('endpoint', 'endpoints')  # see lease_roles()
     #: kwdagger's resolved-row cache is keyed on evaluation.json's mtime, so it
     #: would keep serving a row after the run it came from changed. Rows are
     #: recomputed from the validated run instead (see MAGNET's row loader).
@@ -244,6 +304,18 @@ class EvaluationNode(MagnetProcessNode):
         value = self.config.get(key)
         return self.perf_params.get(key) if value is None else value
 
+    def lease_roles(self) -> dict[str, str]:
+        """``{model role: infer-stack alias}`` this node leases, if any."""
+        config = self._final()
+        roles = {'primary': str(config['endpoint'])} if config.get('endpoint') else {}
+        for role, alias in _decode_mapping(config.get('endpoints'), 'endpoints').items():
+            roles.setdefault(str(role), str(alias))
+        return {role: alias for role, alias in roles.items() if alias.strip()}
+
+    def resolve_lease_endpoints(self) -> list[str]:
+        """Every alias this node leases, deduplicated in role order."""
+        return list(dict.fromkeys(self.lease_roles().values()))
+
     def _import_source(self, config: dict[str, Any]) -> str | None:
         source = config.get('import_source')
         # Relative to where the schedule is compiled, not the node's directory.
@@ -269,7 +341,10 @@ class EvaluationNode(MagnetProcessNode):
         command = self.preflight_command(config)
         resolution = state.resolutions.get(command)
         if resolution is None:
-            resolution = state.resolutions[command] = run_preflight(command)
+            timeout = self._setting('preflight_timeout_seconds')
+            resolution = state.resolutions[command] = run_preflight(
+                command, None if timeout in (None, '') else float(timeout),
+            )
         identity = resolution['measurement_identity']
         if identity['reusable']:
             config['measurement_identity'] = identity['digest']
@@ -306,11 +381,12 @@ class EvaluationNode(MagnetProcessNode):
         return self._wrap_interpreter(f'{self.resolve_executable} {argstr}')
 
     def _store_dpath(self) -> str:
+        # Absolute, so the command (and invoke.sh) name the store unambiguously.
         store = self._final().get('store_dpath')
         if store:
-            return str(store)
+            return os.path.abspath(str(store))
         root = getattr(self, 'root_dpath', None) or '.'
-        return str(Path(root) / '_aiq_evals_store')
+        return os.path.abspath(str(Path(root) / '_aiq_evals_store'))
 
     @property
     def command(self) -> str:
@@ -341,29 +417,28 @@ class EvaluationNode(MagnetProcessNode):
             args['import_source'] = source
         if _truthy(config.get('allow_external_symlinks')):
             args['allow_external_symlinks'] = 'True'
-        if config.get('endpoint'):
-            args['endpoint'] = config['endpoint']
-        argstr = ' \\\n    '.join(f'--{key}={shlex.quote(str(value))}' for key, value in args.items())
-        command = f'{self.executable} \\\n    {argstr}'
-        command = self._wrap_interpreter(command)
-        if source is not None or self._native_result_available():
-            # An import runs no model, and a stored run is only reused: leasing
-            # would start a model for nothing (M8: avoid duplicate startup).
-            return command
-        return self.wrap_with_lease(command)
+        roles = self.lease_roles()
+        if roles:
+            args['endpoints'] = json.dumps(roles, sort_keys=True)
 
-    def _native_result_available(self) -> bool:
-        digest = str(self._final().get('measurement_identity') or '')
-        if len(digest) != 64:
-            return False
-        try:
-            from magnet_evals import load_run
-            from magnet_evals.store import ResultStore
+        def render(extra: dict[str, str]) -> str:
+            argstr = ' \\\n    '.join(
+                f'--{key}={shlex.quote(str(value))}' for key, value in {**args, **extra}.items()
+            )
+            return f'{self.executable} \\\n    {argstr}'
 
-            run = load_run(ResultStore(self._store_dpath()).run_path(digest))
-        except Exception:
-            return False
-        return run.complete and run.result.status == 'succeeded'
+        if source is not None or not (self.leasing_is_enabled() and roles):
+            # No lease: an import runs no model.
+            return self._wrap_interpreter(render({}))
+        # Whether a lease is needed is decided when the node runs, under the
+        # store's acquisition lock (M8): a gate on the host re-checks for a
+        # stored run and only then starts the leased child (lease, container,
+        # run_node). Concurrent nodes for one measurement therefore start one
+        # lease, and a run that vanished after scheduling is still leased.
+        from magnet.containers import host_interpreter
+
+        child = self.wrap_with_lease(self._wrap_interpreter(render({'lock_held': 'True'})))
+        return host_interpreter(render({'leased_command': child}))
 
     def expected_evaluation(self) -> dict[str, Any]:
         """What this node's ``evaluation.json`` must record to count as done."""
@@ -467,32 +542,34 @@ def evaluation_is_valid(fpath: Path, expected: dict[str, Any] | None = None) -> 
 
 
 
-def scheduled_record(node_dpath: Any) -> dict[str, Any] | None:
-    """What kwdagger scheduled a node directory with, from its ``invoke.sh``.
+RUN_NODE_MODULE = 'magnet.backends.aiq_evals.cli.run_node'
+CHECK_DONE_MODULE = 'magnet.backends.aiq_evals.cli.check_done'
 
-    kwdagger writes each node's rendered command to ``invoke.sh``. For an
-    EvaluationNode it holds the done-check's ``--expected`` (selector, coverage
-    policy, computed identities) and ``run_node``'s ``--request``: the record of
-    how that directory was scheduled, whichever recipe or matrix produced it.
-    Returns ``{'expected': ..., 'request': ...}``, or ``None`` without a record.
+
+def scheduled_record(node_dpath: Any) -> dict[str, Any] | None:
+    """What kwdagger scheduled an EvaluationNode directory with (its ``invoke.sh``).
+
+    Returns ``expected`` (the done-check's selector, coverage policy, and
+    computed identities), ``request``, and the store the node acquires from
+    (``store``, mapped onto this directory's tree), or ``None`` without a
+    usable record. See :mod:`magnet.backends.aiq_evals.scheduled`.
     """
-    try:
-        text = (Path(node_dpath) / 'invoke.sh').read_text()
-    except OSError:
+    from magnet.backends.aiq_evals.scheduled import invocation_args, localize
+
+    args = invocation_args(node_dpath)
+    run_args, done_args = args.get(RUN_NODE_MODULE), args.get(CHECK_DONE_MODULE)
+    if not run_args or not done_args or 'expected' not in done_args:
         return None
     try:
-        tokens = shlex.split(text.replace('\\\n', ' '), comments=True)
-    except ValueError:
+        record: dict[str, Any] = {
+            'expected': json.loads(done_args['expected']),
+            'request': json.loads(run_args['request']),
+        }
+    except (KeyError, json.JSONDecodeError):
         return None
-    record: dict[str, Any] = {}
-    for token in tokens:
-        for flag, key in (('--expected=', 'expected'), ('--request=', 'request')):
-            if token.startswith(flag) and key not in record:
-                try:
-                    record[key] = json.loads(token[len(flag):])
-                except json.JSONDecodeError:
-                    return None
-    return record if 'expected' in record else None
+    if 'store_dpath' in run_args and 'out_dpath' in run_args:
+        record['store'] = localize(run_args['store_dpath'], run_args['out_dpath'], node_dpath)
+    return record
 
 
 def _matches_expected(summary: dict[str, Any], expected: dict[str, Any]) -> str | None:
@@ -520,12 +597,46 @@ def check_scheduled(summary: dict[str, Any], run: Any, record: dict[str, Any] | 
     mismatch = _matches_expected(summary, record['expected'])
     if mismatch is not None:
         raise InvalidEvaluation(f'recorded {mismatch} differs from what was scheduled')
+    _check_acquisition_slot(summary, record)
     if 'request' in record:
         scheduled = EvaluationRequest.from_dict(record['request']).to_dict()
         if EvaluationRequest.from_dict(summary.get('request') or {}).to_dict() != scheduled:
             raise InvalidEvaluation('recorded request differs from the scheduled request')
         if run.resolved.request.to_dict() != scheduled:
             raise InvalidEvaluation('referenced run was computed for a different request')
+
+
+def _check_acquisition_slot(summary: dict[str, Any], record: dict[str, Any]) -> None:
+    """The run must be the one ``ensure`` returns for the scheduled acquisition.
+
+    A measurement can have many valid bundles (earlier attempts, imports of
+    other native content), so ``evaluation.json`` may not choose among them:
+    a reusable execution resolves to the store's canonical run, an explicit
+    import to the slot of the scheduled native content, and a non-reusable
+    identity to an unkeyed attempt of the scheduled store.
+    """
+    from magnet_evals.store import ResultStore
+
+    from magnet.backends.aiq_evals.scheduled import same_path
+
+    store_root = record.get('store')
+    if store_root is None:
+        raise InvalidEvaluation('scheduling record names no result store')
+    store = ResultStore(store_root)
+    expected = record['expected']
+    digest = expected.get('measurement_identity')
+    run_path = Path(str(summary.get('run_path')))
+    if digest and expected.get('import_identity'):
+        slot = store.import_path(digest, expected['import_identity'])
+    elif digest:
+        slot = store.run_path(digest)
+    else:
+        unkeyed = (store.root / 'attempts' / '_unkeyed').resolve()
+        if run_path.resolve().parent != unkeyed:
+            raise InvalidEvaluation('run is not an unkeyed attempt of the scheduled store')
+        return
+    if not same_path(run_path, slot):
+        raise InvalidEvaluation('run is not the acquisition slot the node was scheduled for')
 
 
 def load_evidence(fpath: str | os.PathLike[str]) -> tuple[dict[str, Any], Any]:

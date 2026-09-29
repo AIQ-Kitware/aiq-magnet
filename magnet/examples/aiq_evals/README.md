@@ -46,7 +46,11 @@ export OPENAI_API_KEY=example-local-key   # any value; it is never persisted
 ```
 
 To use a leased model instead, set `perf_params.endpoint` to an infer-stack
-alias and the model binding to the name it serves.
+alias and the model binding to the name it serves, and run with leasing enabled.
+Other roles can be leased too, e.g. an Inspect grader:
+`perf_params.endpoints: {grader: judge-alias}`. One lease holds every alias. The
+node decides at run time, under the store's acquisition lock, whether a lease
+is needed at all: a stored result is reused without one.
 
 ## Identity, reuse, and dry runs
 

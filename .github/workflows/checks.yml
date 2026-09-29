@@ -35,7 +35,7 @@ jobs:
       shell: bash
       env:
         AIQ_MAGNET_EVALS_REPO: https://github.com/Erotemic/aiq-magnet-evals.git
-        AIQ_MAGNET_EVALS_REV: df97604aacb60a534080e76bb7017c818db7882c
+        AIQ_MAGNET_EVALS_REV: 6429b3151b3ea89ebff0c9a517afcca17cf1b150
       run: |-
         python -m pip install uv
         sudo apt-get install -y tmux

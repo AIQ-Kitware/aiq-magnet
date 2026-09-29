@@ -72,22 +72,37 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+COMPARE_MODULE = 'magnet.backends.aiq_evals.cli.compare'
+
+
 def load_kwdagger_result(node, node_dpath):
     """One flat row: ``metrics.<node>.{comparable,difference,left.*,right.*}``.
 
-    Recomputed from both sides' validated runs on every load; comparison.json
-    is only a record of what the comparison saw when it ran.
+    Recomputed on every load from both sides' validated evidence. Which sides
+    are compared, and under which mapping, come from the command kwdagger
+    scheduled for this directory (``invoke.sh``), never from comparison.json,
+    which is only a record of what the comparison saw when it ran.
     """
     from kwdagger.utils import util_dotdict
 
-    recorded = json.loads((Path(node_dpath) / node.out_paths[node.primary_out_key]).read_text())
-    payload = compare(recorded['left']['fpath'], recorded['right']['fpath'], recorded['mapping'])
-    flat = {'comparable': payload['comparable'], 'mapping': payload['mapping']}
-    if payload['comparable']:
-        flat['difference'] = payload['difference']
-    for side in ('left', 'right'):
-        for key, value in payload[side].items():
-            flat[f'{side}.{key}'] = value
+    from magnet.backends.aiq_evals.scheduled import invocation_args, localize
+
+    args = invocation_args(node_dpath).get(COMPARE_MODULE) or {}
+    if not {'left_fpath', 'right_fpath', 'mapping', 'out_fpath'} <= set(args):
+        flat = {'comparable': False, 'ineligible_reasons': 'invalid comparison: no scheduling record (invoke.sh)'}
+    else:
+        rendered_dpath = Path(args['out_fpath']).parent
+        payload = compare(
+            str(localize(args['left_fpath'], rendered_dpath, node_dpath)),
+            str(localize(args['right_fpath'], rendered_dpath, node_dpath)),
+            args['mapping'],
+        )
+        flat = {'comparable': payload['comparable'], 'mapping': payload['mapping']}
+        if payload['comparable']:
+            flat['difference'] = payload['difference']
+        for side in ('left', 'right'):
+            for key, value in payload[side].items():
+                flat[f'{side}.{key}'] = value
     return util_dotdict.DotDict({f'metrics.{k}': v for k, v in flat.items()}).insert_prefix(node.name, index=1)
 
 

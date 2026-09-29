@@ -40,44 +40,181 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--measurement_identity', default=None)
     parser.add_argument('--import_identity', default=None)
     parser.add_argument('--endpoint', default=None, help='leased infer-stack alias (primary model)')
+    parser.add_argument('--endpoints', default=None, help='leased aliases by model role, JSON {role: alias}')
+    parser.add_argument('--leased_command', default=None,
+                        help='gate mode: run this leased child only if the store lacks the run')
+    parser.add_argument('--lock_held', default='False',
+                        help='the scheduling gate holds the acquisition lock for this node')
     return parser
 
 
-def lease_runtime(endpoint: str | None, request: dict, environ=None) -> tuple[dict, dict]:
+def lease_runtime(endpoints: dict | str | None, request: dict, environ=None) -> tuple[dict, dict]:
     """Operational bindings for a node running inside ``infer-stack run`` (M8).
 
-    Returns ``(model_endpoints, env)``: the leased base URL for the primary role
-    and the lease's API key as a runtime secret. Neither is hashed or persisted.
-    infer-stack exports ``INFER_STACK_ENDPOINT_<SLUG>`` with the served model
-    name; the request must name that model, since changing it silently would
-    change what is measured.
+    ``endpoints`` maps model roles to leased infer-stack aliases (a bare string
+    means the primary role). Returns ``(model_endpoints, env)``: the lease's
+    base URL for each leased role and the lease's API key as a runtime secret.
+    Neither is hashed or persisted. One lease serves every alias behind one
+    OpenAI-compatible base URL; infer-stack exports each alias's served model
+    name as ``INFER_STACK_ENDPOINT_<SLUG>``. The request must bind each leased
+    role to that name, because silently changing the model would change what
+    is measured.
     """
     import os
     import re
 
-    if not endpoint:
+    if isinstance(endpoints, str):
+        endpoints = {'primary': endpoints}
+    endpoints = {str(role): str(alias) for role, alias in dict(endpoints or {}).items() if alias}
+    if not endpoints:
         return {}, {}
     environ = os.environ if environ is None else environ
     base_url = environ.get('OPENAI_BASE_URL')
     if not base_url:
-        raise SystemExit(f'endpoint {endpoint!r} is set but no lease is active (OPENAI_BASE_URL unset)')
-    slug = re.sub(r'[^A-Z0-9]+', '_', endpoint.upper()).strip('_')
-    served = environ.get(f'INFER_STACK_ENDPOINT_{slug}') or endpoint
-    primary = next(m for m in request['models'] if m.get('role', 'primary') == 'primary')
-    if primary['model'] != served:
-        raise SystemExit(
-            f'leased endpoint {endpoint!r} serves {served!r} but the request names '
-            f'{primary["model"]!r}; set the model binding to the served name'
-        )
+        raise SystemExit(f'endpoints {endpoints} are set but no lease is active (OPENAI_BASE_URL unset)')
+    bindings = {m.get('role', 'primary'): m for m in request['models']}
+    for role, alias in endpoints.items():
+        if role not in bindings:
+            raise SystemExit(f'leased endpoint {alias!r} is for role {role!r}, which the request does not bind')
+        slug = re.sub(r'[^A-Z0-9]+', '_', alias.upper()).strip('_')
+        served = environ.get(f'INFER_STACK_ENDPOINT_{slug}') or alias
+        if bindings[role]['model'] != served:
+            raise SystemExit(
+                f'leased endpoint {alias!r} serves {served!r} but the request binds role '
+                f'{role!r} to {bindings[role]["model"]!r}; set the model binding to the served name'
+            )
     env = {'OPENAI_API_KEY': environ['OPENAI_API_KEY']} if environ.get('OPENAI_API_KEY') else {}
-    return {'primary': base_url}, env
+    return {role: base_url for role in endpoints}, env
+
+
+def _truthy(value) -> bool:
+    return str(value).strip().lower() in {'1', 'true', 'yes'}
+
+
+def _write_evaluation(args, out_dpath: Path, summary: dict) -> None:
+    fpath = Path(args.evaluation_fname)
+    if fpath.parent == Path('.'):
+        # A bare name lives in the node directory; kwdagger passes a full path.
+        fpath = out_dpath / fpath
+    tmp = fpath.with_suffix('.tmp')
+    tmp.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
+    tmp.replace(fpath)  # the primary output appears atomically
+
+
+def gate(args, out_dpath: Path) -> int:
+    """Decide under the store's acquisition lock whether a leased run is needed.
+
+    Runs on the scheduling host. With a reusable scheduled identity it takes
+    the acquisition lock, and if a valid canonical run of the scheduled request
+    exists it records reuse without leasing anything. Otherwise it runs the
+    leased child (``--leased_command``; the child's ``ensure`` knows the lock
+    is held) and keeps the lock until the child exits, so concurrent nodes for
+    one measurement start one lease. A non-reusable identity always runs the
+    child. SIGTERM reaches the child's process group (SIGTERM, then SIGKILL).
+    """
+    import asyncio
+    import os
+    import signal
+    import subprocess
+
+    from magnet_evals import EvaluationRequest, load_run
+    from magnet_evals.store import ResultStore
+
+    from magnet.backends.aiq_evals.pipeline import EVALUATION_SCHEMA
+    from magnet.backends.aiq_evals.projection import normalize_selector
+
+    request = EvaluationRequest.from_dict(json.loads(args.request))
+    digest = args.measurement_identity or ''
+    store = ResultStore(args.store_dpath)
+
+    def stored_run():
+        try:
+            run = load_run(store.run_path(digest))
+        except Exception:
+            return None
+        ok = (run.complete and run.result.status == 'succeeded' and run.manifest.get('reusable')
+              and run.resolved.identity.digest == digest
+              and run.resolved.request.to_dict() == request.to_dict())
+        return run if ok else None
+
+    def run_child() -> int:
+        proc = subprocess.Popen(['bash', '-c', args.leased_command], start_new_session=(os.name == 'posix'))
+        try:
+            return proc.wait()
+        except BaseException:
+            for sig, grace in ((signal.SIGTERM, 30), (signal.SIGKILL, None)):
+                try:
+                    os.killpg(proc.pid, sig)
+                except ProcessLookupError:
+                    break
+                try:
+                    proc.wait(timeout=grace)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            raise
+
+    if len(digest) != 64:
+        return run_child()
+
+    async def acquire() -> int:
+        async with store.acquisition_lock(digest) as lock:
+            run = stored_run()
+            if run is None:
+                return await asyncio.to_thread(run_child)
+            _write_evaluation(args, out_dpath, {
+                'schema': EVALUATION_SCHEMA,
+                'action': 'reused',
+                'reuse_reason': 'validated canonical run (lease gate)',
+                'waited': lock.waited,
+                'run_path': str(run.path),
+                'attempt_path': None,
+                'status': run.result.status,
+                'measurement_identity': run.resolved.identity.to_dict(),
+                'normalized_artifact_identity': run.manifest.get('normalized_artifact_identity'),
+                'import_identity': None,
+                'preflight_identity': args.measurement_identity,
+                'preflight_import_identity': None,
+                'select': normalize_selector(json.loads(args.select) if args.select else None),
+                'coverage_policy': args.coverage_policy,
+                'request': request.to_dict(),
+            })
+            return 0
+
+    return asyncio.run(acquire())
+
+
+def _stale_identities(args, digest: str, import_identity: str | None) -> list[str]:
+    """Differences between the scheduled (preflight) and current identities."""
+    changed = []
+    preflight = args.measurement_identity
+    if preflight and not preflight.startswith('unresolved') and preflight != digest:
+        changed.append(f'measurement identity: preflight {preflight}, now {digest}')
+    if args.import_identity and args.import_identity != import_identity:
+        changed.append(f'imported content: preflight {args.import_identity}, now {import_identity}')
+    return changed
+
+
+def _reschedule(out_dpath: Path, summary: dict, stale: list[str]) -> int:
+    """The node's kwdagger identity no longer describes this computation."""
+    summary = dict(summary, error='identity changed since scheduling; reschedule: ' + '; '.join(stale))
+    (out_dpath / 'attempt_summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+    print(summary['error'], file=sys.stderr)
+    return 3
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    import asyncio
     import signal
 
-    from magnet_evals import EvaluationRequest, ensure_evaluation
+    from magnet_evals import (
+        EvaluationRequest,
+        ExecutionContext,
+        ensure_evaluation,
+        native_source_identity,
+        resolve_evaluation_async,
+    )
 
     from magnet.backends.aiq_evals.pipeline import EVALUATION_SCHEMA
     from magnet.backends.aiq_evals.projection import normalize_selector
@@ -85,21 +222,48 @@ def main(argv: list[str] | None = None) -> int:
     # kwdagger/tmux stop jobs with SIGTERM; turn it into cancellation so
     # aiq-magnet-evals interrupts and reaps its engine worker group (M8).
     signal.signal(signal.SIGTERM, signal.default_int_handler)
+    if args.leased_command:
+        out_dpath = Path(args.out_dpath)
+        out_dpath.mkdir(parents=True, exist_ok=True)
+        return gate(args, out_dpath)
     request_dict = json.loads(args.request)
     select = normalize_selector(json.loads(args.select) if args.select else None)
-    model_endpoints, lease_env = lease_runtime(args.endpoint, request_dict)
+    model_endpoints, lease_env = lease_runtime(
+        json.loads(args.endpoints) if args.endpoints else args.endpoint, request_dict,
+    )
     request = EvaluationRequest.from_dict(request_dict)
     out_dpath = Path(args.out_dpath)
     out_dpath.mkdir(parents=True, exist_ok=True)
+    allow_external = _truthy(args.allow_external_symlinks)
+
+    # Before any engine work: does the scheduled identity still hold? Task code,
+    # the engine, the adapter, or imported files may have changed since
+    # preflight, and then this node's kwdagger identity is stale.
+    context = ExecutionContext(
+        output_dir=Path(args.store_dpath), env=lease_env, worker_python=args.worker_python,
+        timeout_seconds=args.timeout_seconds, model_endpoints=model_endpoints,
+    )
+    resolved = asyncio.run(resolve_evaluation_async(request, context))
+    current_import = None if args.import_source is None else native_source_identity(
+        args.import_source, allow_external_symlinks=allow_external,
+    )
+    stale = _stale_identities(args, resolved.identity.digest, current_import)
+    if stale:
+        return _reschedule(out_dpath, {
+            'schema': EVALUATION_SCHEMA, 'status': 'not-run', 'request': request.to_dict(),
+            'measurement_identity': resolved.identity.to_dict(), 'import_identity': current_import,
+            'preflight_identity': args.measurement_identity, 'preflight_import_identity': args.import_identity,
+        }, stale)
     outcome = ensure_evaluation(
-        request,
+        resolved,
         args.store_dpath,
         worker_python=args.worker_python,
         timeout_seconds=args.timeout_seconds,
         import_source=args.import_source,
-        allow_external_symlinks=str(args.allow_external_symlinks).lower() in {'1', 'true', 'yes'},
+        allow_external_symlinks=allow_external,
         model_endpoints=model_endpoints,
         env=lease_env,
+        lock_held=_truthy(args.lock_held),
     )
     identity = outcome.resolved.identity
     summary = {
@@ -120,30 +284,15 @@ def main(argv: list[str] | None = None) -> int:
         'coverage_policy': args.coverage_policy,
         'request': request.to_dict(),
     }
-    changed = []
-    preflight = args.measurement_identity
-    if preflight and not preflight.startswith('unresolved') and preflight != identity.digest:
-        changed.append(f'measurement identity: preflight {preflight}, now {identity.digest}')
-    if args.import_identity and args.import_identity != outcome.import_identity:
-        changed.append(f'imported content: preflight {args.import_identity}, now {outcome.import_identity}')
-    if changed:
-        # The node's kwdagger identity was computed from a resolution that no
-        # longer holds (task code, engine, adapter, or imported files changed).
-        summary['error'] = 'identity changed since scheduling; reschedule: ' + '; '.join(changed)
-        (out_dpath / 'attempt_summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-        print(summary['error'], file=sys.stderr)
-        return 3
+    # The imported files could still change between hashing and copying.
+    stale = _stale_identities(args, identity.digest, outcome.import_identity)
+    if stale:
+        return _reschedule(out_dpath, summary, stale)
     if outcome.run.result.status != 'succeeded':
         (out_dpath / 'attempt_summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         print(f'aiq-magnet-evals run {outcome.run.result.status}: {outcome.run.path}', file=sys.stderr)
         return 2
-    fpath = Path(args.evaluation_fname)
-    if fpath.parent == Path('.'):
-        # A bare name lives in the node directory; kwdagger passes a full path.
-        fpath = out_dpath / fpath
-    tmp = fpath.with_suffix('.tmp')
-    tmp.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
-    tmp.replace(fpath)  # the primary output appears atomically
+    _write_evaluation(args, out_dpath, summary)
     return 0
 
 

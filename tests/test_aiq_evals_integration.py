@@ -314,7 +314,7 @@ def test_measurement_identity_is_computed_never_configured(monkeypatch):
 
     calls = []
 
-    def fake_preflight(command):
+    def fake_preflight(command, timeout=None):
         calls.append(command)
         return {'measurement_identity': {'digest': 'a' * 64, 'reusable': True, 'unknown_reasons': []},
                 'import_identity': None}
@@ -332,7 +332,7 @@ def test_measurement_identity_is_computed_never_configured(monkeypatch):
 def test_preflight_runs_through_the_node_container(monkeypatch):
     commands = []
 
-    def fake_preflight(command):
+    def fake_preflight(command, timeout=None):
         commands.append(command)
         return {'measurement_identity': {'digest': 'b' * 64, 'reusable': True, 'unknown_reasons': []},
                 'import_identity': None}
@@ -385,7 +385,7 @@ def _publish(store_root, value, *, task='t', digest='c' * 64, other=None, covera
     return publish_run(path, resolved=resolved, result=result, context=ExecutionContext(output_dir=path))
 
 
-def _schedule(node_dir, run, *, select=None, policy='complete'):
+def _schedule(node_dir, run, *, select=None, policy='complete', store=None, import_identity=None):
     """Write the invoke.sh kwdagger would render for a node scheduled like this."""
     import shlex
 
@@ -394,13 +394,18 @@ def _schedule(node_dir, run, *, select=None, policy='complete'):
     node_dir.mkdir(parents=True, exist_ok=True)
     expected = {'select': normalize_selector(select), 'coverage_policy': policy,
                 'measurement_identity': run.resolved.identity.digest}
+    if import_identity:
+        expected['import_identity'] = import_identity
     request = json.dumps(run.resolved.request.to_dict(), sort_keys=True)
+    store = store or run.path.parent.parent.parent  # <store>/runs/<dd>/<digest>
     (node_dir / 'invoke.sh').write_text(
         '#!/bin/bash\n# Root node\n'
         f'python -m magnet.backends.aiq_evals.cli.check_done {node_dir}/evaluation.json '
         f'--expected={shlex.quote(json.dumps(expected, sort_keys=True))} || \\\n'
         'python -m magnet.backends.aiq_evals.cli.run_node \\\n'
         f'    --request={shlex.quote(request)} \\\n'
+        f'    --store_dpath={store} \\\n'
+        f'    --out_dpath={node_dir} \\\n'
         f'    --coverage_policy={policy}\n'
     )
 
@@ -499,6 +504,109 @@ def test_a_run_of_another_request_is_rejected_when_rows_load(tmp_path):
                'request': other.resolved.request.to_dict()}
     fpath.write_text(json.dumps(swapped))
     _assert_invalid(_row(fpath))
+
+
+def test_evaluation_json_cannot_redirect_to_another_run_of_the_measurement(tmp_path):
+    # A measurement can have several valid bundles (earlier attempts, other
+    # imports). A non-import node must load the store's canonical run.
+    from magnet_evals.artifacts import publish_run
+    from magnet_evals.contracts import ExecutionContext
+
+    canonical = _publish(tmp_path / 'store', 0.5)
+    other_path = tmp_path / 'store' / 'attempts' / 'cc' / ('c' * 64) / 'older-attempt'
+    other_result = type(canonical.result).from_dict({
+        **canonical.result.to_dict(),
+        'records': [{**canonical.result.records[0].to_dict(),
+                     'metrics': [{**canonical.result.records[0].metrics[0].to_dict(), 'value': 0.9}]}],
+    })
+    other = publish_run(other_path, resolved=canonical.resolved, result=other_result,
+                        context=ExecutionContext(output_dir=other_path))
+    fpath = _evaluation_json(tmp_path / 'node', canonical)
+    assert _row(fpath)['metrics.evaluate.score'] == 0.5
+    redirected = {**json.loads(fpath.read_text()), 'run_path': str(other.path),
+                  'normalized_artifact_identity': other.manifest['normalized_artifact_identity']}
+    fpath.write_text(json.dumps(redirected))
+    assert node_mod.evaluation_is_valid(fpath)  # the bundle itself is valid ...
+    _assert_invalid(_row(fpath), 'acquisition slot')  # ... but not this node's slot
+
+
+def test_import_nodes_must_load_their_scheduled_import_slot(tmp_path):
+    from magnet_evals.store import ResultStore
+
+    canonical = _publish(tmp_path / 'store', 0.5)
+    store = ResultStore(tmp_path / 'store')
+    native = 'ab' * 32
+    slot = store.import_path('c' * 64, native)
+    slot.parent.mkdir(parents=True)
+    import shutil as _shutil
+    _shutil.copytree(canonical.path, slot)
+    fpath = _evaluation_json(tmp_path / 'node', canonical, schedule=False)
+    _schedule(tmp_path / 'node', canonical, import_identity=native)
+    summary = {**json.loads(fpath.read_text()), 'import_identity': native}
+    # The canonical run is valid but is not the scheduled import's slot.
+    fpath.write_text(json.dumps(summary))
+    _assert_invalid(_row(fpath))
+
+
+def test_comparison_rows_follow_the_scheduled_inputs(tmp_path):
+    import shlex
+
+    from magnet.backends.aiq_evals.cli import compare
+
+    root = tmp_path / '_kwdagger'
+    left = _evaluation_json(root / 'helm' / 'h1', _publish(tmp_path / 's1', 0.25))
+    right = _evaluation_json(root / 'inspect' / 'i1', _publish(tmp_path / 's2', 0.75))
+    decoy = _evaluation_json(root / 'inspect' / 'i2', _publish(tmp_path / 's3', 0.95))
+    node_dir = root / 'evaluate' / 'e1'
+    node_dir.mkdir(parents=True)
+    compare.main([f'--left_fpath={left}', f'--right_fpath={right}', '--mapping=same task',
+                  f'--out_fpath={node_dir / "comparison.json"}'])
+    (node_dir / 'invoke.sh').write_text(
+        '#!/bin/bash\npython -m magnet.backends.aiq_evals.cli.compare '
+        f'--left_fpath={left} --right_fpath={right} --mapping={shlex.quote("same task")} '
+        f'--out_fpath={node_dir / "comparison.json"}\n'
+    )
+    node = SimpleNamespace(name='evaluate', out_paths={'out_fpath': 'comparison.json'}, primary_out_key='out_fpath')
+    row = dict(compare.load_kwdagger_result(node, node_dir))
+    assert row['metrics.evaluate.difference'] == 0.5
+    # Redirect the recorded comparison to the decoy and change the mapping: ignored.
+    recorded = json.loads((node_dir / 'comparison.json').read_text())
+    recorded['right']['fpath'] = str(decoy)
+    recorded['mapping'] = 'anything'
+    (node_dir / 'comparison.json').write_text(json.dumps(recorded))
+    row = dict(compare.load_kwdagger_result(node, node_dir))
+    assert row['metrics.evaluate.difference'] == 0.5 and row['metrics.evaluate.mapping'] == 'same task'
+    # Without a scheduling record nothing is comparable.
+    (node_dir / 'invoke.sh').unlink()
+    assert dict(compare.load_kwdagger_result(node, node_dir))['metrics.evaluate.comparable'] is False
+
+
+def test_preflight_is_bounded_and_kills_its_process_group(tmp_path):
+    marker = tmp_path / 'pid'
+    start = time.monotonic()
+    with pytest.raises(node_mod.PreflightError, match='timed out'):
+        node_mod.run_preflight(f'sleep 60 & echo $! > {marker}; wait', timeout=1)
+    assert time.monotonic() - start < 30
+    pid = int(marker.read_text())
+    stat = Path(f'/proc/{pid}/stat')
+    assert not stat.exists() or stat.read_text().split()[2] == 'Z'
+
+
+@needs_helm
+def test_a_stale_schedule_stops_before_any_engine_work(tmp_path):
+    # Preflight said one identity; the request now resolves to another. The
+    # node must ask to be rescheduled without executing anything.
+    request = {**HELM_ALGO, 'schema_version': 1}
+    proc = subprocess.run(
+        [sys.executable, '-m', 'magnet.backends.aiq_evals.cli.run_node', f'--request={json.dumps(request)}',
+         f'--store_dpath={tmp_path / "store"}', f'--out_dpath={tmp_path / "node"}',
+         f'--measurement_identity={"0" * 64}', f'--worker_python={HELM_PYTHON}'],
+        capture_output=True, text=True,
+    )
+    assert proc.returncode == 3, proc.stderr
+    summary = json.loads((tmp_path / 'node' / 'attempt_summary.json').read_text())
+    assert summary['status'] == 'not-run' and 'reschedule' in summary['error']
+    assert not (tmp_path / 'store' / 'attempts').exists()
 
 
 def test_edited_run_payload_invalidates_the_node(tmp_path):
@@ -670,45 +778,104 @@ def test_native_failure_is_provenance_not_a_verdict(tmp_path, monkeypatch):
 def test_lease_runtime_maps_lease_env_and_refuses_mismatch():
     from magnet.backends.aiq_evals.cli.run_node import lease_runtime
 
-    request = {'models': [{'role': 'primary', 'model': 'smol-135'}]}
-    env = {'OPENAI_BASE_URL': 'http://gw/v1', 'OPENAI_API_KEY': 'lease-key'}
+    request = {'models': [{'role': 'primary', 'model': 'smol-135'}, {'role': 'grader', 'model': 'judge-7'}]}
+    env = {'OPENAI_BASE_URL': 'http://gw/v1', 'OPENAI_API_KEY': 'lease-key',
+           'INFER_STACK_ENDPOINT_JUDGE_ALIAS': 'judge-7'}
     assert lease_runtime('smol-135', request, env) == ({'primary': 'http://gw/v1'}, {'OPENAI_API_KEY': 'lease-key'})
     assert lease_runtime(None, request, env) == ({}, {})
+    # Several roles, one lease: every alias sits behind the lease's base URL.
+    both = {'primary': 'smol-135', 'grader': 'judge-alias'}
+    assert lease_runtime(both, request, env)[0] == {'primary': 'http://gw/v1', 'grader': 'http://gw/v1'}
     with pytest.raises(SystemExit, match='no lease is active'):
         lease_runtime('smol-135', request, {})
     with pytest.raises(SystemExit, match='serves'):
         lease_runtime('smol-135', request, {**env, 'INFER_STACK_ENDPOINT_SMOL_135': 'other-name'})
+    with pytest.raises(SystemExit, match='does not bind'):
+        lease_runtime({'critic': 'judge-alias'}, request, env)
 
 
-def _leased_command(store, digest, monkeypatch, **algo):
+def _leased_node(store, digest, monkeypatch, *, perf=None, **algo):
     from magnet.leasing import LeaseSettings
 
-    monkeypatch.setattr(node_mod, 'run_preflight', lambda command: {
+    monkeypatch.setattr(node_mod, 'run_preflight', lambda command, timeout=None: {
         'measurement_identity': {'digest': digest, 'reusable': True, 'unknown_reasons': []},
         'import_identity': 'f' * 64 if algo.get('import_source') else None,
     })
     node = EvaluationNode(
         name='evaluate',
         algo_params={'engine': 'inspect_ai', 'task': 't', 'models': [{'model': 'smol-135', 'revision': 'r'}], **algo},
-        perf_params={'endpoint': 'smol-135', 'store_dpath': str(store)},
+        perf_params={'endpoint': 'smol-135', 'store_dpath': str(store), **(perf or {})},
     )
-    node.apply_lease_settings(LeaseSettings(enabled=True))
+    node.apply_lease_settings(LeaseSettings(enabled=True, allowed_gpus=False))
     node.configure({})
-    with preflight_scope(True):
-        return node.command
+    return node
 
 
-def test_lease_wraps_only_when_native_work_is_needed(tmp_path, monkeypatch):
+def test_leasing_is_decided_by_a_gate_when_the_node_runs(tmp_path, monkeypatch):
+    import shlex
+
     monkeypatch.delenv('INFER_STACK_LEASE_ID', raising=False)
+    node = _leased_node(tmp_path / 'store', 'c' * 64, monkeypatch,
+                        perf={'endpoints': json.dumps({'grader': 'judge-alias'})})
+    with preflight_scope(True):
+        command = node.command
+    # The outer command is the host-side gate; the lease wraps only the child.
+    assert not command.startswith('infer-stack')
+    assert 'magnet.backends.aiq_evals.cli.run_node' in command
+    tokens = shlex.split(command.replace('\\\n', ' '))
+    (child,) = [tok[len('--leased_command='):] for tok in tokens if tok.startswith('--leased_command=')]
+    assert child.startswith('infer-stack run --endpoint smol-135,judge-alias')
+    assert '--lock_held=True' in child
+    assert node.lease_roles() == {'primary': 'smol-135', 'grader': 'judge-alias'}
+    # An import runs no model: no gate and no lease.
+    importer = _leased_node(tmp_path / 'store', 'c' * 64, monkeypatch, import_source=str(tmp_path))
+    with preflight_scope(True):
+        assert 'infer-stack' not in importer.command and '--leased_command' not in importer.command
+
+
+GATE_CHILD = """
+import json, sys, time
+from pathlib import Path
+sys.path.insert(0, {tests!r})
+from test_aiq_evals_integration import _publish
+store, digest, counter = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+with counter.open('a') as fh:
+    fh.write('child\\n')
+time.sleep(1.0)  # a slow leased evaluation
+_publish(store, 0.5, digest=digest)
+"""
+
+
+def test_concurrent_gates_start_one_leased_child(tmp_path):
+    # Two nodes (e.g. two selectors) need one missing measurement. The gates
+    # serialize on the store's acquisition lock: the first runs its leased
+    # child, the second then finds the run and records reuse without a lease.
     digest = 'c' * 64
     store = tmp_path / 'store'
-    assert 'infer-stack run' in _leased_command(store, digest, monkeypatch)
-    # A valid stored run means the node only reuses: no model is leased.
-    _publish(store, 1.0, digest=digest)
-    assert 'infer-stack run' not in _leased_command(store, digest, monkeypatch)
-    # An import runs no model either.
-    assert 'infer-stack run' not in _leased_command(tmp_path / 'empty', digest, monkeypatch,
-                                                    import_source=str(tmp_path))
+    counter = tmp_path / 'children.txt'
+    script = tmp_path / 'child.py'
+    script.write_text(GATE_CHILD.format(tests=str(Path(__file__).parent)))
+    request = json.dumps(_publish(tmp_path / 'probe-store', 0.1, digest=digest).resolved.request.to_dict())
+    procs = []
+    for name, select in (('a', {'metric': 'acc'}), ('b', {'metric': 'acc'})):
+        child = f'{shlex_quote(sys.executable)} {shlex_quote(str(script))} {store} {digest} {counter}'
+        procs.append(subprocess.Popen([
+            sys.executable, '-m', 'magnet.backends.aiq_evals.cli.run_node',
+            f'--request={request}', f'--store_dpath={store}', f'--out_dpath={tmp_path / name}',
+            '--evaluation_fname=evaluation.json', f'--measurement_identity={digest}',
+            f'--select={json.dumps(select)}', f'--leased_command={child}',
+        ]))
+    assert [p.wait(timeout=120) for p in procs] == [0, 0]
+    assert counter.read_text().splitlines() == ['child']
+    # The stub child writes no summary; the gate that waited recorded reuse.
+    records = [json.loads(p.read_text()) for p in sorted(tmp_path.glob('[ab]/evaluation.json'))]
+    assert [(r['action'], r['waited']) for r in records] == [('reused', True)]
+
+
+def shlex_quote(text):
+    import shlex
+
+    return shlex.quote(text)
 
 
 @needs_repo

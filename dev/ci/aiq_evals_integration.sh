@@ -2,10 +2,11 @@
 # MAGNET <-> aiq-magnet-evals integration (aiq-magnet-evals integration plan M10).
 #
 # Installs MAGNET (with HELM) and aiq-magnet-evals from a pinned checkout,
-# builds Inspect and OLMo Eval workers at their verified pins plus a portable
-# MAGNET environment for the Docker test, and runs the integration tests with
-# MAGNET_REQUIRE_AIQ_EVALS=1: a missing engine, worker, tmux, or Docker fails
-# the job instead of silently skipping it.
+# builds Inspect and OLMo Eval workers at their verified pins, an Inspect worker
+# with `openai`, and a portable MAGNET environment for the Docker test, and runs
+# the integration tests with MAGNET_REQUIRE_AIQ_EVALS=1: a missing engine,
+# worker, tmux, Docker, or infer-stack fails the job instead of skipping it.
+# Real infer-stack leases use its null serving backend (no GPU).
 #
 # Usage (repository root): dev/ci/aiq_evals_integration.sh [WORK_DIR]
 #   AIQ_MAGNET_EVALS_REPO / AIQ_MAGNET_EVALS_REV select the evaluator revision;
@@ -43,6 +44,12 @@ uv venv -q --python 3.11 "$WORK/inspect"
 retry uv pip install -q --python "$WORK/inspect/bin/python" \
   -c "$EVALS/dev/environments/phase1/inspect-py311-constraints.txt" -e "$EVALS[inspect]"
 
+# Inspect with `openai` (outside the verified pin set): the real-lease test
+# drives Inspect's openai provider for a primary and a separately leased grader.
+uv venv -q --python 3.11 "$WORK/inspect-openai"
+retry uv pip install -q --python "$WORK/inspect-openai/bin/python" \
+  -c "$EVALS/dev/environments/phase1/inspect-py311-constraints.txt" -e "$EVALS[inspect]" openai
+
 # OLMo Eval worker: isolated checkout synced from its upstream lock.
 OLMO=$WORK/olmo-eval
 [ -d "$OLMO/.git" ] || retry git clone -q "$OLMO_REPO" "$OLMO"
@@ -61,7 +68,9 @@ MAGNET_TEST_CONTAINER_VENV="$WORK/magnet-container" \
 AIQ_EVALS_REPO="$EVALS" \
 AIQ_EVALS_HELM_PYTHON="$WORK/magnet/bin/python" \
 AIQ_EVALS_INSPECT_PYTHON="$WORK/inspect/bin/python" \
+AIQ_EVALS_INSPECT_OPENAI_PYTHON="$WORK/inspect-openai/bin/python" \
 AIQ_EVALS_OLMO_PYTHON="$OLMO/.venv/bin/python" \
 PATH="$WORK/magnet/bin:$PATH" \
   "$WORK/magnet/bin/python" -m pytest -q -p no:cacheprovider \
-    tests/test_aiq_evals_integration.py tests/test_aiq_evals_examples.py tests/test_aiq_evals_container.py
+    tests/test_aiq_evals_integration.py tests/test_aiq_evals_examples.py \
+    tests/test_aiq_evals_container.py tests/test_aiq_evals_lease.py
