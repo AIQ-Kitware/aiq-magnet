@@ -146,7 +146,11 @@ class EvaluationNode(MagnetProcessNode):
         'worker_python': None,
         'timeout_seconds': None,
         'allow_external_symlinks': False,
+        # infer-stack catalog alias to lease for the primary model (M8). Operational:
+        # the model binding's revision/cache_token is the identity, not the lease.
+        'endpoint': None,
     }
+    endpoint_params = ('endpoint',)
     in_paths: set[str] = set()
     out_paths = {'out_dpath': '.', 'evaluation_fname': 'evaluation.json'}
     primary_out_key = 'evaluation_fname'
@@ -212,10 +216,29 @@ class EvaluationNode(MagnetProcessNode):
                 args[key] = config[key]
         if config.get('allow_external_symlinks'):
             args['allow_external_symlinks'] = 'True'
+        if config.get('endpoint'):
+            args['endpoint'] = config['endpoint']
         argstr = ' \\\n    '.join(f'--{key}={shlex.quote(str(value))}' for key, value in args.items())
         command = f'{self.executable} \\\n    {argstr}'
-        # Keep MAGNET's container/interpreter/lease wrapping.
-        return self.wrap_with_lease(self._wrap_interpreter(command))
+        command = self._wrap_interpreter(command)
+        if self._native_result_available():
+            # The node will only reuse the stored run; leasing would start a
+            # model for nothing (M8: avoid duplicate model startup).
+            return command
+        return self.wrap_with_lease(command)
+
+    def _native_result_available(self) -> bool:
+        digest = str(self.final_config.get('measurement_identity') or '')
+        if len(digest) != 64:
+            return False
+        try:
+            from aiq_evals import load_run
+            from aiq_evals.store import ResultStore
+
+            run = load_run(ResultStore(self._store_dpath()).run_path(digest))
+        except Exception:
+            return False
+        return run.complete and run.result.status == 'succeeded'
 
     @property
     def does_exist(self) -> bool:

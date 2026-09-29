@@ -36,7 +36,38 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--import_source', default=None)
     parser.add_argument('--allow_external_symlinks', default='False')
     parser.add_argument('--measurement_identity', default=None)
+    parser.add_argument('--endpoint', default=None, help='leased infer-stack alias (primary model)')
     return parser
+
+
+def lease_runtime(endpoint: str | None, request: dict, environ=None) -> tuple[dict, dict]:
+    """Operational bindings for a node running inside ``infer-stack run`` (M8).
+
+    Returns ``(model_endpoints, env)``: the leased base URL for the primary role
+    and the lease's API key as a runtime secret. Neither is hashed or persisted.
+    infer-stack exports ``INFER_STACK_ENDPOINT_<SLUG>`` with the served model
+    name; the request must name that model, since changing it silently would
+    change what is measured.
+    """
+    import os
+    import re
+
+    if not endpoint:
+        return {}, {}
+    environ = os.environ if environ is None else environ
+    base_url = environ.get('OPENAI_BASE_URL')
+    if not base_url:
+        raise SystemExit(f'endpoint {endpoint!r} is set but no lease is active (OPENAI_BASE_URL unset)')
+    slug = re.sub(r'[^A-Z0-9]+', '_', endpoint.upper()).strip('_')
+    served = environ.get(f'INFER_STACK_ENDPOINT_{slug}') or endpoint
+    primary = next(m for m in request['models'] if m.get('role', 'primary') == 'primary')
+    if primary['model'] != served:
+        raise SystemExit(
+            f'leased endpoint {endpoint!r} serves {served!r} but the request names '
+            f'{primary["model"]!r}; set the model binding to the served name'
+        )
+    env = {'OPENAI_API_KEY': environ['OPENAI_API_KEY']} if environ.get('OPENAI_API_KEY') else {}
+    return {'primary': base_url}, env
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -45,7 +76,14 @@ def main(argv: list[str] | None = None) -> int:
 
     from magnet.backends.aiq_evals.projection import evidence_view
 
-    request = EvaluationRequest.from_dict(json.loads(args.request))
+    import signal
+
+    # kwdagger/tmux stop jobs with SIGTERM; turn it into cancellation so
+    # aiq-evals interrupts and reaps its engine worker group (M8).
+    signal.signal(signal.SIGTERM, signal.default_int_handler)
+    request_dict = json.loads(args.request)
+    model_endpoints, lease_env = lease_runtime(args.endpoint, request_dict)
+    request = EvaluationRequest.from_dict(request_dict)
     out_dpath = Path(args.out_dpath)
     out_dpath.mkdir(parents=True, exist_ok=True)
     outcome = ensure_evaluation(
@@ -55,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         timeout_seconds=args.timeout_seconds,
         import_source=args.import_source,
         allow_external_symlinks=str(args.allow_external_symlinks).lower() in {'1', 'true', 'yes'},
+        model_endpoints=model_endpoints,
+        env=lease_env,
     )
     identity = outcome.resolved.identity
     summary = {

@@ -343,3 +343,99 @@ def test_eligibility_policy_and_score_exposure(status, coverage, value, policy, 
     assert ('score' in flat) is eligible
     assert flat['selected.value'] == value or value != value
     assert flat['denominator'] == 4
+
+
+# --- M8: leasing, duplicate startup, cancellation ------------------------------
+
+def test_lease_runtime_maps_lease_env_and_refuses_mismatch():
+    from magnet.backends.aiq_evals.cli.run_node import lease_runtime
+
+    request = {'models': [{'role': 'primary', 'model': 'smol-135'}]}
+    env = {'OPENAI_BASE_URL': 'http://gw/v1', 'OPENAI_API_KEY': 'lease-key'}
+    assert lease_runtime('smol-135', request, env) == ({'primary': 'http://gw/v1'}, {'OPENAI_API_KEY': 'lease-key'})
+    assert lease_runtime(None, request, env) == ({}, {})
+    with pytest.raises(SystemExit, match='no lease is active'):
+        lease_runtime('smol-135', request, {})
+    with pytest.raises(SystemExit, match='serves'):
+        lease_runtime('smol-135', request, {**env, 'INFER_STACK_ENDPOINT_SMOL_135': 'other-name'})
+
+
+def _leased_node(store, digest):
+    from magnet.leasing import LeaseSettings
+
+    node = EvaluationNode(
+        name='evaluate',
+        algo_params={
+            'engine': 'inspect_ai', 'task': 't', 'models': [{'model': 'smol-135', 'revision': 'r'}],
+            'measurement_identity': digest,
+        },
+        perf_params={'endpoint': 'smol-135', 'store_dpath': str(store)},
+    )
+    node.apply_lease_settings(LeaseSettings(enabled=True))
+    node.configure({})
+    return node
+
+
+def test_lease_wraps_only_when_native_work_is_needed(tmp_path, monkeypatch):
+    from aiq_evals.artifacts import publish_run
+    from aiq_evals.contracts import (
+        EvaluationRequest, EvaluationResult, ExecutionContext, MeasurementIdentity, ModelBinding,
+        ResolvedEvaluation, ResultRecord,
+    )
+    from aiq_evals.store import ResultStore
+
+    monkeypatch.delenv('INFER_STACK_LEASE_ID', raising=False)
+    digest = 'a' * 64
+    store = ResultStore(tmp_path / 'store')
+    assert 'infer-stack run' in _leased_node(store.root, digest).command
+
+    identity = MeasurementIdentity(algorithm='t', digest=digest, reusable=True)
+    request = EvaluationRequest(engine='inspect_ai', task='t', models=(ModelBinding(role='primary', model='m'),))
+    resolved = ResolvedEvaluation(request=request, adapter_version='a', engine_version=None,
+                                  native_config={}, identity=identity)
+    result = EvaluationResult(engine='inspect_ai', identity=identity, status='succeeded',
+                              records=(ResultRecord(task='t', model_role='primary', metrics=()),))
+    path = store.run_path(digest)
+    publish_run(path, resolved=resolved, result=result, context=ExecutionContext(output_dir=path))
+    # A valid stored run means the node only reuses: no model is leased.
+    assert 'infer-stack run' not in _leased_node(store.root, digest).command
+
+
+@pytest.mark.skipif(not REPO, reason='needs aiq-evals HELM plugin fixtures')
+@needs_helm
+def test_sigterm_cancels_the_engine_worker(tmp_path):
+    import signal
+    import subprocess
+    import time
+
+    pid_file = tmp_path / 'child.pid'
+    request = {
+        'engine': 'helm', 'task': 'aiq_p5_slow', 'task_revision': 'x', 'data_revision': 'x',
+        'models': [{'role': 'primary', 'model': 'simple/model1', 'revision': 'local-v1'}],
+        'task_options': {'max_eval_instances': 1},
+        'engine_options': {'plugins': ['tests.native.helm_plugin_fixture']},
+    }
+    env = dict(os.environ, AIQ_P5_CHILD_PID_FILE=str(pid_file), PYTHONPATH=str(REPO))
+    proc = subprocess.Popen(
+        [sys.executable, '-m', 'magnet.backends.aiq_evals.cli.run_node', '--request', json.dumps(request),
+         '--store_dpath', str(tmp_path / 'store'), '--out_dpath', str(tmp_path / 'node'),
+         '--worker_python', HELM_PYTHON],
+        env=env,
+    )
+    try:
+        for _ in range(600):
+            if pid_file.exists() and pid_file.read_text():
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail('native HELM task never started')
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    child = ub.Path(f'/proc/{int(pid_file.read_text())}/stat')
+    assert not child.exists() or child.read_text().split()[2] == 'Z'
+    attempts = list((tmp_path / 'store' / 'attempts').rglob('ATTEMPT_TERMINAL'))
+    assert [p.read_text().strip() for p in attempts] == ['cancelled']
+    assert not (tmp_path / 'node' / 'evaluation.json').exists()
