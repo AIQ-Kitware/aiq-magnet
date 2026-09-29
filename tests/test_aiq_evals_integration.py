@@ -780,7 +780,7 @@ def test_lease_runtime_maps_lease_env_and_refuses_mismatch():
 
     request = {'models': [{'role': 'primary', 'model': 'smol-135'}, {'role': 'grader', 'model': 'judge-7'}]}
     env = {'OPENAI_BASE_URL': 'http://gw/v1', 'OPENAI_API_KEY': 'lease-key',
-           'INFER_STACK_ENDPOINT_JUDGE_ALIAS': 'judge-7'}
+           'INFER_STACK_ENDPOINT_SMOL_135': 'smol-135', 'INFER_STACK_ENDPOINT_JUDGE_ALIAS': 'judge-7'}
     assert lease_runtime('smol-135', request, env) == ({'primary': 'http://gw/v1'}, {'OPENAI_API_KEY': 'lease-key'})
     assert lease_runtime(None, request, env) == ({}, {})
     # Several roles, one lease: every alias sits behind the lease's base URL.
@@ -792,6 +792,9 @@ def test_lease_runtime_maps_lease_env_and_refuses_mismatch():
         lease_runtime('smol-135', request, {**env, 'INFER_STACK_ENDPOINT_SMOL_135': 'other-name'})
     with pytest.raises(SystemExit, match='does not bind'):
         lease_runtime({'critic': 'judge-alias'}, request, env)
+    # Without the lease's served-name variable nothing can be verified.
+    with pytest.raises(SystemExit, match='exports no INFER_STACK_ENDPOINT_SMOL_135'):
+        lease_runtime('smol-135', request, {'OPENAI_BASE_URL': 'http://gw/v1'})
 
 
 def _leased_node(store, digest, monkeypatch, *, perf=None, **algo):
@@ -827,6 +830,15 @@ def test_leasing_is_decided_by_a_gate_when_the_node_runs(tmp_path, monkeypatch):
     assert child.startswith('infer-stack run --endpoint smol-135,judge-alias')
     assert '--lock_held=True' in child
     assert node.lease_roles() == {'primary': 'smol-135', 'grader': 'judge-alias'}
+    # In a container the lease's served-name variables are forwarded by name.
+    node.container_image = 'engine-image:latest'
+    with preflight_scope(True):
+        contained = node.command
+    tokens = shlex.split(contained.replace('\\\n', ' '))
+    (child,) = [tok[len('--leased_command='):] for tok in tokens if tok.startswith('--leased_command=')]
+    for name in ('OPENAI_BASE_URL', 'OPENAI_API_KEY', 'INFER_STACK_ENDPOINT_SMOL_135',
+                 'INFER_STACK_ENDPOINT_JUDGE_ALIAS'):
+        assert f'-e {name} ' in child, name
     # An import runs no model: no gate and no lease.
     importer = _leased_node(tmp_path / 'store', 'c' * 64, monkeypatch, import_source=str(tmp_path))
     with preflight_scope(True):

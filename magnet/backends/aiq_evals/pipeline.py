@@ -125,6 +125,13 @@ def selector_value(select: Any) -> dict[str, Any] | None:
     return select
 
 
+def lease_endpoint_var(alias: str) -> str:
+    """The variable infer-stack exports with an alias's served model name."""
+    import re
+
+    return 'INFER_STACK_ENDPOINT_' + re.sub(r'[^A-Z0-9]+', '_', alias.upper()).strip('_')
+
+
 def _decode_mapping(value: Any, name: str) -> dict[str, Any]:
     """A mapping parameter given as a mapping or JSON text (e.g. from a matrix)."""
     if value in (None, ''):
@@ -306,15 +313,32 @@ class EvaluationNode(MagnetProcessNode):
 
     def lease_roles(self) -> dict[str, str]:
         """``{model role: infer-stack alias}`` this node leases, if any."""
-        config = self._final()
-        roles = {'primary': str(config['endpoint'])} if config.get('endpoint') else {}
-        for role, alias in _decode_mapping(config.get('endpoints'), 'endpoints').items():
+        # Raw settings, not final_config: the container wrapper asks for these
+        # while kwdagger is still finalizing this node's config (preflight).
+        endpoint = self._setting('endpoint')
+        roles = {'primary': str(endpoint)} if endpoint else {}
+        for role, alias in _decode_mapping(self._setting('endpoints'), 'endpoints').items():
             roles.setdefault(str(role), str(alias))
         return {role: alias for role, alias in roles.items() if alias.strip()}
 
     def resolve_lease_endpoints(self) -> list[str]:
         """Every alias this node leases, deduplicated in role order."""
         return list(dict.fromkeys(self.lease_roles().values()))
+
+    @property
+    def container_runtime_env(self) -> tuple[str, ...]:  # type: ignore[override]
+        """Lease variables forwarded (by name, at run time) into the container.
+
+        Besides the base URL and key, ``run_node`` needs each leased alias's
+        ``INFER_STACK_ENDPOINT_<SLUG>`` to verify that the lease serves the
+        model the measurement names; without it a container could not check.
+        """
+        from magnet.containers import ContainerCapability
+
+        return (
+            *ContainerCapability.container_runtime_env,
+            *(lease_endpoint_var(alias) for alias in self.resolve_lease_endpoints()),
+        )
 
     def _import_source(self, config: dict[str, Any]) -> str | None:
         source = config.get('import_source')

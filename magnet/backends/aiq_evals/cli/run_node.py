@@ -61,7 +61,8 @@ def lease_runtime(endpoints: dict | str | None, request: dict, environ=None) -> 
     is measured.
     """
     import os
-    import re
+
+    from magnet.backends.aiq_evals.pipeline import lease_endpoint_var
 
     if isinstance(endpoints, str):
         endpoints = {'primary': endpoints}
@@ -76,8 +77,14 @@ def lease_runtime(endpoints: dict | str | None, request: dict, environ=None) -> 
     for role, alias in endpoints.items():
         if role not in bindings:
             raise SystemExit(f'leased endpoint {alias!r} is for role {role!r}, which the request does not bind')
-        slug = re.sub(r'[^A-Z0-9]+', '_', alias.upper()).strip('_')
-        served = environ.get(f'INFER_STACK_ENDPOINT_{slug}') or alias
+        served = environ.get(lease_endpoint_var(alias))
+        if served is None:
+            # A lease always exports it; missing means it was not forwarded
+            # (e.g. into a container), and then nothing can be verified.
+            raise SystemExit(
+                f'the lease exports no {lease_endpoint_var(alias)} for endpoint {alias!r}; '
+                'cannot verify which model it serves'
+            )
         if bindings[role]['model'] != served:
             raise SystemExit(
                 f'leased endpoint {alias!r} serves {served!r} but the request binds role '
@@ -215,6 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         native_source_identity,
         resolve_evaluation_async,
     )
+    from magnet_evals.errors import ImportIdentityMismatch
 
     from magnet.backends.aiq_evals.pipeline import EVALUATION_SCHEMA
     from magnet.backends.aiq_evals.projection import normalize_selector
@@ -254,17 +262,26 @@ def main(argv: list[str] | None = None) -> int:
             'measurement_identity': resolved.identity.to_dict(), 'import_identity': current_import,
             'preflight_identity': args.measurement_identity, 'preflight_import_identity': args.import_identity,
         }, stale)
-    outcome = ensure_evaluation(
-        resolved,
-        args.store_dpath,
-        worker_python=args.worker_python,
-        timeout_seconds=args.timeout_seconds,
-        import_source=args.import_source,
-        allow_external_symlinks=allow_external,
-        model_endpoints=model_endpoints,
-        env=lease_env,
-        lock_held=_truthy(args.lock_held),
-    )
+    try:
+        outcome = ensure_evaluation(
+            resolved,
+            args.store_dpath,
+            worker_python=args.worker_python,
+            timeout_seconds=args.timeout_seconds,
+            import_source=args.import_source,
+            allow_external_symlinks=allow_external,
+            model_endpoints=model_endpoints,
+            env=lease_env,
+            lock_held=_truthy(args.lock_held),
+            # Import exactly the content this node was scheduled for, or nothing.
+            expected_import_identity=args.import_identity or None,
+        )
+    except ImportIdentityMismatch as ex:
+        return _reschedule(out_dpath, {
+            'schema': EVALUATION_SCHEMA, 'status': 'not-run', 'request': request.to_dict(),
+            'measurement_identity': resolved.identity.to_dict(), 'import_identity': current_import,
+            'preflight_identity': args.measurement_identity, 'preflight_import_identity': args.import_identity,
+        }, [str(ex)])
     identity = outcome.resolved.identity
     summary = {
         'schema': EVALUATION_SCHEMA,

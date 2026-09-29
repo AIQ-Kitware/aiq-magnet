@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 from aiq_evals_support import (
+    HAS_DOCKER,
     OLMO_PYTHON,
     evaluate,
     evaluation_node,
@@ -163,3 +164,62 @@ def test_inspect_primary_and_grader_share_one_multi_endpoint_lease(tmp_path, lea
     ((_, endpoints),) = _leases(lease_env)
     assert endpoints == ['gpt-4o', 'gpt-4o-mini']
     _no_secret(out)
+
+
+CONTAINER_VENV = os.environ.get('MAGNET_TEST_CONTAINER_VENV')
+
+
+def _venv_base(venv: Path) -> Path:
+    home = next(line.split('=', 1)[1].strip() for line in (venv / 'pyvenv.cfg').read_text().splitlines()
+                if line.split('=', 1)[0].strip() == 'home')
+    return Path(home).parent
+
+
+@needs_infer_stack
+@needs(HAS_DOCKER and CONTAINER_VENV is not None and INSPECT_OPENAI_PYTHON is not None,
+       'needs MAGNET_TEST_DOCKER=1, $MAGNET_TEST_CONTAINER_VENV, and $AIQ_EVALS_INSPECT_OPENAI_PYTHON')
+def test_a_leased_container_verifies_the_served_model(tmp_path, lease_env, monkeypatch):
+    # The alias differs from the model it serves. run_node runs inside the
+    # container and can verify the lease only if the lease's
+    # INFER_STACK_ENDPOINT_<ALIAS> variable is forwarded into it.
+    import magnet
+    from magnet.containers import ContainerSettings
+
+    catalog = Path(os.environ['INFER_STACK_CATALOG'])
+    catalog.write_text(
+        'models:\n  example-model:\n    source: hf://example/model\n'
+        'endpoints:\n  example-lease:\n    model: example-model\n    engine: vllm\n'
+        '    served_name: gpt-4o-mini\n'
+    )
+    assert INSPECT_OPENAI_PYTHON is not None and CONTAINER_VENV is not None
+    worker_venv, container_venv = Path(INSPECT_OPENAI_PYTHON).parent.parent, Path(CONTAINER_VENV)
+    mounts = sorted({
+        str(_venv_base(container_venv)), str(_venv_base(worker_venv)), str(container_venv),
+        str(Path(magnet.__file__).resolve().parents[1]), str(Path(magnet_evals.__file__).resolve().parents[1]),
+        str(tmp_path),
+    })
+    settings = ContainerSettings.coerce(
+        image=os.environ.get('MAGNET_TEST_CONTAINER_IMAGE', 'ubuntu:24.04'), mounts=mounts,
+        env={'PATH': f'{container_venv}/bin:/usr/bin:/bin'},
+        docker_args=f'-v {worker_venv}:/opt/aiq-inspect-worker:ro',
+    )
+    algo = {
+        'engine': 'inspect_ai', 'task': 'python:magnet_evals.examples.inspect_tasks:tool_task',
+        'data_revision': 'example-v1',
+        'models': [{'role': 'primary', 'model': 'gpt-4o-mini', 'provider': 'openai',
+                    'revision': 'example-endpoint-v1',
+                    'provider_options': {'base_url': DEAD_URL, 'responses_api': False}}],
+        'engine_options': {'registration_modules': ['magnet_evals.examples.inspect_tasks'],
+                           'required_secrets': ['OPENAI_API_KEY']},
+        'select': {'scorer': 'match', 'metric': 'accuracy'},
+    }
+    node = evaluation_node(algo, worker='/opt/aiq-inspect-worker/bin/python', endpoint='example-lease')
+    fpath = write_recipe(tmp_path, {'evaluate': node}, claim='assert metrics.evaluate.score == 1.0')
+    out = tmp_path / 'out'
+    _, card = evaluate(fpath, out, lease_settings=_lease_settings(), container_settings=settings)
+    assert card.result == 'VERIFIED', [c.evidence_row.get('metrics.evaluate.ineligible_reasons') for c in card.cell_results]
+    (record,) = [json.loads(p.read_text()) for p in evaluations(out)]
+    assert record['action'] == 'executed'
+    assert _leases(lease_env)[0][1] == ['example-lease']
+    _no_secret(out)
+
