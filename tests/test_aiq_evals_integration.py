@@ -1,77 +1,71 @@
-"""aiq-evals integration (aiq-evals docs/planning/aiq-magnet-integration-plan.md).
+"""aiq-magnet-evals integration (aiq-magnet-evals docs/planning/aiq-magnet-integration-plan.md).
 
-The end-to-end tests run a real engine through ``magnet_evals``: HELM's local
-simple model, in this interpreter or ``$AIQ_EVALS_HELM_PYTHON``. They skip when
-``magnet_evals`` or ``helm`` is unavailable. The projection tests are engine-free.
+End-to-end tests run real engines through ``magnet_evals`` workers; see
+``aiq_evals_support`` for the environment variables that select them. With
+``MAGNET_REQUIRE_AIQ_EVALS=1`` a missing prerequisite fails instead of
+skipping, which is how the dedicated CI job runs this file.
 """
+import asyncio
 import json
 import os
+import shutil
+import signal
+import subprocess
 import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import ubelt as ub
-import yaml
+from aiq_evals_support import (
+    HELM_ALGO,
+    HELM_PYTHON,
+    HELM_SELECT,
+    INSPECT_PYTHON,
+    OLMO_PYTHON,
+    evaluate,
+    evaluation_node,
+    evaluations,
+    latest_run_dir,
+    needs,
+    needs_helm,
+    needs_inspect,
+    needs_olmo,
+    needs_repo,
+    recipe_rows,
+    repo,
+    repo_on_worker_path,
+    require_magnet_evals,
+    run_verdicts,
+    store_attempts,
+    write_recipe,
+)
 
-magnet_evals = pytest.importorskip('magnet_evals')
+magnet_evals = require_magnet_evals()
 
-from types import SimpleNamespace  # noqa: E402
-
-from magnet.backends.aiq_evals import EvaluationNode  # noqa: E402
+from magnet.backends.aiq_evals import (  # noqa: E402
+    EvaluationNode,
+    preflight_scope,
+)
 from magnet.backends.aiq_evals import pipeline as node_mod  # noqa: E402
-from magnet.backends.aiq_evals.projection import evidence_view, flat_metrics, select_metric  # noqa: E402
-from magnet.evaluation_new import NewEvaluationRecipe  # noqa: E402
-
-HELM_PYTHON = os.environ.get('AIQ_EVALS_HELM_PYTHON', sys.executable)
-
-
-def _helm_available() -> bool:
-    import subprocess
-
-    return subprocess.run([HELM_PYTHON, '-c', 'import helm, magnet_evals'], capture_output=True).returncode == 0
+from magnet.backends.aiq_evals.projection import (  # noqa: E402
+    evidence_view,
+    flat_metrics,
+    select_metric,
+)
 
 
-needs_helm = pytest.mark.skipif(not _helm_available(), reason='needs crfm-helm + magnet_evals in a worker')
+def helm_recipe(dpath, *, select=HELM_SELECT, algo=None, **kwargs):
+    algo = {**HELM_ALGO, **(algo or {}), 'select': select}
+    return write_recipe(dpath, {'evaluate': evaluation_node(algo)}, **kwargs)
 
-SELECT = {'metric': 'exact_match', 'group': 'test', 'score': None}
 
-
-def write_recipe(dpath, *, claim='assert metrics.evaluate.score >= 0', select=SELECT, max_eval=1,
-                 data_revision='helm-builtin'):
-    fpath = ub.Path(dpath) / 'recipe.yaml'
-    fpath.write_text(yaml.safe_dump({
-        'name': 'aiq_evals_probe',
-        'title': 'aiq-evals probe',
-        'description': 'one HELM evaluation through aiq-evals',
-        'version': '1.0',
-        'organizations': ['Kitware'],
-        'submitter': {'name': 't', 'email': 't@example.com'},
-        'links': [],
-        'tags': ['test'],
-        'claim': {'python': claim},
-        'kwdagger': {
-            'result_node': 'evaluate',
-            'pipeline': {'nodes': {'evaluate': {
-                'class': 'magnet.backends.aiq_evals.EvaluationNode',
-                'algo_params': {
-                    'engine': 'helm',
-                    'task': 'simple_mcqa',
-                    'task_revision': 'helm-builtin',
-                    'data_revision': data_revision,
-                    'models': [{'role': 'primary', 'model': 'simple/model1', 'revision': 'local-v1'}],
-                    'task_options': {'max_eval_instances': max_eval},
-                    'select': select,
-                },
-                'perf_params': {'worker_python': HELM_PYTHON},
-            }}},
-        },
-    }, sort_keys=False))
-    return fpath
-
+# --- M5 + dashboards: one HELM evaluation -> one claim row ----------------------
 
 @needs_helm
 def test_one_helm_evaluation_becomes_one_claim_row(tmp_path):
-    recipe = NewEvaluationRecipe(write_recipe(tmp_path), ub.Path(tmp_path) / 'out', validate='off')
-    card = recipe.evaluate(backend='serial')
+    recipe, card = evaluate(helm_recipe(tmp_path), tmp_path / 'out')
     rows = recipe_rows(recipe)
     assert len(rows) == 1
     row = rows[0]['row']
@@ -80,82 +74,48 @@ def test_one_helm_evaluation_becomes_one_claim_row(tmp_path):
     assert row['metrics.evaluate.selected.metric'] == 'exact_match'
     assert row['metrics.evaluate.score'] == row['metrics.evaluate.selected.value']
     assert len(row['metrics.evaluate.measurement_identity']) == 64
-    assert card is not None
-    verdicts = list((ub.Path(tmp_path) / 'out').glob('*/results/*/verdict.json'))
-    assert len(verdicts) == 1
-    verdict = json.loads(verdicts[0].read_text())
+    assert card.result == 'VERIFIED'
+
+    # The legacy dashboard contract (eval-card-viz upload): card.yaml, log,
+    # results/*/verdict.json, verdict.json with concrete claim symbols.
+    run_dir = latest_run_dir(tmp_path / 'out')
+    for name in ('card.yaml', 'verdict.json', 'requested_runs.json'):
+        assert (run_dir / name).is_file(), name
+    assert any(run_dir.glob('*log*'))
+    (verdict,) = run_verdicts(run_dir)
     assert verdict['status'] == 'VERIFIED'
     assert verdict['consumed'] == ['metrics.evaluate.score']
-
-
-def recipe_rows(recipe):
-    from magnet._kwdagger import KWDaggerProcessor
-
-    processor = KWDaggerProcessor(recipe.kwdagger, root_dpath=recipe.kwdagger_dpath)
-    return processor.load_available_result_rows()
+    assert verdict['symbols']['metrics.evaluate.score'] == row['metrics.evaluate.score']
+    top = json.loads((run_dir / 'verdict.json').read_text())
+    assert top['result'] == 'VERIFIED' and top['evidence']['available'] == 1
 
 
 # --- M6: cardinality acceptance experiment -----------------------------------
-# Representative native multi-result fixtures from aiq-evals (committed there;
-# see aiq-evals docs/planning/phase1-evidence.md), imported through real engine
-# workers, loaded by real kwdagger build_tables + KWDaggerProcessor, and judged
-# through ClaimResultNamespace by the real evaluate_new flow.
+# Representative native multi-result fixtures committed in aiq-magnet-evals
+# (tests/fixtures/*-native/multi), imported through real engine workers, loaded
+# by real kwdagger build_tables + KWDaggerProcessor, and judged through
+# ClaimResultNamespace by the real evaluate_new flow.
 
-def _aiq_evals_repo():
-    import pathlib
-
-    root = pathlib.Path(os.environ.get('AIQ_EVALS_REPO', pathlib.Path(magnet_evals.__file__).parents[1]))
-    return root if (root / 'tests' / 'fixtures').is_dir() else None
-
-
-def _worker(var):
-    python = os.environ.get(var)
-    return python if python and os.path.exists(python) else None
-
-
-INSPECT_PYTHON = _worker('AIQ_EVALS_INSPECT_PYTHON')
-OLMO_PYTHON = _worker('AIQ_EVALS_OLMO_PYTHON')
-REPO = _aiq_evals_repo()
-
-
-def multi_recipe(dpath, *, engine_params, worker, selects, claim):
-    fpath = ub.Path(dpath) / 'recipe.yaml'
-    fpath.write_text(yaml.safe_dump({
-        'name': 'cardinality', 'title': 'cardinality', 'description': 'M6 cardinality',
-        'version': '1.0', 'organizations': ['Kitware'],
-        'submitter': {'name': 't', 'email': 't@example.com'}, 'links': [], 'tags': ['test'],
-        'claim': {'python': claim},
-        'kwdagger': {
-            'result_node': 'evaluate',
-            'pipeline': {'nodes': {'evaluate': {
-                'class': 'magnet.backends.aiq_evals.EvaluationNode',
-                'algo_params': engine_params,
-                'perf_params': {'worker_python': worker},
-            }}},
-            'matrix': {'evaluate.select': [json.dumps(s, sort_keys=True) for s in selects]},
-        },
-    }, sort_keys=False))
-    return fpath
-
-
-def run_cardinality(tmp_path, **kwargs):
-    recipe = NewEvaluationRecipe(multi_recipe(tmp_path, **kwargs), ub.Path(tmp_path) / 'out', validate='off')
-    recipe.evaluate(backend='serial')
+def run_cardinality(tmp_path, *, engine_params, worker, selects, claim):
+    fpath = write_recipe(
+        tmp_path, {'evaluate': evaluation_node(engine_params, worker=worker)}, claim=claim,
+        matrix={'evaluate.select': [json.dumps(s, sort_keys=True) for s in selects]}, name='cardinality',
+    )
+    recipe, _ = evaluate(fpath, tmp_path / 'out')
     rows = recipe_rows(recipe)
-    verdicts = [
-        json.loads(p.read_text())
-        for p in (ub.Path(tmp_path) / 'out').glob('*/results/*/verdict.json')
-    ]
+    verdicts = run_verdicts(latest_run_dir(tmp_path / 'out'))
     by_select = {json.dumps(json.loads(r['row']['params.evaluate.select']), sort_keys=True): r for r in rows}
     return rows, verdicts, by_select
 
 
-@pytest.mark.skipif(not (INSPECT_PYTHON and REPO), reason='needs AIQ_EVALS_INSPECT_PYTHON and aiq-evals fixtures')
-def test_cardinality_inspect_multi_log_epochs(tmp_path):
-    fixture = REPO / 'tests' / 'fixtures' / 'inspect-native' / 'multi'
+@needs_repo
+@needs_inspect
+def test_cardinality_inspect_multi_log_epochs(tmp_path, monkeypatch):
+    repo_on_worker_path(monkeypatch)
+    fixture = repo() / 'tests' / 'fixtures' / 'inspect-native' / 'multi'
     engine_params = {
         'engine': 'inspect_ai',
-        'task': str(REPO / 'tests' / 'native' / 'inspect_fixture.py'),
+        'task': str(repo() / 'tests' / 'native' / 'inspect_fixture.py'),
         'data_revision': 'fixture-v1',
         'models': [
             {'role': 'primary', 'model': 'local', 'provider': 'fixture', 'revision': 'local-v1'},
@@ -177,17 +137,20 @@ def test_cardinality_inspect_multi_log_epochs(tmp_path):
     row = by_select[json.dumps(unique, sort_keys=True)]['row']
     assert row['metrics.evaluate.score'] == 1.0 and row['metrics.evaluate.candidates'] == 1
     assert row['metrics.evaluate.selected.task'] == 'role_task'
+    # One import, reused by the other two projections (single-flight or not).
+    assert sorted(r['row']['metrics.evaluate.action'] for r in rows) == ['imported', 'reused', 'reused']
     # Rejected selections expose no score: nothing is averaged across tasks.
     for select, count in ((ambiguous, 3), (nothing, 0)):
         rejected = by_select[json.dumps(select, sort_keys=True)]['row']
-        assert 'metrics.evaluate.score' not in rejected or rejected['metrics.evaluate.score'] != rejected['metrics.evaluate.score']
+        score = rejected.get('metrics.evaluate.score')
+        assert score is None or score != score
         assert rejected['metrics.evaluate.eligible'] is False
         assert rejected['metrics.evaluate.candidates'] == count
     statuses = sorted(v['status'] for v in verdicts)
     assert statuses.count('VERIFIED') == 1, statuses
 
     # Duplicate sample IDs across task logs and repeated epochs stay inside the
-    # aiq-evals run; the claim-facing value is the selected task's native metric.
+    # run; the claim-facing value is the selected task's native metric.
     run = magnet_evals.load_run(row['metrics.evaluate.run_path'])
     ids = [(s.task, s.sample_id) for s in run.result.samples if s.native.get('kind') == 'sample']
     assert len({sid for _, sid in ids}) < len({t for t, _ in ids}) * 2
@@ -196,8 +159,10 @@ def test_cardinality_inspect_multi_log_epochs(tmp_path):
     assert native == [row['metrics.evaluate.score']]
 
 
-@pytest.mark.skipif(not (OLMO_PYTHON and REPO), reason='needs AIQ_EVALS_OLMO_PYTHON and aiq-evals fixtures')
-def test_cardinality_olmo_suite_prefix_overlapping_tasks(tmp_path):
+@needs_repo
+@needs_olmo
+def test_cardinality_olmo_suite_prefix_overlapping_tasks(tmp_path, monkeypatch):
+    repo_on_worker_path(monkeypatch)
     engine_params = {
         'engine': 'olmo_eval',
         'task': 'aiq_p1_multi',
@@ -208,7 +173,7 @@ def test_cardinality_olmo_suite_prefix_overlapping_tasks(tmp_path):
             'upstream_revision': '73ade80e24f796af55caeb8fd7b75a7f3fd607fd',
             'task_modules': ['tests.native.olmo_fixture'],
         },
-        'import_source': str(REPO / 'tests' / 'fixtures' / 'olmo-native' / 'multi'),
+        'import_source': str(repo() / 'tests' / 'fixtures' / 'olmo-native' / 'multi'),
     }
     unique = {'task': 'aiq_p1_local', 'metric': 'contains_42'}
     ambiguous = {'metric': 'contains_42'}
@@ -222,69 +187,473 @@ def test_cardinality_olmo_suite_prefix_overlapping_tasks(tmp_path):
     assert sorted(v['status'] for v in verdicts).count('VERIFIED') == 1
 
 
-# --- M3/M4/M9: identity, reuse, dry run, projection ---------------------------
-
-
-def _evaluations(tmp_path):
-    return sorted((ub.Path(tmp_path) / 'out' / '_kwdagger' / 'evaluate').glob('*/evaluation.json'))
-
-
-def _store_attempts(tmp_path):
-    return sorted((ub.Path(tmp_path) / 'out' / '_kwdagger' / '_aiq_evals_store' / 'attempts').rglob('attempt.json'))
-
+# --- M3: identity, reuse, stale markers ---------------------------------------
 
 @needs_helm
 def test_reuse_selector_change_and_stale_marker(tmp_path):
-    out = ub.Path(tmp_path) / 'out'
-    recipe = NewEvaluationRecipe(write_recipe(tmp_path), out, validate='off')
-    recipe.evaluate(backend='serial')
-    assert len(_evaluations(tmp_path)) == 1 and len(_store_attempts(tmp_path)) == 1
+    out = tmp_path / 'out'
+    fpath = helm_recipe(tmp_path)
+    recipe, _ = evaluate(fpath, out)
+    assert len(evaluations(out)) == 1 and len(store_attempts(out)) == 1
 
     # Same request: kwdagger skips the node (it still validates as done).
-    recipe.evaluate(backend='serial')
-    assert len(_evaluations(tmp_path)) == 1 and len(_store_attempts(tmp_path)) == 1
+    evaluate(fpath, out)
+    assert len(evaluations(out)) == 1 and len(store_attempts(out)) == 1
 
     # A different evidence selector reruns the node, not the native evaluation.
-    reselect = NewEvaluationRecipe(
-        write_recipe(tmp_path, select={'metric': 'quasi_exact_match', 'group': 'test', 'score': None}),
-        out, validate='off',
-    )
-    reselect.evaluate(backend='serial')
-    evaluations = [json.loads(p.read_text()) for p in _evaluations(tmp_path)]
-    assert len(evaluations) == 2
-    assert sorted(e['action'] for e in evaluations) == ['executed', 'reused']
-    assert len({e['measurement_identity']['digest'] for e in evaluations}) == 1
-    assert len(_store_attempts(tmp_path)) == 1
+    evaluate(helm_recipe(tmp_path, select={'metric': 'quasi_exact_match', 'group': 'test', 'score': None}), out)
+    records = [json.loads(p.read_text()) for p in evaluations(out)]
+    assert len(records) == 2
+    assert sorted(e['action'] for e in records) == ['executed', 'reused']
+    assert len({e['measurement_identity']['digest'] for e in records}) == 1
+    assert len(store_attempts(out)) == 1
 
     # A stale marker cannot hide a broken run: tamper with the canonical run.
-    run_path = ub.Path(evaluations[0]['run_path'])
+    run_path = Path(records[0]['run_path'])
     (run_path / 'native' / 'injected.txt').write_text('tamper\n')
-    recipe.evaluate(backend='serial')
-    assert len(_store_attempts(tmp_path)) == 2
+    evaluate(fpath, out)
+    assert len(store_attempts(out)) == 2
     assert len(recipe_rows(recipe)) == 2
 
 
 @needs_helm
 def test_non_reusable_identity_always_executes(tmp_path):
-    fpath = write_recipe(tmp_path, data_revision=None)
-    recipe = NewEvaluationRecipe(fpath, ub.Path(tmp_path) / 'out', validate='off')
-    recipe.evaluate(backend='serial')
-    recipe.evaluate(backend='serial')
-    evaluations = [json.loads(p.read_text()) for p in _evaluations(tmp_path)]
-    assert len(evaluations) == 2  # a nonce in the node id: never skipped as done
-    assert all(e['preflight_identity'].startswith('unresolved-') for e in evaluations)
-    assert all(not e['measurement_identity']['reusable'] for e in evaluations)
+    out = tmp_path / 'out'
+    fpath = helm_recipe(tmp_path, algo={'data_revision': None})
+    evaluate(fpath, out)
+    evaluate(fpath, out)
+    records = [json.loads(p.read_text()) for p in evaluations(out)]
+    assert len(records) == 2  # a nonce in the node id: never skipped as done
+    assert all(e['preflight_identity'].startswith('unresolved-') for e in records)
+    assert all(not e['measurement_identity']['reusable'] for e in records)
+
+
+TASK_SOURCE = """
+from inspect_ai import Task, task
+from inspect_ai.dataset import Sample
+from inspect_ai.scorer import match
+from inspect_ai.solver import generate
+
+
+@task
+def edited_task():
+    # revision marker: {marker}
+    return Task(dataset=[Sample(input="Two plus two?", target="4")], solver=generate(), scorer=match())
+"""
+
+
+@needs_inspect
+def test_task_code_change_reruns_the_node(tmp_path):
+    # M3: kwdagger's node identity follows the resolved measurement, so editing
+    # the task file (not the recipe) schedules a new native evaluation.
+    task_file = tmp_path / 'edited_task.py'
+    task_file.write_text(TASK_SOURCE.format(marker='v1'))
+    algo = {
+        'engine': 'inspect_ai',
+        'task': str(task_file),
+        'data_revision': 'example-v1',
+        'models': [{'role': 'primary', 'model': 'local', 'provider': 'aiq_example', 'revision': 'local-v1'}],
+        'engine_options': {'registration_modules': ['magnet_evals.examples.inspect_tasks']},
+        'select': {'scorer': 'match', 'metric': 'accuracy'},
+    }
+    fpath = write_recipe(tmp_path, {'evaluate': evaluation_node(algo, worker=INSPECT_PYTHON)},
+                         claim='assert metrics.evaluate.score == 1.0')
+    out = tmp_path / 'out'
+    evaluate(fpath, out)
+    evaluate(fpath, out)
+    assert len(evaluations(out)) == 1 and len(store_attempts(out)) == 1
+    task_file.write_text(TASK_SOURCE.format(marker='v2'))
+    _, card = evaluate(fpath, out)
+    records = [json.loads(p.read_text()) for p in evaluations(out)]
+    assert card.result == 'VERIFIED'
+    assert len(records) == 2 and len(store_attempts(out)) == 2
+    assert len({r['measurement_identity']['digest'] for r in records}) == 2
+    assert all(r['action'] == 'executed' for r in records)
 
 
 def test_dry_run_resolves_nothing(tmp_path, monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError('dry run must not resolve (would run task code)')
 
-    monkeypatch.setattr(node_mod, '_preflight_digest', forbidden)
-    recipe = NewEvaluationRecipe(write_recipe(tmp_path), ub.Path(tmp_path) / 'out', validate='off')
-    recipe.evaluate(backend='serial', dry_run=True)
-    assert not (ub.Path(tmp_path) / 'out' / '_kwdagger' / '_aiq_evals_store').exists()
-    assert not _evaluations(tmp_path)
+    monkeypatch.setattr(node_mod, 'run_preflight', forbidden)
+    _, card = evaluate(helm_recipe(tmp_path), tmp_path / 'out', dry_run=True)
+    assert card.result == 'NOT_EVALUATED'
+    assert not (tmp_path / 'out' / '_kwdagger' / '_aiq_evals_store').exists()
+    assert not evaluations(tmp_path / 'out')
+
+
+def test_static_errors_surface_in_a_dry_run(tmp_path):
+    with pytest.raises(ValueError, match='unknown evidence selector'):
+        evaluate(helm_recipe(tmp_path, select={'metrik': 'exact_match'}), tmp_path / 'out', dry_run=True)
+    fpath = helm_recipe(tmp_path, algo={'coverage_policy': 'most'})
+    with pytest.raises(ValueError, match='coverage_policy'):
+        evaluate(fpath, tmp_path / 'out2', dry_run=True)
+
+
+def _node(**algo):
+    base = {'engine': 'helm', 'task': 'simple_mcqa', 'models': [{'model': 'simple/model1', 'revision': 'r'}]}
+    node = EvaluationNode(name='evaluate', algo_params={**base, **algo})
+    node.configure({})
+    return node
+
+
+def test_measurement_identity_is_computed_never_configured(monkeypatch):
+    # A recipe cannot supply it ...
+    with pytest.raises(ValueError, match='computed by preflight'):
+        _node(measurement_identity='f' * 64)
+    with pytest.raises(ValueError, match='computed by preflight'):
+        _node(import_identity='e' * 64)
+
+    # ... and a value arriving through configuration (e.g. a matrix) is replaced.
+    node = EvaluationNode(name='evaluate', algo_params={
+        'engine': 'helm', 'task': 'simple_mcqa', 'models': [{'model': 'simple/model1', 'revision': 'r'}],
+    })
+    node.configure({'measurement_identity': 'f' * 64, 'import_identity': 'e' * 64})
+    assert node.final_algo_config['measurement_identity'] == node_mod.DRY_RUN_IDENTITY
+    assert node.final_algo_config['import_identity'] is None
+
+    calls = []
+
+    def fake_preflight(command):
+        calls.append(command)
+        return {'measurement_identity': {'digest': 'a' * 64, 'reusable': True, 'unknown_reasons': []},
+                'import_identity': None}
+
+    monkeypatch.setattr(node_mod, 'run_preflight', fake_preflight)
+    with preflight_scope(True):
+        assert node.final_algo_config['measurement_identity'] == 'a' * 64
+        assert node.final_algo_config['measurement_identity'] == 'a' * 64
+    assert len(calls) == 1  # memoized within one schedule
+    with preflight_scope(True):
+        node.final_algo_config
+    assert len(calls) == 2  # every schedule re-resolves
+
+
+def test_preflight_runs_through_the_node_container(monkeypatch):
+    commands = []
+
+    def fake_preflight(command):
+        commands.append(command)
+        return {'measurement_identity': {'digest': 'b' * 64, 'reusable': True, 'unknown_reasons': []},
+                'import_identity': None}
+
+    monkeypatch.setattr(node_mod, 'run_preflight', fake_preflight)
+    node = _node()
+    node.config['worker_python'] = '/opt/engine/bin/python'
+    node.container_image = 'engine-image:latest'
+    with preflight_scope(True):
+        node.final_algo_config
+    (command,) = commands
+    # Same wrapper as the node's own command: resolution sees the container's
+    # engine and the container-only worker interpreter.
+    assert command.startswith('docker run')
+    assert 'engine-image:latest' in command
+    assert 'magnet.backends.aiq_evals.cli.resolve_node' in command
+    assert '--worker_python=/opt/engine/bin/python' in command
+    assert node.command.startswith('docker run')
+
+
+# --- M4: evidence is recomputed from the validated run, never trusted ---------
+
+def _publish(store_root, value, *, task='t', digest='c' * 64):
+    from magnet_evals.artifacts import publish_run
+    from magnet_evals.contracts import (
+        CoverageFacts,
+        EvaluationRequest,
+        EvaluationResult,
+        ExecutionContext,
+        MeasurementIdentity,
+        MetricRecord,
+        ModelBinding,
+        ResolvedEvaluation,
+        ResultRecord,
+    )
+    from magnet_evals.store import ResultStore
+
+    identity = MeasurementIdentity(algorithm='t', digest=digest, reusable=True)
+    request = EvaluationRequest(engine='helm', task=task, models=(ModelBinding(role='primary', model='m'),))
+    resolved = ResolvedEvaluation(request=request, adapter_version='a', engine_version=None,
+                                  native_config={}, identity=identity)
+    metric = MetricRecord(task=task, model_role='primary', metric='acc', value=value, denominator=4)
+    result = EvaluationResult(engine='helm', identity=identity, status='succeeded', records=(
+        ResultRecord(task=task, model_role='primary', metrics=(metric,),
+                     coverage=CoverageFacts(status='complete', expected=4, processed=4)),
+    ))
+    path = ResultStore(store_root).run_path(digest)
+    return publish_run(path, resolved=resolved, result=result, context=ExecutionContext(output_dir=path))
+
+
+def _evaluation_json(node_dir, run, *, select=None, policy='complete'):
+    from magnet.backends.aiq_evals.projection import normalize_selector
+
+    node_dir.mkdir(parents=True, exist_ok=True)
+    fpath = node_dir / 'evaluation.json'
+    fpath.write_text(json.dumps({
+        'schema': node_mod.EVALUATION_SCHEMA,
+        'action': 'executed',
+        'run_path': str(run.path),
+        'measurement_identity': run.resolved.identity.to_dict(),
+        'normalized_artifact_identity': run.manifest['normalized_artifact_identity'],
+        'import_identity': None,
+        'select': normalize_selector(select),
+        'coverage_policy': policy,
+    }))
+    return fpath
+
+
+def _row(fpath):
+    node = SimpleNamespace(name='evaluate', out_paths={'evaluation_fname': 'evaluation.json'},
+                           primary_out_key='evaluation_fname')
+    return dict(node_mod.load_evaluation_row(node, fpath.parent))
+
+
+def test_edited_evaluation_json_cannot_change_the_evidence(tmp_path):
+    run = _publish(tmp_path / 'store', 0.5)
+    fpath = _evaluation_json(tmp_path / 'node', run)
+    assert _row(fpath)['metrics.evaluate.score'] == 0.5
+
+    # Claim-facing values written into evaluation.json are ignored: the row is
+    # recomputed from the validated run.
+    summary = json.loads(fpath.read_text())
+    summary['evidence'] = {'selected': {'value': 0.99}, 'eligible': True, 'denominator': 1000}
+    summary['score'] = 0.99
+    fpath.write_text(json.dumps(summary))
+    row = _row(fpath)
+    assert row['metrics.evaluate.score'] == 0.5 and row['metrics.evaluate.denominator'] == 4
+    assert node_mod.evaluation_is_valid(fpath)
+
+    # A changed run reference or identity makes the node invalid (and rerun).
+    other = _publish(tmp_path / 'store', 0.9, digest='d' * 64)
+    for key, value in (
+        ('run_path', str(other.path)),
+        ('normalized_artifact_identity', 'f' * 64),
+        ('measurement_identity', {'digest': 'e' * 64}),
+    ):
+        tampered = {**json.loads(_evaluation_json(tmp_path / 'node', run).read_text()), key: value}
+        fpath.write_text(json.dumps(tampered))
+        assert not node_mod.evaluation_is_valid(fpath), key
+        with pytest.raises(node_mod.InvalidEvaluation):
+            _row(fpath)
+
+
+def test_edited_run_payload_invalidates_the_node(tmp_path):
+    run = _publish(tmp_path / 'store', 0.5)
+    fpath = _evaluation_json(tmp_path / 'node', run)
+    results = run.path / 'results.json'
+    payload = json.loads(results.read_text())
+    payload['records'][0]['metrics'][0]['value'] = 0.99
+    results.write_text(json.dumps(payload))
+    assert not node_mod.evaluation_is_valid(fpath)
+    with pytest.raises(node_mod.InvalidEvaluation, match='does not validate'):
+        _row(fpath)
+
+
+def test_done_check_pins_the_scheduled_projection(tmp_path):
+    run = _publish(tmp_path / 'store', 0.5)
+    fpath = _evaluation_json(tmp_path / 'node', run, select={'metric': 'acc'})
+    expected = {'select': {'metric': 'acc'}, 'coverage_policy': 'complete', 'measurement_identity': 'c' * 64}
+    assert node_mod.evaluation_is_valid(fpath, expected)
+    # Someone edits the recorded selector or policy: the node is not done.
+    for key, value in (('select', {'metric': 'other'}), ('coverage_policy', 'any')):
+        edited = {**json.loads(fpath.read_text()), key: value}
+        other = tmp_path / 'edited' / key / 'evaluation.json'
+        other.parent.mkdir(parents=True)
+        other.write_text(json.dumps(edited))
+        assert not node_mod.evaluation_is_valid(other, expected), key
+    assert not node_mod.evaluation_is_valid(fpath, {**expected, 'measurement_identity': 'd' * 64})
+
+
+# --- ADR-0011: imports keyed by content ----------------------------------------
+
+def _helm_native_run(tmp_path):
+    """Execute HELM once and return a copy of its native run directory."""
+    outcome = magnet_evals.ensure_evaluation(
+        magnet_evals.EvaluationRequest.from_dict({**HELM_ALGO, 'schema_version': 1}),
+        tmp_path / 'seed-store', worker_python=HELM_PYTHON,
+    )
+    assert outcome.run.result.status == 'succeeded'
+    (run_dir,) = (outcome.run.path / 'native').rglob('run_spec.json')
+    source = tmp_path / 'helm-import'
+    shutil.copytree(run_dir.parent, source / run_dir.parent.name)
+    return source
+
+
+def _set_helm_exact_match(source, value):
+    (stats_fpath,) = source.rglob('stats.json')
+    stats = json.loads(stats_fpath.read_text())
+    for stat in stats:
+        name = stat['name']
+        if name['name'] == 'exact_match' and name.get('split') == 'test' and not name.get('perturbation'):
+            stat['mean'] = value
+    stats_fpath.write_text(json.dumps(stats, indent=2))
+
+
+@needs_helm
+def test_editing_imported_native_files_in_place_reruns_the_node(tmp_path):
+    source = _helm_native_run(tmp_path)
+    _set_helm_exact_match(source, 0.25)
+    out = tmp_path / 'out'
+    fpath = helm_recipe(tmp_path, algo={'import_source': str(source)})
+    recipe, _ = evaluate(fpath, out)
+    (first,) = recipe_rows(recipe)
+    assert first['row']['metrics.evaluate.action'] == 'imported'
+    assert first['row']['metrics.evaluate.score'] == 0.25
+
+    # Unchanged content: kwdagger skips the node.
+    evaluate(fpath, out)
+    assert len(evaluations(out)) == 1
+
+    # Same path, edited content: new import identity -> new node -> new value.
+    _set_helm_exact_match(source, 0.75)
+    recipe, card = evaluate(fpath, out, )
+    rows = sorted(recipe_rows(recipe), key=lambda r: r['row']['metrics.evaluate.score'])
+    assert [r['row']['metrics.evaluate.score'] for r in rows] == [0.25, 0.75]
+    assert rows[1]['row']['metrics.evaluate.action'] == 'imported'
+    assert len({r['row']['metrics.evaluate.import_identity'] for r in rows}) == 2
+    # The requested (current) evidence is the new content only.
+    (verdict,) = run_verdicts(latest_run_dir(out))
+    assert verdict['symbols']['metrics.evaluate.score'] == 0.75
+
+
+# --- ADR-0011: concurrent projections of one measurement execute it once ------
+
+@needs_helm
+@needs(shutil.which('tmux') is not None, 'needs tmux for concurrent scheduling')
+def test_concurrent_selector_nodes_execute_the_native_evaluation_once(tmp_path):
+    selects = [
+        {'metric': 'exact_match', 'group': 'test', 'score': None},
+        {'metric': 'quasi_exact_match', 'group': 'test', 'score': None},
+        {'metric': 'prefix_exact_match', 'group': 'test', 'score': None},
+    ]
+    fpath = write_recipe(
+        tmp_path, {'evaluate': evaluation_node(HELM_ALGO)},
+        matrix={'evaluate.select': [json.dumps(s, sort_keys=True) for s in selects]}, name='concurrent',
+    )
+    out = tmp_path / 'out'
+    recipe, card = evaluate(fpath, out, backend='tmux', tmux_workers=3)
+    records = [json.loads(p.read_text()) for p in evaluations(out)]
+    assert len(records) == 3
+    assert sorted(r['action'] for r in records) == ['executed', 'reused', 'reused']
+    assert len(store_attempts(out)) == 1
+    assert len(recipe_rows(recipe)) == 3
+
+
+# --- M10: evidence scopes and failure provenance -------------------------------
+
+@needs_helm
+def test_requested_versus_accumulated_evidence(tmp_path):
+    out = tmp_path / 'out'
+    other = {'metric': 'quasi_exact_match', 'group': 'test', 'score': None}
+    evaluate(helm_recipe(tmp_path), out)
+    _, requested = evaluate(helm_recipe(tmp_path, select=other), out)
+    assert len(requested.cell_results) == 1
+    assert requested.cell_results[0].evidence_row['metrics.evaluate.selected.metric'] == 'quasi_exact_match'
+    _, accumulated = evaluate(helm_recipe(tmp_path, select=other, scope='all'), out)
+    metrics = sorted(c.evidence_row['metrics.evaluate.selected.metric'] for c in accumulated.cell_results)
+    assert metrics == ['exact_match', 'quasi_exact_match']
+
+
+@needs_repo
+@needs_helm
+def test_native_failure_is_provenance_not_a_verdict(tmp_path, monkeypatch):
+    repo_on_worker_path(monkeypatch)
+    fpath = helm_recipe(tmp_path, algo={
+        'task': 'aiq_p5_fail', 'task_revision': 'x', 'data_revision': 'x',
+        'engine_options': {'plugins': ['tests.native.helm_plugin_fixture']},
+    }, claim='assert metrics.evaluate.score > 0.5')
+    out = tmp_path / 'out'
+    recipe, card = evaluate(fpath, out)
+    # No evidence row, so the claim is not falsified by an execution error.
+    assert card.result != 'FALSIFIED' and not card.cell_results
+    assert card.requested_work['attempt_status'] == {'failed': 1}
+    (node_dir,) = (out / '_kwdagger' / 'evaluate').iterdir()
+    summary = json.loads((node_dir / 'attempt_summary.json').read_text())
+    assert summary['status'] == 'failed' and not (node_dir / 'evaluation.json').exists()
+    (attempt,) = store_attempts(out)
+    assert attempt.read_text().strip() == 'failed'
+
+
+# --- M8: leasing, duplicate startup, cancellation ------------------------------
+
+def test_lease_runtime_maps_lease_env_and_refuses_mismatch():
+    from magnet.backends.aiq_evals.cli.run_node import lease_runtime
+
+    request = {'models': [{'role': 'primary', 'model': 'smol-135'}]}
+    env = {'OPENAI_BASE_URL': 'http://gw/v1', 'OPENAI_API_KEY': 'lease-key'}
+    assert lease_runtime('smol-135', request, env) == ({'primary': 'http://gw/v1'}, {'OPENAI_API_KEY': 'lease-key'})
+    assert lease_runtime(None, request, env) == ({}, {})
+    with pytest.raises(SystemExit, match='no lease is active'):
+        lease_runtime('smol-135', request, {})
+    with pytest.raises(SystemExit, match='serves'):
+        lease_runtime('smol-135', request, {**env, 'INFER_STACK_ENDPOINT_SMOL_135': 'other-name'})
+
+
+def _leased_command(store, digest, monkeypatch, **algo):
+    from magnet.leasing import LeaseSettings
+
+    monkeypatch.setattr(node_mod, 'run_preflight', lambda command: {
+        'measurement_identity': {'digest': digest, 'reusable': True, 'unknown_reasons': []},
+        'import_identity': 'f' * 64 if algo.get('import_source') else None,
+    })
+    node = EvaluationNode(
+        name='evaluate',
+        algo_params={'engine': 'inspect_ai', 'task': 't', 'models': [{'model': 'smol-135', 'revision': 'r'}], **algo},
+        perf_params={'endpoint': 'smol-135', 'store_dpath': str(store)},
+    )
+    node.apply_lease_settings(LeaseSettings(enabled=True))
+    node.configure({})
+    with preflight_scope(True):
+        return node.command
+
+
+def test_lease_wraps_only_when_native_work_is_needed(tmp_path, monkeypatch):
+    monkeypatch.delenv('INFER_STACK_LEASE_ID', raising=False)
+    digest = 'c' * 64
+    store = tmp_path / 'store'
+    assert 'infer-stack run' in _leased_command(store, digest, monkeypatch)
+    # A valid stored run means the node only reuses: no model is leased.
+    _publish(store, 1.0, digest=digest)
+    assert 'infer-stack run' not in _leased_command(store, digest, monkeypatch)
+    # An import runs no model either.
+    assert 'infer-stack run' not in _leased_command(tmp_path / 'empty', digest, monkeypatch,
+                                                    import_source=str(tmp_path))
+
+
+@needs_repo
+@needs_helm
+def test_sigterm_cancels_the_engine_worker(tmp_path, monkeypatch):
+    repo_on_worker_path(monkeypatch)
+    pid_file = tmp_path / 'child.pid'
+    request = {
+        'engine': 'helm', 'task': 'aiq_p5_slow', 'task_revision': 'x', 'data_revision': 'x',
+        'models': [{'role': 'primary', 'model': 'simple/model1', 'revision': 'local-v1'}],
+        'task_options': {'max_eval_instances': 1},
+        'engine_options': {'plugins': ['tests.native.helm_plugin_fixture']},
+    }
+    env = dict(os.environ, AIQ_P5_CHILD_PID_FILE=str(pid_file))
+    proc = subprocess.Popen(
+        [sys.executable, '-m', 'magnet.backends.aiq_evals.cli.run_node', '--request', json.dumps(request),
+         '--store_dpath', str(tmp_path / 'store'), '--out_dpath', str(tmp_path / 'node'),
+         '--worker_python', HELM_PYTHON],
+        env=env,
+    )
+    try:
+        for _ in range(600):
+            if pid_file.exists() and pid_file.read_text():
+                break
+            time.sleep(0.1)
+        else:
+            pytest.fail('native HELM task never started')
+        proc.send_signal(signal.SIGTERM)
+        proc.wait(timeout=60)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    child = ub.Path(f'/proc/{int(pid_file.read_text())}/stat')
+    assert not child.exists() or child.read_text().split()[2] == 'Z'
+    attempts = list((tmp_path / 'store' / 'attempts').rglob('ATTEMPT_TERMINAL'))
+    assert [p.read_text().strip() for p in attempts] == ['cancelled']
+    assert not (tmp_path / 'node' / 'evaluation.json').exists()
 
 
 # --- engine-free projection -----------------------------------------------------
@@ -345,97 +714,23 @@ def test_eligibility_policy_and_score_exposure(status, coverage, value, policy, 
     assert flat['denominator'] == 4
 
 
-# --- M8: leasing, duplicate startup, cancellation ------------------------------
-
-def test_lease_runtime_maps_lease_env_and_refuses_mismatch():
-    from magnet.backends.aiq_evals.cli.run_node import lease_runtime
-
-    request = {'models': [{'role': 'primary', 'model': 'smol-135'}]}
-    env = {'OPENAI_BASE_URL': 'http://gw/v1', 'OPENAI_API_KEY': 'lease-key'}
-    assert lease_runtime('smol-135', request, env) == ({'primary': 'http://gw/v1'}, {'OPENAI_API_KEY': 'lease-key'})
-    assert lease_runtime(None, request, env) == ({}, {})
-    with pytest.raises(SystemExit, match='no lease is active'):
-        lease_runtime('smol-135', request, {})
-    with pytest.raises(SystemExit, match='serves'):
-        lease_runtime('smol-135', request, {**env, 'INFER_STACK_ENDPOINT_SMOL_135': 'other-name'})
-
-
-def _leased_node(store, digest):
-    from magnet.leasing import LeaseSettings
-
-    node = EvaluationNode(
-        name='evaluate',
-        algo_params={
-            'engine': 'inspect_ai', 'task': 't', 'models': [{'model': 'smol-135', 'revision': 'r'}],
-            'measurement_identity': digest,
-        },
-        perf_params={'endpoint': 'smol-135', 'store_dpath': str(store)},
-    )
-    node.apply_lease_settings(LeaseSettings(enabled=True))
-    node.configure({})
-    return node
-
-
-def test_lease_wraps_only_when_native_work_is_needed(tmp_path, monkeypatch):
-    from magnet_evals.artifacts import publish_run
-    from magnet_evals.contracts import (
-        EvaluationRequest, EvaluationResult, ExecutionContext, MeasurementIdentity, ModelBinding,
-        ResolvedEvaluation, ResultRecord,
-    )
+def test_single_flight_store_is_shared_by_concurrent_node_processes(tmp_path):
+    # Engine-free: several run_node-like processes contend for one measurement
+    # in one store; exactly one executes (ADR-0011). Uses the store API directly
+    # so the property is checked without an engine.
     from magnet_evals.store import ResultStore
 
-    monkeypatch.delenv('INFER_STACK_LEASE_ID', raising=False)
-    digest = 'a' * 64
     store = ResultStore(tmp_path / 'store')
-    assert 'infer-stack run' in _leased_node(store.root, digest).command
+    digest = 'ab' * 32
+    order = []
 
-    identity = MeasurementIdentity(algorithm='t', digest=digest, reusable=True)
-    request = EvaluationRequest(engine='inspect_ai', task='t', models=(ModelBinding(role='primary', model='m'),))
-    resolved = ResolvedEvaluation(request=request, adapter_version='a', engine_version=None,
-                                  native_config={}, identity=identity)
-    result = EvaluationResult(engine='inspect_ai', identity=identity, status='succeeded',
-                              records=(ResultRecord(task='t', model_role='primary', metrics=()),))
-    path = store.run_path(digest)
-    publish_run(path, resolved=resolved, result=result, context=ExecutionContext(output_dir=path))
-    # A valid stored run means the node only reuses: no model is leased.
-    assert 'infer-stack run' not in _leased_node(store.root, digest).command
+    async def worker(name):
+        async with store.acquisition_lock(digest) as lock:
+            order.append((name, lock.waited))
+            await asyncio.sleep(0.1)
 
+    async def main():
+        await asyncio.gather(*(worker(i) for i in range(3)))
 
-@pytest.mark.skipif(not REPO, reason='needs aiq-evals HELM plugin fixtures')
-@needs_helm
-def test_sigterm_cancels_the_engine_worker(tmp_path):
-    import signal
-    import subprocess
-    import time
-
-    pid_file = tmp_path / 'child.pid'
-    request = {
-        'engine': 'helm', 'task': 'aiq_p5_slow', 'task_revision': 'x', 'data_revision': 'x',
-        'models': [{'role': 'primary', 'model': 'simple/model1', 'revision': 'local-v1'}],
-        'task_options': {'max_eval_instances': 1},
-        'engine_options': {'plugins': ['tests.native.helm_plugin_fixture']},
-    }
-    env = dict(os.environ, AIQ_P5_CHILD_PID_FILE=str(pid_file), PYTHONPATH=str(REPO))
-    proc = subprocess.Popen(
-        [sys.executable, '-m', 'magnet.backends.aiq_evals.cli.run_node', '--request', json.dumps(request),
-         '--store_dpath', str(tmp_path / 'store'), '--out_dpath', str(tmp_path / 'node'),
-         '--worker_python', HELM_PYTHON],
-        env=env,
-    )
-    try:
-        for _ in range(600):
-            if pid_file.exists() and pid_file.read_text():
-                break
-            time.sleep(0.1)
-        else:
-            pytest.fail('native HELM task never started')
-        proc.send_signal(signal.SIGTERM)
-        proc.wait(timeout=60)
-    finally:
-        if proc.poll() is None:
-            proc.kill()
-    child = ub.Path(f'/proc/{int(pid_file.read_text())}/stat')
-    assert not child.exists() or child.read_text().split()[2] == 'Z'
-    attempts = list((tmp_path / 'store' / 'attempts').rglob('ATTEMPT_TERMINAL'))
-    assert [p.read_text().strip() for p in attempts] == ['cancelled']
-    assert not (tmp_path / 'node' / 'evaluation.json').exists()
+    asyncio.run(main())
+    assert [waited for _, waited in order] == [False, True, True]

@@ -6,12 +6,16 @@ Usage (rendered by :class:`magnet.backends.aiq_evals.EvaluationNode`)::
         --request '<EvaluationRequest JSON>' --store_dpath DIR --out_dpath . \\
         [--select '<selector JSON>'] [--coverage_policy complete|any] \\
         [--worker_python PY] [--timeout_seconds S] [--import_source PATH] \\
-        [--measurement_identity DIGEST]
+        [--measurement_identity DIGEST] [--import_identity DIGEST]
 
 Writes ``evaluation.json`` (the node's primary output) only when the native run
 succeeded, so kwdagger never mistakes a failed attempt for a finished node and
-reruns it next time. Failed attempts are still recorded in the aiq-evals store
-and summarized in ``attempt_summary.json``. The exit status is 2.
+reruns it next time. Failed attempts are still recorded in the aiq-magnet-evals
+store and summarized in ``attempt_summary.json``; the exit status is 2.
+
+``evaluation.json`` references the run (path and identities) and records how
+to project it (selector, coverage policy). It stores no claim-facing values:
+loaders recompute the evidence from the validated run (plan M4).
 """
 from __future__ import annotations
 
@@ -19,8 +23,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-
-EVALUATION_SCHEMA = 'magnet-aiq-evals-node/1'
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -36,6 +38,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument('--import_source', default=None)
     parser.add_argument('--allow_external_symlinks', default='False')
     parser.add_argument('--measurement_identity', default=None)
+    parser.add_argument('--import_identity', default=None)
     parser.add_argument('--endpoint', default=None, help='leased infer-stack alias (primary model)')
     return parser
 
@@ -72,16 +75,18 @@ def lease_runtime(endpoint: str | None, request: dict, environ=None) -> tuple[di
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    from magnet_evals import EvaluationRequest, ensure_evaluation
-
-    from magnet.backends.aiq_evals.projection import evidence_view
-
     import signal
 
+    from magnet_evals import EvaluationRequest, ensure_evaluation
+
+    from magnet.backends.aiq_evals.pipeline import EVALUATION_SCHEMA
+    from magnet.backends.aiq_evals.projection import normalize_selector
+
     # kwdagger/tmux stop jobs with SIGTERM; turn it into cancellation so
-    # aiq-evals interrupts and reaps its engine worker group (M8).
+    # aiq-magnet-evals interrupts and reaps its engine worker group (M8).
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     request_dict = json.loads(args.request)
+    select = normalize_selector(json.loads(args.select) if args.select else None)
     model_endpoints, lease_env = lease_runtime(args.endpoint, request_dict)
     request = EvaluationRequest.from_dict(request_dict)
     out_dpath = Path(args.out_dpath)
@@ -101,31 +106,41 @@ def main(argv: list[str] | None = None) -> int:
         'schema': EVALUATION_SCHEMA,
         'action': outcome.action,
         'reuse_reason': outcome.reuse_reason,
+        'waited': outcome.waited,
         'run_path': str(outcome.run.path),
         'attempt_path': None if outcome.attempt is None else str(outcome.attempt.path),
         'status': outcome.run.result.status,
         'measurement_identity': identity.to_dict(),
+        'normalized_artifact_identity': outcome.run.manifest.get('normalized_artifact_identity'),
+        'import_identity': outcome.import_identity,
         'preflight_identity': args.measurement_identity,
+        'preflight_import_identity': args.import_identity,
+        # How MAGNET projects the run; the projected values are never stored.
+        'select': select,
+        'coverage_policy': args.coverage_policy,
         'request': request.to_dict(),
     }
+    changed = []
     preflight = args.measurement_identity
     if preflight and not preflight.startswith('unresolved') and preflight != identity.digest:
+        changed.append(f'measurement identity: preflight {preflight}, now {identity.digest}')
+    if args.import_identity and args.import_identity != outcome.import_identity:
+        changed.append(f'imported content: preflight {args.import_identity}, now {outcome.import_identity}')
+    if changed:
         # The node's kwdagger identity was computed from a resolution that no
-        # longer holds (task code, engine, or adapter changed in between).
-        summary['error'] = (
-            f'measurement identity changed since scheduling: preflight {preflight}, '
-            f'now {identity.digest}; reschedule'
-        )
+        # longer holds (task code, engine, adapter, or imported files changed).
+        summary['error'] = 'identity changed since scheduling; reschedule: ' + '; '.join(changed)
         (out_dpath / 'attempt_summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         print(summary['error'], file=sys.stderr)
         return 3
     if outcome.run.result.status != 'succeeded':
         (out_dpath / 'attempt_summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-        print(f'aiq-evals run {outcome.run.result.status}: {outcome.run.path}', file=sys.stderr)
+        print(f'aiq-magnet-evals run {outcome.run.result.status}: {outcome.run.path}', file=sys.stderr)
         return 2
-    select = json.loads(args.select) if args.select else None
-    summary['evidence'] = evidence_view(outcome.run, select, args.coverage_policy).to_dict()
-    fpath = out_dpath / args.evaluation_fname
+    fpath = Path(args.evaluation_fname)
+    if fpath.parent == Path('.'):
+        # A bare name lives in the node directory; kwdagger passes a full path.
+        fpath = out_dpath / fpath
     tmp = fpath.with_suffix('.tmp')
     tmp.write_text(json.dumps(summary, indent=2, sort_keys=True) + '\n')
     tmp.replace(fpath)  # the primary output appears atomically

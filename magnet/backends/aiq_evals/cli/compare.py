@@ -21,8 +21,11 @@ from pathlib import Path
 
 
 def _side(fpath: str) -> dict:
-    summary = json.loads(Path(fpath).read_text())
-    view = summary['evidence']
+    # Recomputed from the validated run, never read back from the node file.
+    from magnet.backends.aiq_evals.pipeline import load_evidence
+
+    _, evidence = load_evidence(fpath)
+    view = evidence.to_dict()
     return {
         'engine': view['engine'],
         'measurement_identity': view['measurement_identity'],

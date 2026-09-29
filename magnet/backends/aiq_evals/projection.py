@@ -1,6 +1,6 @@
 """MAGNET evidence projection over an ``magnet_evals`` run (plan M4/M5).
 
-An ``aiq-evals`` run is a record of what a native engine did, and it may hold
+An ``aiq-magnet-evals`` run is a record of what a native engine did, and it may hold
 many result records: several Inspect logs, an OLMo suite, HELM
 split/perturbation variants. MAGNET turns one run into **one** evidence view
 and one flat kwdagger row:
@@ -81,7 +81,7 @@ def select_metric(result: Any, selector: Mapping[str, Any] | None) -> Selection:
 
 @dataclass
 class EvidenceView:
-    """One claim-facing view of one aiq-evals run (not stored in the run)."""
+    """One claim-facing view of one aiq-magnet-evals run (not stored in the run)."""
 
     engine: str
     run_status: str

@@ -141,6 +141,11 @@ ini_options.norecursedirs = ".git build __pycache__ dev docs dockerfiles"
 [tool.ty.environment]
 extra-paths = [ "./examples" ]
 
+[tool.ty.analysis]
+# Optional integration dependency (the aiq-magnet-evals extra), absent from
+# the typecheck job; it is imported lazily only where it is needed.
+allowed-unresolved-imports = [ "magnet_evals", "magnet_evals.**" ]
+
 [tool.uv.workspace]
 members = [ "packages/aiq-magnet-theory" ]
 

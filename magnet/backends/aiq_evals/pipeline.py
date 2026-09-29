@@ -9,29 +9,44 @@ the kwdagger/cmd_queue scheduler (``serial``, ``tmux``, ...).
 
 Identity (M3):
 
-* For a real schedule, ``configure`` preflight-resolves the request in the
-  engine worker and puts the resolved measurement digest into the node's
-  ``algo_params``. kwdagger's node identity therefore changes with task code,
-  engine, or adapter changes, not only with the recipe text. A non-reusable
-  identity gets a unique nonce, so it is never skipped as done.
-* Dry runs never resolve (M9); they only compile the request shape.
-* ``does_exist`` accepts the primary output only while the aiq-evals run it
-  points at still validates as a successful bundle. A stale marker cannot hide
-  a failed, missing, or tampered run.
-* Native reuse is ``magnet_evals.ensure`` against a shared store keyed by that
-  identity. A changed evidence ``select`` makes a new, cheap node run that
-  reuses the unchanged native evaluation.
+* For a real schedule, the node preflight-resolves its request before kwdagger
+  hashes it. Preflight runs :mod:`~magnet.backends.aiq_evals.cli.resolve_node`
+  through the *same* container/host wrapper as the node's command, so an
+  engine or ``worker_python`` that exists only in the node's container
+  resolves exactly as execution will. The resolved measurement digest, and
+  for an import the native content identity of ``import_source``, become the
+  computed ``measurement_identity`` / ``import_identity`` parameters. kwdagger's
+  node identity therefore changes with task code, engine, adapter, or
+  imported-file changes, not only with the recipe text.
+* Those two parameters are computed, never configured: a recipe that sets them
+  is rejected, and every real preflight overwrites whatever value is present.
+* A non-reusable identity gets a unique nonce, so it is never skipped as done.
+* Dry runs never resolve (M9); they only compile and statically check the
+  request shape, evidence selector, and coverage policy.
+* ``does_exist`` accepts the primary output only while the run it points at
+  still validates as the same successful bundle (measurement, normalized
+  artifact, and import identities). A stale marker cannot hide a failed,
+  missing, replaced, or tampered run.
+
+Evidence (M4/M5): ``evaluation.json`` records *which* run and *how* to project
+it (selector, coverage policy), never the claim-facing values themselves.
+Rows are recomputed from the validated run every time they are loaded, so
+editing ``evaluation.json`` cannot change what a claim sees.
+
+Native reuse is ``magnet_evals.ensure`` against a shared store. Acquisition is
+single-flight in that store, so nodes that differ only in ``select`` (for
+example a selector matrix) and run concurrently execute the native evaluation
+once; the others wait and reuse it.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import contextvars
 import json
+import os
 import shlex
-import tempfile
+import subprocess
 import uuid
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +56,11 @@ REQUEST_KEYS = (
     'engine', 'task', 'task_revision', 'data_revision', 'models',
     'task_options', 'generation', 'engine_options',
 )
+#: Parameters filled by preflight. They take part in kwdagger's node identity
+#: but may not be configured by a recipe.
+COMPUTED_KEYS = ('measurement_identity', 'import_identity')
+DRY_RUN_IDENTITY = 'unresolved-dry-run'
+EVALUATION_SCHEMA = 'magnet-aiq-evals-node/2'
 
 
 def missing_request_keys(config: dict[str, Any]) -> list[str]:
@@ -78,40 +98,70 @@ def build_request_dict(config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-_PREFLIGHT: contextvars.ContextVar[bool] = contextvars.ContextVar('magnet_aiq_evals_preflight', default=False)
+def selector_value(select: Any) -> dict[str, Any] | None:
+    """A recipe/matrix ``select`` value (mapping or JSON text) as a mapping."""
+    if select in (None, ''):
+        return None
+    if isinstance(select, str):
+        select = json.loads(select)
+    if not isinstance(select, dict):
+        raise ValueError(f'EvaluationNode select must be a mapping; got {select!r}')
+    return select
+
+
+def _truthy(value: Any) -> bool:
+    return str(value).strip().lower() in {'1', 'true', 'yes'}
+
+
+class _PreflightState:
+    """Resolutions and nonces for one schedule compilation."""
+
+    def __init__(self) -> None:
+        self.resolutions: dict[str, dict[str, Any]] = {}
+        self.nonces: dict[str, str] = {}
+
+
+_PREFLIGHT: contextvars.ContextVar[_PreflightState | None] = contextvars.ContextVar(
+    'magnet_aiq_evals_preflight', default=None,
+)
 
 
 @contextlib.contextmanager
 def preflight_scope(enabled: bool):
     """Resolve EvaluationNode identities while a real schedule compiles (M3/M9).
 
-    Resolutions are memoized only within one scope, so every schedule
-    re-resolves (task code may have changed) and draws fresh nonces for
-    non-reusable identities. Dry runs pass ``enabled=False``.
+    Resolutions are memoized only within one scope: kwdagger may configure the
+    same node more than once while compiling a schedule, and every call must
+    see the same identity, but each new schedule re-resolves (task code or
+    imported files may have changed) and draws fresh nonces for non-reusable
+    identities. Dry runs pass ``enabled=False``.
     """
-    token = _PREFLIGHT.set(enabled)
-    cache_clear = getattr(_preflight_digest, 'cache_clear', None)
-    if cache_clear is not None:
-        cache_clear()
+    token = _PREFLIGHT.set(_PreflightState() if enabled else None)
     try:
         yield
     finally:
         _PREFLIGHT.reset(token)
 
 
-@lru_cache(maxsize=None)
-def _preflight_digest(request_json: str, worker_python: str | None, nonce_key: str) -> str:
-    # Cached per process: kwdagger may configure the same node more than once
-    # while compiling one schedule, and every call must see the same identity.
-    from magnet_evals import EvaluationRequest, ExecutionContext, resolve_evaluation_async
+class PreflightError(RuntimeError):
+    """Preflight resolution of an EvaluationNode failed."""
 
-    request = EvaluationRequest.from_dict(json.loads(request_json))
-    with tempfile.TemporaryDirectory(prefix='magnet-preflight-') as scratch:
-        context = ExecutionContext(output_dir=Path(scratch), worker_python=worker_python)
-        resolved = asyncio.run(resolve_evaluation_async(request, context))
-    if not resolved.identity.reusable:
-        return f'unresolved-{uuid.uuid4().hex}'
-    return resolved.identity.digest
+
+def run_preflight(command: str) -> dict[str, Any]:
+    """Run a rendered ``resolve_node`` command and parse its resolution."""
+    proc = subprocess.run(['bash', '-c', command], capture_output=True, text=True)
+    lines = [line for line in proc.stdout.splitlines() if line.strip()]
+    if proc.returncode != 0 or not lines:
+        detail = (proc.stderr or proc.stdout).strip()[-4000:]
+        raise PreflightError(
+            f'EvaluationNode preflight resolution failed (exit {proc.returncode}): {detail}\n'
+            f'command: {command}'
+        )
+    try:
+        payload = json.loads(lines[-1])
+    except json.JSONDecodeError as ex:
+        raise PreflightError(f'preflight printed no resolution: {lines[-1]!r}') from ex
+    return payload
 
 
 class EvaluationNode(MagnetProcessNode):
@@ -119,6 +169,7 @@ class EvaluationNode(MagnetProcessNode):
 
     name = 'evaluate'
     executable = 'python -m magnet.backends.aiq_evals.cli.run_node'
+    resolve_executable = 'python -m magnet.backends.aiq_evals.cli.resolve_node'
 
     algo_params = {
         'engine': None,
@@ -129,18 +180,19 @@ class EvaluationNode(MagnetProcessNode):
         'task_options': None,
         'generation': None,
         'engine_options': None,
-        # Native artifacts to import instead of executing (identity-bearing:
-        # different content yields a different normalized artifact).
+        # Native artifacts to import instead of executing. Their content
+        # identity (``import_identity``) is part of the node identity.
         'import_source': None,
         # MAGNET evidence projection. Changing these reruns this cheap node but
-        # reuses the native evaluation from the aiq-evals store.
+        # reuses the native evaluation from the aiq-magnet-evals store.
         'select': None,
         'coverage_policy': 'complete',
-        # Filled by preflight resolution; kwdagger hashes it into the node id.
-        'measurement_identity': 'unresolved-dry-run',
+        # Computed by preflight (see COMPUTED_KEYS); never configured.
+        'measurement_identity': DRY_RUN_IDENTITY,
+        'import_identity': None,
     }
     perf_params = {
-        # Shared content-addressed aiq-evals store; default under the kwdagger root.
+        # Shared content-addressed aiq-magnet-evals store; default under the kwdagger root.
         'store_dpath': None,
         # Engine worker interpreter (engines stay out of MAGNET's environment).
         'worker_python': None,
@@ -157,35 +209,95 @@ class EvaluationNode(MagnetProcessNode):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         # A recipe's algo_params/perf_params supply values; they must extend,
-        # not replace, the parameters this class declares (e.g. the preflight
-        # ``measurement_identity``).
+        # not replace, the parameters this class declares.
+        supplied = dict(kwargs.get('algo_params') or {})
+        declared = type(self).algo_params
+        configured = sorted(
+            key for key in COMPUTED_KEYS if key in supplied and supplied[key] != declared[key]
+        )
+        if configured:
+            raise ValueError(
+                f'EvaluationNode parameters {configured} are computed by preflight '
+                'resolution and cannot be set by a recipe'
+            )
         for key in ('algo_params', 'perf_params'):
             if kwargs.get(key) is not None:
                 kwargs[key] = {**getattr(type(self), key), **dict(kwargs[key])}
         super().__init__(*args, **kwargs)
 
+    def _final(self) -> dict[str, Any]:
+        """``final_config`` as a plain mapping (the lease mixin types it optional)."""
+        return dict(self.final_config or {})
+
+    def _setting(self, key: str) -> Any:
+        # Read perf settings without touching final_config (which would recurse
+        # through final_algo_config).
+        value = self.config.get(key)
+        return self.perf_params.get(key) if value is None else value
+
+    def _import_source(self, config: dict[str, Any]) -> str | None:
+        source = config.get('import_source')
+        # Relative to where the schedule is compiled, not the node's directory.
+        return None if source in (None, '') else os.path.abspath(str(source))
+
     @property
     def final_algo_config(self) -> Any:
-        """Algo params with the preflight-resolved measurement identity (M3).
+        """Algo params with the preflight-resolved identities (M3).
 
         kwdagger hashes this mapping into the node id. Inside a real
-        ``preflight_scope`` the request is resolved in the engine worker once
-        per schedule; outside it (dry runs, result loading) nothing resolves.
+        ``preflight_scope`` the request is resolved once per schedule in the
+        node's own execution environment; outside it (dry runs, result
+        loading) nothing resolves. Either way, the computed identities replace
+        any value a configuration supplied.
         """
-        config = super().final_algo_config
-        if _PREFLIGHT.get() and not missing_request_keys(dict(config)):
-            current = str(config.get('measurement_identity') or '')
-            if current.startswith('unresolved') or not current:
-                config = type(config)(config)
-                request = build_request_dict(dict(config))
-                worker = self.config.get('worker_python') or self.perf_params.get('worker_python')
-                config['measurement_identity'] = _preflight_digest(
-                    json.dumps(request, sort_keys=True), worker, self.name
-                )
+        config = type(super().final_algo_config)(super().final_algo_config)
+        self._check_static(config)
+        state = _PREFLIGHT.get()
+        if state is None or missing_request_keys(dict(config)):
+            config['measurement_identity'] = DRY_RUN_IDENTITY
+            config['import_identity'] = None
+            return config
+        command = self.preflight_command(config)
+        resolution = state.resolutions.get(command)
+        if resolution is None:
+            resolution = state.resolutions[command] = run_preflight(command)
+        identity = resolution['measurement_identity']
+        if identity['reusable']:
+            config['measurement_identity'] = identity['digest']
+        else:
+            nonce = state.nonces.setdefault(command, uuid.uuid4().hex)
+            config['measurement_identity'] = f'unresolved-{nonce}'
+        config['import_identity'] = resolution.get('import_identity')
         return config
 
+    def _check_static(self, config: Any) -> None:
+        """Selector and policy errors surface while compiling, even in a dry run."""
+        from magnet.backends.aiq_evals.projection import (
+            COVERAGE_POLICIES,
+            normalize_selector,
+        )
+
+        normalize_selector(selector_value(config.get('select')))
+        policy = config.get('coverage_policy') or 'complete'
+        if policy not in COVERAGE_POLICIES:
+            raise ValueError(f'EvaluationNode coverage_policy must be one of {COVERAGE_POLICIES}; got {policy!r}')
+
+    def preflight_command(self, config: Any) -> str:
+        """The resolution command, wrapped exactly like the node's own command."""
+        args = {'request': json.dumps(build_request_dict(dict(config)), sort_keys=True)}
+        worker = self._setting('worker_python')
+        if worker not in (None, ''):
+            args['worker_python'] = worker
+        source = self._import_source(dict(config))
+        if source is not None:
+            args['import_source'] = source
+            if _truthy(self._setting('allow_external_symlinks')):
+                args['allow_external_symlinks'] = 'True'
+        argstr = ' '.join(f'--{key}={shlex.quote(str(value))}' for key, value in args.items())
+        return self._wrap_interpreter(f'{self.resolve_executable} {argstr}')
+
     def _store_dpath(self) -> str:
-        store = self.final_config.get('store_dpath')
+        store = self._final().get('store_dpath')
         if store:
             return str(store)
         root = getattr(self, 'root_dpath', None) or '.'
@@ -193,7 +305,7 @@ class EvaluationNode(MagnetProcessNode):
 
     @property
     def command(self) -> str:
-        config = self.final_config
+        config = self._final()
         if missing_request_keys(config):
             # kwdagger renders unconfigured nodes (e.g. when printing the graph).
             request_text = '<unconfigured: needs engine/task/models>'
@@ -206,29 +318,33 @@ class EvaluationNode(MagnetProcessNode):
             'evaluation_fname': config.get('evaluation_fname', 'evaluation.json'),
             'coverage_policy': config.get('coverage_policy') or 'complete',
         }
-        if config.get('measurement_identity') not in (None, ''):
-            args['measurement_identity'] = config['measurement_identity']
-        if config.get('select'):
-            select = config['select']
-            args['select'] = select if isinstance(select, str) else json.dumps(select, sort_keys=True)
-        for key in ('worker_python', 'timeout_seconds', 'import_source'):
+        for key in COMPUTED_KEYS:
             if config.get(key) not in (None, ''):
                 args[key] = config[key]
-        if config.get('allow_external_symlinks'):
+        select = selector_value(config.get('select'))
+        if select is not None:
+            args['select'] = json.dumps(select, sort_keys=True)
+        for key in ('worker_python', 'timeout_seconds'):
+            if config.get(key) not in (None, ''):
+                args[key] = config[key]
+        source = self._import_source(config)
+        if source is not None:
+            args['import_source'] = source
+        if _truthy(config.get('allow_external_symlinks')):
             args['allow_external_symlinks'] = 'True'
         if config.get('endpoint'):
             args['endpoint'] = config['endpoint']
         argstr = ' \\\n    '.join(f'--{key}={shlex.quote(str(value))}' for key, value in args.items())
         command = f'{self.executable} \\\n    {argstr}'
         command = self._wrap_interpreter(command)
-        if self._native_result_available():
-            # The node will only reuse the stored run; leasing would start a
-            # model for nothing (M8: avoid duplicate model startup).
+        if source is not None or self._native_result_available():
+            # An import runs no model, and a stored run is only reused: leasing
+            # would start a model for nothing (M8: avoid duplicate startup).
             return command
         return self.wrap_with_lease(command)
 
     def _native_result_available(self) -> bool:
-        digest = str(self.final_config.get('measurement_identity') or '')
+        digest = str(self._final().get('measurement_identity') or '')
         if len(digest) != 64:
             return False
         try:
@@ -240,21 +356,42 @@ class EvaluationNode(MagnetProcessNode):
             return False
         return run.complete and run.result.status == 'succeeded'
 
+    def expected_evaluation(self) -> dict[str, Any]:
+        """What this node's ``evaluation.json`` must record to count as done."""
+        from magnet.backends.aiq_evals.projection import normalize_selector
+
+        config = self._final()
+
+        expected: dict[str, Any] = {
+            'select': normalize_selector(selector_value(config.get('select'))),
+            'coverage_policy': config.get('coverage_policy') or 'complete',
+        }
+        digest = str(config.get('measurement_identity') or '')
+        if len(digest) == 64:
+            expected['measurement_identity'] = digest
+        if config.get('import_identity'):
+            expected['import_identity'] = config['import_identity']
+        return expected
+
+    def _evaluation_fpath(self) -> Any:
+        paths = self.final_out_paths
+        return paths.get(str(self.primary_out_key)) if paths else None
+
     @property
     def does_exist(self) -> bool:
-        """Done only if the referenced aiq-evals run still validates as succeeded."""
-        paths = self.final_out_paths
-        fpath = paths.get(self.primary_out_key) if paths else None
-        return fpath is not None and evaluation_is_valid(Path(fpath))
+        """Done only if the recorded run still validates and matches this node."""
+        fpath = self._evaluation_fpath()
+        return fpath is not None and evaluation_is_valid(Path(fpath), self.expected_evaluation())
 
     def test_is_computed_command(self) -> str | None:
         """The job-level "done" guard validates the run, not just the marker file."""
-        paths = self.final_out_paths
-        fpath = paths.get(self.primary_out_key) if paths else None
+        fpath = self._evaluation_fpath()
         if fpath is None:
             return None
+        expected = json.dumps(self.expected_evaluation(), sort_keys=True)
         return self._wrap_interpreter(
-            f'python -m magnet.backends.aiq_evals.cli.check_done {shlex.quote(str(fpath))}'
+            'python -m magnet.backends.aiq_evals.cli.check_done '
+            f'{shlex.quote(str(fpath))} --expected={shlex.quote(expected)}'
         )
 
     def _wrap_interpreter(self, command: str) -> str:
@@ -268,32 +405,81 @@ class EvaluationNode(MagnetProcessNode):
         return load_evaluation_row(self, node_dpath)
 
 
-def evaluation_is_valid(fpath: Path) -> bool:
-    if not fpath.is_file():
+class InvalidEvaluation(ValueError):
+    """An ``evaluation.json`` no longer matches the run it references."""
+
+
+def validated_run(fpath: str | os.PathLike[str]) -> tuple[dict[str, Any], Any]:
+    """Load ``evaluation.json`` and the run it references, or raise.
+
+    The run must load with full checksum verification, be complete and
+    succeeded, and match every identity the node recorded: measurement,
+    normalized artifact, and (for imports) native content.
+    """
+    from magnet_evals import load_run
+
+    fpath = Path(fpath)
+    try:
+        summary = json.loads(fpath.read_text())
+    except (OSError, json.JSONDecodeError) as ex:
+        raise InvalidEvaluation(f'unreadable {fpath}: {ex}') from ex
+    if summary.get('schema') != EVALUATION_SCHEMA:
+        raise InvalidEvaluation(f'{fpath} has schema {summary.get("schema")!r}; expected {EVALUATION_SCHEMA}')
+    try:
+        run = load_run(summary['run_path'])
+    except Exception as ex:
+        raise InvalidEvaluation(f'referenced run does not validate: {ex}') from ex
+    if not (run.complete and run.result.status == 'succeeded'):
+        raise InvalidEvaluation('referenced run is not a complete, succeeded run')
+    if run.resolved.identity.digest != summary['measurement_identity']['digest']:
+        raise InvalidEvaluation('referenced run has a different measurement identity')
+    if run.manifest.get('normalized_artifact_identity') != summary.get('normalized_artifact_identity'):
+        raise InvalidEvaluation('referenced run has a different normalized artifact identity')
+    if summary.get('import_identity') and run.manifest.get('native_artifact_identity') != summary['import_identity']:
+        raise InvalidEvaluation('referenced run holds different imported native content')
+    return summary, run
+
+
+def evaluation_is_valid(fpath: Path, expected: dict[str, Any] | None = None) -> bool:
+    """Whether ``evaluation.json`` references a valid run, as ``expected``.
+
+    ``expected`` (from :meth:`EvaluationNode.expected_evaluation`) pins the
+    projection (selector, coverage policy) and identities the node was
+    scheduled with, so an edited ``evaluation.json`` makes the node not done.
+    """
+    if not Path(fpath).is_file():
         return False
     try:
-        from magnet_evals import load_run
-
-        summary = json.loads(fpath.read_text())
-        run = load_run(summary['run_path'])
-    except Exception:
+        summary, _ = validated_run(fpath)
+    except (InvalidEvaluation, KeyError, TypeError):
         return False
-    return (
-        run.complete
-        and run.result.status == 'succeeded'
-        and run.resolved.identity.digest == summary['measurement_identity']['digest']
-    )
+    for key, value in dict(expected or {}).items():
+        recorded = summary.get(key)
+        if key == 'measurement_identity':
+            recorded = (recorded or {}).get('digest')
+        if recorded != value:
+            return False
+    return True
+
+
+def load_evidence(fpath: str | os.PathLike[str]) -> tuple[dict[str, Any], Any]:
+    """``(summary, evidence view)`` of a node, recomputed from its validated run (M4)."""
+    from magnet.backends.aiq_evals.projection import evidence_view
+
+    summary, run = validated_run(fpath)
+    view = evidence_view(run, summary.get('select'), summary.get('coverage_policy') or 'complete')
+    return summary, view
 
 
 def load_evaluation_row(node: Any, node_dpath: Any) -> Any:
-    """One flat row: ``metrics.<node>.*`` from the stored evidence view (M5)."""
+    """One flat row: ``metrics.<node>.*`` recomputed from the validated run (M5)."""
     from kwdagger.utils import util_dotdict
 
     from magnet.backends.aiq_evals.projection import flat_metrics
 
-    node_dpath = Path(node_dpath)
-    summary = json.loads((node_dpath / node.out_paths[node.primary_out_key]).read_text())
-    metrics = flat_metrics(summary['evidence'])
+    summary, view = load_evidence(Path(node_dpath) / node.out_paths[node.primary_out_key])
+    metrics = flat_metrics(view.to_dict())
     metrics['action'] = summary['action']
+    metrics['import_identity'] = summary.get('import_identity')
     flat = util_dotdict.DotDict({f'metrics.{key}': value for key, value in metrics.items()})
     return flat.insert_prefix(node.name, index=1)
