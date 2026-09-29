@@ -1,6 +1,6 @@
-"""kwdagger node that obtains one evaluation through ``aiq_evals`` (plan M2/M3).
+"""kwdagger node that obtains one evaluation through ``magnet_evals`` (plan M2/M3).
 
-``EvaluationNode`` converts recipe parameters into an ``aiq_evals``
+``EvaluationNode`` converts recipe parameters into an ``magnet_evals``
 ``EvaluationRequest`` and runs :mod:`magnet.backends.aiq_evals.cli.run_node`.
 It projects the result into exactly one flat kwdagger row. It owns no
 engine-specific execution logic: ``engine`` names the evaluation engine
@@ -18,7 +18,7 @@ Identity (M3):
 * ``does_exist`` accepts the primary output only while the aiq-evals run it
   points at still validates as a successful bundle. A stale marker cannot hide
   a failed, missing, or tampered run.
-* Native reuse is ``aiq_evals.ensure`` against a shared store keyed by that
+* Native reuse is ``magnet_evals.ensure`` against a shared store keyed by that
   identity. A changed evidence ``select`` makes a new, cheap node run that
   reuses the unchanged native evaluation.
 """
@@ -103,7 +103,7 @@ def preflight_scope(enabled: bool):
 def _preflight_digest(request_json: str, worker_python: str | None, nonce_key: str) -> str:
     # Cached per process: kwdagger may configure the same node more than once
     # while compiling one schedule, and every call must see the same identity.
-    from aiq_evals import EvaluationRequest, ExecutionContext, resolve_evaluation_async
+    from magnet_evals import EvaluationRequest, ExecutionContext, resolve_evaluation_async
 
     request = EvaluationRequest.from_dict(json.loads(request_json))
     with tempfile.TemporaryDirectory(prefix='magnet-preflight-') as scratch:
@@ -115,7 +115,7 @@ def _preflight_digest(request_json: str, worker_python: str | None, nonce_key: s
 
 
 class EvaluationNode(MagnetProcessNode):
-    """Invoke one ``aiq_evals`` evaluation request as a kwdagger node."""
+    """Invoke one ``magnet_evals`` evaluation request as a kwdagger node."""
 
     name = 'evaluate'
     executable = 'python -m magnet.backends.aiq_evals.cli.run_node'
@@ -232,8 +232,8 @@ class EvaluationNode(MagnetProcessNode):
         if len(digest) != 64:
             return False
         try:
-            from aiq_evals import load_run
-            from aiq_evals.store import ResultStore
+            from magnet_evals import load_run
+            from magnet_evals.store import ResultStore
 
             run = load_run(ResultStore(self._store_dpath()).run_path(digest))
         except Exception:
@@ -272,7 +272,7 @@ def evaluation_is_valid(fpath: Path) -> bool:
     if not fpath.is_file():
         return False
     try:
-        from aiq_evals import load_run
+        from magnet_evals import load_run
 
         summary = json.loads(fpath.read_text())
         run = load_run(summary['run_path'])

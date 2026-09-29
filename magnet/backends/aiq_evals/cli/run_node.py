@@ -1,4 +1,4 @@
-"""kwdagger node command: obtain one evaluation through ``aiq_evals.ensure``.
+"""kwdagger node command: obtain one evaluation through ``magnet_evals.ensure``.
 
 Usage (rendered by :class:`magnet.backends.aiq_evals.EvaluationNode`)::
 
@@ -72,7 +72,7 @@ def lease_runtime(endpoint: str | None, request: dict, environ=None) -> tuple[di
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    from aiq_evals import EvaluationRequest, ensure_evaluation
+    from magnet_evals import EvaluationRequest, ensure_evaluation
 
     from magnet.backends.aiq_evals.projection import evidence_view
 

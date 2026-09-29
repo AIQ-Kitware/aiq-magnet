@@ -1,8 +1,8 @@
 """aiq-evals integration (aiq-evals docs/planning/aiq-magnet-integration-plan.md).
 
-The end-to-end tests run a real engine through ``aiq_evals``: HELM's local
+The end-to-end tests run a real engine through ``magnet_evals``: HELM's local
 simple model, in this interpreter or ``$AIQ_EVALS_HELM_PYTHON``. They skip when
-``aiq_evals`` or ``helm`` is unavailable. The projection tests are engine-free.
+``magnet_evals`` or ``helm`` is unavailable. The projection tests are engine-free.
 """
 import json
 import os
@@ -12,7 +12,7 @@ import pytest
 import ubelt as ub
 import yaml
 
-aiq_evals = pytest.importorskip('aiq_evals')
+magnet_evals = pytest.importorskip('magnet_evals')
 
 from types import SimpleNamespace  # noqa: E402
 
@@ -27,10 +27,10 @@ HELM_PYTHON = os.environ.get('AIQ_EVALS_HELM_PYTHON', sys.executable)
 def _helm_available() -> bool:
     import subprocess
 
-    return subprocess.run([HELM_PYTHON, '-c', 'import helm, aiq_evals'], capture_output=True).returncode == 0
+    return subprocess.run([HELM_PYTHON, '-c', 'import helm, magnet_evals'], capture_output=True).returncode == 0
 
 
-needs_helm = pytest.mark.skipif(not _helm_available(), reason='needs crfm-helm + aiq_evals in a worker')
+needs_helm = pytest.mark.skipif(not _helm_available(), reason='needs crfm-helm + magnet_evals in a worker')
 
 SELECT = {'metric': 'exact_match', 'group': 'test', 'score': None}
 
@@ -104,7 +104,7 @@ def recipe_rows(recipe):
 def _aiq_evals_repo():
     import pathlib
 
-    root = pathlib.Path(os.environ.get('AIQ_EVALS_REPO', pathlib.Path(aiq_evals.__file__).parents[1]))
+    root = pathlib.Path(os.environ.get('AIQ_EVALS_REPO', pathlib.Path(magnet_evals.__file__).parents[1]))
     return root if (root / 'tests' / 'fixtures').is_dir() else None
 
 
@@ -188,11 +188,11 @@ def test_cardinality_inspect_multi_log_epochs(tmp_path):
 
     # Duplicate sample IDs across task logs and repeated epochs stay inside the
     # aiq-evals run; the claim-facing value is the selected task's native metric.
-    run = aiq_evals.load_run(row['metrics.evaluate.run_path'])
+    run = magnet_evals.load_run(row['metrics.evaluate.run_path'])
     ids = [(s.task, s.sample_id) for s in run.result.samples if s.native.get('kind') == 'sample']
     assert len({sid for _, sid in ids}) < len({t for t, _ in ids}) * 2
     assert {s.epoch for s in run.result.samples if s.epoch} == {1, 2}
-    native = [m.value for m in aiq_evals.outputs.select_metrics(run, task='role_task', scorer='match', metric='accuracy')]
+    native = [m.value for m in magnet_evals.outputs.select_metrics(run, task='role_task', scorer='match', metric='accuracy')]
     assert native == [row['metrics.evaluate.score']]
 
 
@@ -377,12 +377,12 @@ def _leased_node(store, digest):
 
 
 def test_lease_wraps_only_when_native_work_is_needed(tmp_path, monkeypatch):
-    from aiq_evals.artifacts import publish_run
-    from aiq_evals.contracts import (
+    from magnet_evals.artifacts import publish_run
+    from magnet_evals.contracts import (
         EvaluationRequest, EvaluationResult, ExecutionContext, MeasurementIdentity, ModelBinding,
         ResolvedEvaluation, ResultRecord,
     )
-    from aiq_evals.store import ResultStore
+    from magnet_evals.store import ResultStore
 
     monkeypatch.delenv('INFER_STACK_LEASE_ID', raising=False)
     digest = 'a' * 64

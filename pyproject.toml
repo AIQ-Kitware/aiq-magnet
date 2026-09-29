@@ -60,7 +60,7 @@ optional-dependencies.helm = [
 ]
 # Evaluation acquisition through aiq-evals (magnet.backends.aiq_evals). Not part
 # of ``optional``/``all`` until aiq-evals is published; install it from source.
-optional-dependencies.aiq-evals = [ "aiq-evals>=0.1.0" ]
+optional-dependencies.aiq-magnet-evals = [ "aiq-magnet-evals>=0.1.0" ]
 # Per-node infer-stack leasing.
 optional-dependencies.leasing = [ "infer-stack>=0.7.0" ]
 # Full optional runtime surface.

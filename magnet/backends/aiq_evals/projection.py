@@ -1,4 +1,4 @@
-"""MAGNET evidence projection over an ``aiq_evals`` run (plan M4/M5).
+"""MAGNET evidence projection over an ``magnet_evals`` run (plan M4/M5).
 
 An ``aiq-evals`` run is a record of what a native engine did, and it may hold
 many result records: several Inspect logs, an OLMo suite, HELM
@@ -11,7 +11,7 @@ and one flat kwdagger row:
 * ``score`` is exposed only when the selection is unambiguous and eligible,
   so a claim cannot silently vote with the wrong or an ineligible number.
 
-Nothing here imports a native engine; bundles are read with ``aiq_evals``'s
+Nothing here imports a native engine; bundles are read with ``magnet_evals``'s
 engine-free readers.
 """
 from __future__ import annotations
@@ -103,7 +103,7 @@ class EvidenceView:
 
 
 def evidence_view(bundle: Any, selector: Mapping[str, Any] | None = None, coverage_policy: str = 'complete') -> EvidenceView:
-    """Project a loaded ``aiq_evals`` RunBundle into MAGNET evidence."""
+    """Project a loaded ``magnet_evals`` RunBundle into MAGNET evidence."""
     if coverage_policy not in COVERAGE_POLICIES:
         raise ValueError(f'coverage_policy must be one of {COVERAGE_POLICIES}')
     result = bundle.result
