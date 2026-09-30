@@ -49,6 +49,10 @@ class RunNodeCLI(kwconf.Config):
         None, parser=str, help='gate mode: run this leased child only if the store lacks the run',
     )
     lock_held = kwconf.Value(False, isflag=True, help='the scheduling gate holds the acquisition lock')
+    resolve_command = kwconf.Value(
+        None, parser=str, help='gate mode: resolve_node command (preflight wrapper) run before reusing',
+    )
+    resolve_timeout = kwconf.Value(None, type=float, help='gate mode: bound on that resolution (seconds)')
 
 
 def lease_runtime(endpoints: dict | str | None, request: dict, environ=None) -> tuple[dict, dict]:
@@ -115,8 +119,12 @@ def gate(args, out_dpath: Path) -> int:
     """Decide under the store's acquisition lock whether a leased run is needed.
 
     Runs on the scheduling host. With a reusable scheduled identity it takes
-    the acquisition lock, and if a valid canonical run of the scheduled request
-    exists it records reuse without leasing anything. Otherwise it runs the
+    the acquisition lock, and if a valid canonical run of the scheduled
+    measurement exists it first re-resolves the request (``--resolve_command``,
+    the node's preflight command: same host/container environment, no lease).
+    If the identity changed since scheduling (task code, engine, adapter), the
+    node asks to be rescheduled (exit 3); otherwise it records reuse without
+    leasing anything. Otherwise it runs the
     leased child (``--leased_command``; the child's ``ensure`` knows the lock
     is held) and keeps the lock until the child exits, so concurrent nodes for
     one measurement start one lease. A non-reusable identity always runs the
@@ -165,6 +173,23 @@ def gate(args, out_dpath: Path) -> int:
                     continue
             raise
 
+    def current_identity_changes() -> list[str]:
+        """Resolve now, where preflight did, and compare with the schedule."""
+        from magnet.backends.aiq_evals.pipeline import (
+            PreflightError,
+            run_preflight,
+        )
+
+        if not args.resolve_command:
+            return ['no resolve command: cannot confirm the scheduled identity still holds']
+        try:
+            resolution = run_preflight(args.resolve_command, args.resolve_timeout)
+        except PreflightError as ex:
+            return [f'resolution failed: {ex}']
+        identity = resolution['measurement_identity']
+        now = identity['digest'] if identity['reusable'] else 'unresolved'
+        return [] if now == digest else [f'measurement identity: preflight {digest}, now {now}']
+
     if len(digest) != 64:
         return run_child()
 
@@ -172,7 +197,14 @@ def gate(args, out_dpath: Path) -> int:
         async with store.acquisition_lock(digest) as lock:
             run = stored_run()
             if run is None:
+                # The child re-resolves before executing (main()).
                 return await asyncio.to_thread(run_child)
+            stale = await asyncio.to_thread(current_identity_changes)
+            if stale:
+                return _reschedule(out_dpath, {
+                    'schema': EVALUATION_SCHEMA, 'status': 'not-run', 'request': request.to_dict(),
+                    'preflight_identity': args.measurement_identity,
+                }, stale)
             _write_evaluation(args, out_dpath, {
                 'schema': EVALUATION_SCHEMA,
                 'action': 'reused',

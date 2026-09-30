@@ -462,7 +462,15 @@ class EvaluationNode(MagnetProcessNode):
         from magnet.containers import host_interpreter
 
         child = self.wrap_with_lease(self._wrap_interpreter(render({'lock_held': 'True'})))
-        return host_interpreter(render({'leased_command': child}))
+        gate_args = {'leased_command': child}
+        if not missing_request_keys(config):
+            # The gate re-resolves before reusing a stored run, exactly like
+            # preflight: same host/container wrapper, never inside the lease.
+            gate_args['resolve_command'] = self.preflight_command(config)
+            timeout = self._setting('preflight_timeout_seconds')
+            if timeout not in (None, ''):
+                gate_args['resolve_timeout'] = str(timeout)
+        return host_interpreter(render(gate_args))
 
     def expected_evaluation(self) -> dict[str, Any]:
         """What this node's ``evaluation.json`` must record to count as done."""

@@ -217,4 +217,4 @@ commands = ["dev/ci/aiq_evals_integration.sh"]
 
 [tool.xcookie.ci_source_checks.aiq-magnet-evals.env]
 AIQ_MAGNET_EVALS_REPO = "https://github.com/Erotemic/aiq-magnet-evals.git"
-AIQ_MAGNET_EVALS_REV = "9fe8d5515a6b050bcb4faac993d94f2c762d9c17"
+AIQ_MAGNET_EVALS_REV = "23ad474fbf3db3e6a8a002a5452b17c4a60a866c"

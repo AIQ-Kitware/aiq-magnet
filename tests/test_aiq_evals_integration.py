@@ -857,6 +857,11 @@ def test_leasing_is_decided_by_a_gate_when_the_node_runs(tmp_path, monkeypatch):
     for name in ('OPENAI_BASE_URL', 'OPENAI_API_KEY', 'INFER_STACK_ENDPOINT_SMOL_135',
                  'INFER_STACK_ENDPOINT_JUDGE_ALIAS'):
         assert f'-e {name} ' in child, name
+    # Before reusing, the gate re-resolves where preflight does (the container),
+    # never inside the lease.
+    (resolve,) = [tok[len('--resolve_command='):] for tok in tokens if tok.startswith('--resolve_command=')]
+    assert resolve.startswith('docker run') and 'magnet.backends.aiq_evals.cli.resolve_node' in resolve
+    assert 'infer-stack' not in resolve
     # An import runs no model: no gate and no lease.
     importer = _leased_node(tmp_path / 'store', 'c' * 64, monkeypatch, import_source=str(tmp_path))
     with preflight_scope(True):
@@ -876,6 +881,46 @@ _publish(store, 0.5, digest=digest)
 """
 
 
+def _stub_resolver(tmp_path, digest, name='resolve.sh'):
+    """A resolve command that reports ``digest`` (as resolve_node would print)."""
+    script = tmp_path / name
+    payload = {'measurement_identity': {'digest': digest, 'reusable': True, 'unknown_reasons': []},
+               'import_identity': None}
+    script.write_text(f"#!/bin/bash\necho '{json.dumps(payload)}'\n")
+    script.chmod(0o755)
+    return str(script)
+
+
+def _gate(tmp_path, name, request, store, digest, child, resolver):
+    return subprocess.Popen([
+        sys.executable, '-m', 'magnet.backends.aiq_evals.cli.run_node',
+        f'--request={request}', f'--store_dpath={store}', f'--out_dpath={tmp_path / name}',
+        '--evaluation_fname=evaluation.json', f'--measurement_identity={digest}',
+        f'--select={json.dumps({"metric": "acc"})}', f'--leased_command={child}',
+        f'--resolve_command={resolver}',
+    ])
+
+
+def test_a_gate_does_not_reuse_a_run_whose_identity_changed(tmp_path):
+    # Scheduled as D; D is stored; the task changed since, so resolving now
+    # gives D2. The gate must not reuse D (and must not lease): reschedule.
+    digest = 'c' * 64
+    store = tmp_path / 'store'
+    run = _publish(store, 0.5, digest=digest)
+    request = json.dumps(run.resolved.request.to_dict())
+    marker = tmp_path / 'child-ran'
+    proc = _gate(tmp_path, 'node', request, store, digest, f'touch {marker}',
+                 _stub_resolver(tmp_path, 'd' * 64))
+    assert proc.wait(timeout=60) == 3
+    assert not marker.exists() and not (tmp_path / 'node' / 'evaluation.json').exists()
+    summary = json.loads((tmp_path / 'node' / 'attempt_summary.json').read_text())
+    assert 'reschedule' in summary['error'] and 'd' * 64 in summary['error']
+    # When the identity still holds, the same gate reuses the stored run.
+    proc = _gate(tmp_path, 'node2', request, store, digest, f'touch {marker}', _stub_resolver(tmp_path, digest))
+    assert proc.wait(timeout=60) == 0 and not marker.exists()
+    assert json.loads((tmp_path / 'node2' / 'evaluation.json').read_text())['action'] == 'reused'
+
+
 def test_concurrent_gates_start_one_leased_child(tmp_path):
     # Two nodes (e.g. two selectors) need one missing measurement. The gates
     # serialize on the store's acquisition lock: the first runs its leased
@@ -886,15 +931,11 @@ def test_concurrent_gates_start_one_leased_child(tmp_path):
     script = tmp_path / 'child.py'
     script.write_text(GATE_CHILD.format(tests=str(Path(__file__).parent)))
     request = json.dumps(_publish(tmp_path / 'probe-store', 0.1, digest=digest).resolved.request.to_dict())
+    resolver = _stub_resolver(tmp_path, digest)
     procs = []
-    for name, select in (('a', {'metric': 'acc'}), ('b', {'metric': 'acc'})):
+    for name in ('a', 'b'):
         child = f'{shlex_quote(sys.executable)} {shlex_quote(str(script))} {store} {digest} {counter}'
-        procs.append(subprocess.Popen([
-            sys.executable, '-m', 'magnet.backends.aiq_evals.cli.run_node',
-            f'--request={request}', f'--store_dpath={store}', f'--out_dpath={tmp_path / name}',
-            '--evaluation_fname=evaluation.json', f'--measurement_identity={digest}',
-            f'--select={json.dumps(select)}', f'--leased_command={child}',
-        ]))
+        procs.append(_gate(tmp_path, name, request, store, digest, child, resolver))
     assert [p.wait(timeout=120) for p in procs] == [0, 0]
     assert counter.read_text().splitlines() == ['child']
     # The stub child writes no summary; the gate that waited recorded reuse.
