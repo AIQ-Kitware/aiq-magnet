@@ -19,23 +19,26 @@ error on stderr when resolution fails.
 """
 from __future__ import annotations
 
-import argparse
 import asyncio
 import json
 import sys
 import tempfile
 from pathlib import Path
 
+import kwconf
+
 RESOLUTION_SCHEMA = 'magnet-aiq-evals-resolution/1'
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog='python -m magnet.backends.aiq_evals.cli.resolve_node')
-    parser.add_argument('--request', required=True, help='EvaluationRequest as JSON')
-    parser.add_argument('--worker_python', default=None)
-    parser.add_argument('--import_source', default=None)
-    parser.add_argument('--allow_external_symlinks', default='False')
-    return parser
+class ResolveNodeCLI(kwconf.Config):
+    """Resolve an EvaluationNode's identities where the node runs."""
+
+    __prog__ = 'python -m magnet.backends.aiq_evals.cli.resolve_node'
+
+    request = kwconf.Value(None, required=True, parser=str, help='EvaluationRequest as JSON')
+    worker_python = kwconf.Value(None, parser=str, help='engine worker interpreter')
+    import_source = kwconf.Value(None, parser=str, help='native artifacts the node imports')
+    allow_external_symlinks = kwconf.Value(False, isflag=True, help='follow links out of the import source')
 
 
 def resolve(request_dict: dict, worker_python: str | None, import_source: str | None,
@@ -69,13 +72,13 @@ def resolve(request_dict: dict, worker_python: str | None, import_source: str | 
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    args = ResolveNodeCLI.cli(argv=True if argv is None else argv, strict=True, special_options=False)
     try:
         payload = resolve(
             json.loads(args.request),
             args.worker_python or None,
             args.import_source or None,
-            str(args.allow_external_symlinks).lower() in {'1', 'true', 'yes'},
+            bool(args.allow_external_symlinks),
         )
     except Exception as ex:  # reported to the scheduling process, which fails loudly
         print(f'{type(ex).__name__}: {ex}', file=sys.stderr)

@@ -15,9 +15,10 @@ Usage::
 """
 from __future__ import annotations
 
-import argparse
 import json
 from pathlib import Path
+
+import kwconf
 
 
 def _side(fpath: str) -> dict:
@@ -56,13 +57,19 @@ def compare(left_fpath: str, right_fpath: str, mapping: str) -> dict:
     }
 
 
+class CompareCLI(kwconf.Config):
+    """Compare two EvaluationNode results under an explicit mapping."""
+
+    __prog__ = 'python -m magnet.backends.aiq_evals.cli.compare'
+
+    left_fpath = kwconf.Value(None, required=True, parser=str, help="left node's evaluation.json")
+    right_fpath = kwconf.Value(None, required=True, parser=str, help="right node's evaluation.json")
+    mapping = kwconf.Value(None, required=True, parser=str, help='why the two selections correspond')
+    out_fpath = kwconf.Value('comparison.json', parser=str, help='comparison record to write')
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog='python -m magnet.backends.aiq_evals.cli.compare')
-    parser.add_argument('--left_fpath', required=True)
-    parser.add_argument('--right_fpath', required=True)
-    parser.add_argument('--mapping', required=True)
-    parser.add_argument('--out_fpath', default='comparison.json')
-    args = parser.parse_args(argv)
+    args = CompareCLI.cli(argv=True if argv is None else argv, strict=True, special_options=False)
     if not args.mapping.strip() or args.mapping.strip().lower() in {'none', 'null'}:
         raise SystemExit('a cross-engine comparison needs an explicit --mapping justification')
     comparison = compare(args.left_fpath, args.right_fpath, args.mapping)

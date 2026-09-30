@@ -19,33 +19,36 @@ loaders recompute the evidence from the validated run (plan M4).
 """
 from __future__ import annotations
 
-import argparse
 import json
 import sys
 from pathlib import Path
 
+import kwconf
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog='python -m magnet.backends.aiq_evals.cli.run_node')
-    parser.add_argument('--request', required=True, help='EvaluationRequest as JSON')
-    parser.add_argument('--store_dpath', required=True)
-    parser.add_argument('--out_dpath', default='.')
-    parser.add_argument('--evaluation_fname', default='evaluation.json')
-    parser.add_argument('--select', default=None, help='evidence selector JSON')
-    parser.add_argument('--coverage_policy', default='complete')
-    parser.add_argument('--worker_python', default=None)
-    parser.add_argument('--timeout_seconds', type=float, default=None)
-    parser.add_argument('--import_source', default=None)
-    parser.add_argument('--allow_external_symlinks', default='False')
-    parser.add_argument('--measurement_identity', default=None)
-    parser.add_argument('--import_identity', default=None)
-    parser.add_argument('--endpoint', default=None, help='leased infer-stack alias (primary model)')
-    parser.add_argument('--endpoints', default=None, help='leased aliases by model role, JSON {role: alias}')
-    parser.add_argument('--leased_command', default=None,
-                        help='gate mode: run this leased child only if the store lacks the run')
-    parser.add_argument('--lock_held', default='False',
-                        help='the scheduling gate holds the acquisition lock for this node')
-    return parser
+
+class RunNodeCLI(kwconf.Config):
+    """Obtain one evaluation through magnet_evals.ensure for an EvaluationNode."""
+
+    __prog__ = 'python -m magnet.backends.aiq_evals.cli.run_node'
+
+    request = kwconf.Value(None, required=True, parser=str, help='EvaluationRequest as JSON')
+    store_dpath = kwconf.Value(None, required=True, parser=str, help='aiq-magnet-evals result store')
+    out_dpath = kwconf.Value('.', parser=str, help='node output directory')
+    evaluation_fname = kwconf.Value('evaluation.json', parser=str, help='primary output file')
+    select = kwconf.Value(None, parser=str, help='evidence selector JSON')
+    coverage_policy = kwconf.Value('complete', parser=str, help='complete or any')
+    worker_python = kwconf.Value(None, parser=str, help='engine worker interpreter')
+    timeout_seconds = kwconf.Value(None, type=float, help='execution timeout')
+    import_source = kwconf.Value(None, parser=str, help='native artifacts to import')
+    allow_external_symlinks = kwconf.Value(False, isflag=True, help='follow links out of the import source')
+    measurement_identity = kwconf.Value(None, parser=str, help='preflight measurement digest')
+    import_identity = kwconf.Value(None, parser=str, help='preflight native content identity')
+    endpoint = kwconf.Value(None, parser=str, help='leased infer-stack alias (primary model)')
+    endpoints = kwconf.Value(None, parser=str, help='leased aliases by model role, JSON {role: alias}')
+    leased_command = kwconf.Value(
+        None, parser=str, help='gate mode: run this leased child only if the store lacks the run',
+    )
+    lock_held = kwconf.Value(False, isflag=True, help='the scheduling gate holds the acquisition lock')
 
 
 def lease_runtime(endpoints: dict | str | None, request: dict, environ=None) -> tuple[dict, dict]:
@@ -212,7 +215,7 @@ def _reschedule(out_dpath: Path, summary: dict, stale: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    args = RunNodeCLI.cli(argv=True if argv is None else argv, strict=True, special_options=False)
     import asyncio
     import signal
 
