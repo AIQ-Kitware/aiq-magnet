@@ -385,7 +385,7 @@ def _publish(store_root, value, *, task='t', digest='c' * 64, other=None, covera
     return publish_run(path, resolved=resolved, result=result, context=ExecutionContext(output_dir=path))
 
 
-def _schedule(node_dir, run, *, select=None, policy='complete', store=None, import_identity=None):
+def _schedule(node_dir, run, *, select=None, policy='complete', store=None, import_identity=None, request=None):
     """Write the invoke.sh kwdagger would render for a node scheduled like this."""
     import shlex
 
@@ -396,7 +396,7 @@ def _schedule(node_dir, run, *, select=None, policy='complete', store=None, impo
                 'measurement_identity': run.resolved.identity.digest}
     if import_identity:
         expected['import_identity'] = import_identity
-    request = json.dumps(run.resolved.request.to_dict(), sort_keys=True)
+    request = json.dumps(request or run.resolved.request.to_dict(), sort_keys=True)
     store = store or run.path.parent.parent.parent  # <store>/runs/<dd>/<digest>
     (node_dir / 'invoke.sh').write_text(
         '#!/bin/bash\n# Root node\n'
@@ -607,6 +607,24 @@ def test_a_stale_schedule_stops_before_any_engine_work(tmp_path):
     summary = json.loads((tmp_path / 'node' / 'attempt_summary.json').read_text())
     assert summary['status'] == 'not-run' and 'reschedule' in summary['error']
     assert not (tmp_path / 'store' / 'attempts').exists()
+
+
+def test_reuse_across_operational_request_changes_is_valid_evidence(tmp_path):
+    # Identity v3: a run executed with endpoint URL A is the same measurement
+    # as a node scheduled with URL B (and other credential names). The node's
+    # evidence is valid; its own recorded request is still pinned.
+    run = _publish(tmp_path / 'store', 0.5)
+    scheduled = run.resolved.request.to_dict()
+    scheduled['models'][0]['provider_options'] = {'base_url': 'http://elsewhere/v1'}
+    scheduled['engine_options'] = {'required_secrets': ['OTHER_KEY']}
+    fpath = _evaluation_json(tmp_path / 'node', run, schedule=False)
+    _schedule(tmp_path / 'node', run, request=scheduled)
+    fpath.write_text(json.dumps({**json.loads(fpath.read_text()), 'request': scheduled}))
+    row = _row(fpath)
+    assert row['metrics.evaluate.eligible'] is True and row['metrics.evaluate.score'] == 0.5
+    # evaluation.json must still record the request that was scheduled.
+    fpath.write_text(json.dumps({**json.loads(fpath.read_text()), 'request': run.resolved.request.to_dict()}))
+    _assert_invalid(_row(fpath), 'scheduled request')
 
 
 def test_edited_run_payload_invalidates_the_node(tmp_path):

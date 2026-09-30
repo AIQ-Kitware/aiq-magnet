@@ -626,7 +626,12 @@ def check_scheduled(summary: dict[str, Any], run: Any, record: dict[str, Any] | 
         scheduled = EvaluationRequest.from_dict(record['request']).to_dict()
         if EvaluationRequest.from_dict(summary.get('request') or {}).to_dict() != scheduled:
             raise InvalidEvaluation('recorded request differs from the scheduled request')
-        if run.resolved.request.to_dict() != scheduled:
+        # A reusable run is the scheduled measurement when its validated
+        # identity and acquisition slot are (checked above): it may have been
+        # computed with other operational fields (endpoint URL, credential
+        # names), which do not enter identity. A non-reusable run belongs to
+        # this node alone, so its request must be exactly the scheduled one.
+        if not record['expected'].get('measurement_identity') and run.resolved.request.to_dict() != scheduled:
             raise InvalidEvaluation('referenced run was computed for a different request')
 
 

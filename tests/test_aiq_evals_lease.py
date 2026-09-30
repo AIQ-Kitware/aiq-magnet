@@ -132,6 +132,22 @@ def test_olmo_agent_runs_inside_a_real_lease_and_reuse_takes_none(tmp_path, leas
     evaluate(fpath, out, lease_settings=_lease_settings())
     assert len(_leases(lease_env)) == 1
 
+    # Only the endpoint URL changes: a new node (its parameters differ), the
+    # same measurement (identity v3). Its gate reuses the run: no lease, and
+    # the evidence is valid.
+    algo['models'][0]['provider_options'] = {'base_url': 'http://127.0.0.1:8/v1'}
+    moved = write_recipe(
+        tmp_path, {'evaluate': evaluation_node(algo, worker=OLMO_PYTHON, endpoint='gpt-4o-mini')},
+        claim='assert metrics.evaluate.score == 1.0', name='moved_endpoint',
+        matrix={'evaluate.select': [json.dumps(selects[0], sort_keys=True)]},
+    )
+    _, moved_card = evaluate(moved, out, lease_settings=_lease_settings())
+    assert moved_card.result == 'VERIFIED'
+    records = [json.loads(p.read_text()) for p in evaluations(out)]
+    assert len(records) == 3 and sorted(r['action'] for r in records) == ['executed', 'reused', 'reused']
+    assert len({r['measurement_identity']['digest'] for r in records}) == 1
+    assert len(_leases(lease_env)) == 1
+
 
 @needs_infer_stack
 @needs_repo

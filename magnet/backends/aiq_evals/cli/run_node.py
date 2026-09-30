@@ -139,9 +139,10 @@ def gate(args, out_dpath: Path) -> int:
             run = load_run(store.run_path(digest))
         except Exception:
             return None
+        # The measurement identity decides reuse; the stored run's request may
+        # differ in operational fields (endpoint URL, credential names).
         ok = (run.complete and run.result.status == 'succeeded' and run.manifest.get('reusable')
-              and run.resolved.identity.digest == digest
-              and run.resolved.request.to_dict() == request.to_dict())
+              and run.resolved.identity.digest == digest)
         return run if ok else None
 
     def run_child() -> int:
@@ -251,7 +252,8 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=Path(args.store_dpath), env=lease_env, worker_python=args.worker_python,
         timeout_seconds=args.timeout_seconds, model_endpoints=model_endpoints,
     )
-    resolved = asyncio.run(resolve_evaluation_async(request, context))
+    # Credentials are checked only if ensure() must execute: reuse needs none.
+    resolved = asyncio.run(resolve_evaluation_async(request, context, require_secrets=False))
     current_import = None if args.import_source is None else native_source_identity(
         args.import_source, allow_external_symlinks=allow_external,
     )
