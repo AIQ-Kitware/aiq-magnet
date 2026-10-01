@@ -101,17 +101,18 @@ INSPECT_ENV=$WORK/inspect-openai-py313
 CONTAINER_ENV=$WORK/magnet-container-py313
 OLMO=$WORK/olmo-eval-py313
 
-uv venv -q --python 3.13 "$MAGNET_ENV"
+# Deliberately recreate these environments without prompting on repeated runs.
+uv venv -q --clear --python 3.13 "$MAGNET_ENV"
 MAGNET_INSTALL=(-e "$EVALS" -e ./packages/aiq-magnet-theory -e '.[tests,leasing]')
 if [ -n "${INFER_STACK_DIR:-}" ]; then
     MAGNET_INSTALL+=(-e "$INFER_STACK_DIR")
 fi
 retry uv pip install -q --python "$MAGNET_ENV/bin/python" "${MAGNET_INSTALL[@]}"
 
-uv venv -q --python 3.13 "$INSPECT_ENV"
+uv venv -q --clear --python 3.13 "$INSPECT_ENV"
 retry uv pip install -q --python "$INSPECT_ENV/bin/python" -e "$EVALS[inspect]" openai
 
-uv venv -q --python 3.13 --python-preference only-managed "$CONTAINER_ENV"
+uv venv -q --clear --python 3.13 --python-preference only-managed "$CONTAINER_ENV"
 retry uv pip install -q --python "$CONTAINER_ENV/bin/python" \
     -e "$EVALS" -e ./packages/aiq-magnet-theory -e '.[tests]'
 

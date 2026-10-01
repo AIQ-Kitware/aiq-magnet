@@ -207,8 +207,9 @@ skip_autogen = [
 # MAGNET <-> aiq-magnet-evals integration: real HELM/Inspect/OLMo workers,
 # tmux, and Docker, with MAGNET_REQUIRE_AIQ_EVALS=1 so nothing passes by
 # skipping. The optional CI extras deliberately exclude aiq-magnet-evals, so
-# the regular test jobs cannot cover this. Update AIQ_MAGNET_EVALS_REV together
-# with any change that depends on a new aiq-magnet-evals revision.
+# the regular test jobs cannot cover this. The pin is a known-good compatibility
+# point: advance it when MAGNET needs newer evaluator functionality or files.
+# Normal development can test local checkouts with AIQ_MAGNET_EVALS_DIR.
 [tool.xcookie.ci_source_checks.aiq-magnet-evals]
 name = "aiq-magnet-evals integration (HELM, Inspect, OLMo workers)"
 python_version = "3.12"
@@ -217,4 +218,4 @@ commands = ["dev/ci/aiq_evals_integration.sh"]
 
 [tool.xcookie.ci_source_checks.aiq-magnet-evals.env]
 AIQ_MAGNET_EVALS_REPO = "https://github.com/Erotemic/aiq-magnet-evals.git"
-AIQ_MAGNET_EVALS_REV = "23ad474fbf3db3e6a8a002a5452b17c4a60a866c"
+AIQ_MAGNET_EVALS_REV = "e4cd098756464e1b90402d493b8ed8fec8ed5834"
