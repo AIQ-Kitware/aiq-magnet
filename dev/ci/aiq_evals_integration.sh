@@ -61,10 +61,14 @@ uv venv -q --python 3.13 --python-preference only-managed "$WORK/magnet-containe
 retry uv pip install -q --python "$WORK/magnet-container/bin/python" \
   -e "$EVALS" -e ./packages/aiq-magnet-theory -e '.[tests]'
 retry docker pull -q ubuntu:24.04
+retry docker build -q --build-arg BASE_IMAGE=ubuntu:24.04 \
+  --iidfile "$WORK/worker-container.iid" \
+  -f "$EVALS/dev/environments/worker-container.Dockerfile" "$EVALS/dev/environments"
 
 MAGNET_REQUIRE_AIQ_EVALS=1 \
 MAGNET_TEST_DOCKER=1 \
 MAGNET_TEST_CONTAINER_VENV="$WORK/magnet-container" \
+MAGNET_TEST_CONTAINER_IMAGE="$(cat "$WORK/worker-container.iid")" \
 AIQ_EVALS_REPO="$EVALS" \
 AIQ_EVALS_HELM_PYTHON="$WORK/magnet/bin/python" \
 AIQ_EVALS_INSPECT_PYTHON="$WORK/inspect/bin/python" \

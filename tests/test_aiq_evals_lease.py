@@ -15,7 +15,9 @@ package, which is outside the verified pin set.
 """
 import json
 import os
+import shlex
 import shutil
+import subprocess
 import sqlite3
 from pathlib import Path
 
@@ -67,7 +69,11 @@ def lease_env(tmp_path, monkeypatch):
         shim.parent.mkdir()
         shim.write_text(
             '#!/bin/bash\n'
-            f'if [ "$1" = run ]; then shift; exec {INFER_STACK} run --base_url http://127.0.0.1:{port}/v1 "$@"; fi\n'
+            'if [ "$1" = run ]; then\n'
+            f'  echo entered >> {shlex.quote(str(tmp_path / "lease-entries"))}\n'
+            '  shift\n'
+            f'  exec {INFER_STACK} run --base_url http://127.0.0.1:{port}/v1 "$@"\n'
+            'fi\n'
             f'exec {INFER_STACK} "$@"\n'
         )
         shim.chmod(0o755)
@@ -99,7 +105,8 @@ def _no_secret(out):
 
 @needs_infer_stack
 @needs_olmo
-def test_olmo_agent_runs_inside_a_real_lease_and_reuse_takes_none(tmp_path, lease_env):
+@pytest.mark.parametrize('containerized', [False, True])
+def test_olmo_agent_runs_inside_a_real_lease_and_reuse_takes_none(tmp_path, lease_env, containerized):
     algo = {
         'engine': 'olmo_eval', 'task': 'aiq_example_tool', 'task_revision': 'example-v1',
         'data_revision': 'example-v1',
@@ -113,40 +120,92 @@ def test_olmo_agent_runs_inside_a_real_lease_and_reuse_takes_none(tmp_path, leas
                                'scaffold_kwargs': {'enable_compaction': False}},
         },
     }
+    worker = OLMO_PYTHON
+    options = {'lease_settings': _lease_settings()}
+    if containerized:
+        if not HAS_DOCKER or CONTAINER_VENV is None:
+            from aiq_evals_support import REQUIRED
+            if REQUIRED:
+                pytest.fail('needs MAGNET_TEST_DOCKER=1 and MAGNET_TEST_CONTAINER_VENV')
+            pytest.skip('needs Docker and a portable MAGNET venv')
+        import magnet
+        from magnet.containers import ContainerSettings
+        from magnet.backends.aiq_evals.pipeline import EvaluationNode
+
+        worker_venv = Path(OLMO_PYTHON).parent.parent
+        container_venv = Path(CONTAINER_VENV)
+        settings = ContainerSettings.coerce(
+            image=os.environ.get('MAGNET_TEST_CONTAINER_IMAGE', 'ubuntu:24.04'),
+            mounts=sorted({
+                str(_venv_base(worker_venv)), str(_venv_base(container_venv)),
+                str(worker_venv.parent), str(container_venv), str(tmp_path),
+                str(Path(magnet.__file__).resolve().parents[1]),
+                str(Path(magnet_evals.__file__).resolve().parents[1]),
+            }),
+            env={'PATH': f'{container_venv}/bin:/usr/bin:/bin'},
+            docker_args=f'-v {worker_venv}:/opt/aiq-olmo-worker:ro',
+        )
+        worker = '/opt/aiq-olmo-worker/bin/python'
+        options['container_settings'] = settings
+        # Use the actual resolve_node CLI and node wrapper, without a lease.
+        probe = EvaluationNode()
+        probe.apply_container_settings(settings)
+        command = probe.wrap_with_container(
+            'python -m magnet.backends.aiq_evals.cli.resolve_node '
+            f'--request {shlex.quote(json.dumps(algo))} --worker_python {worker}'
+        )
+        identities = []
+        for _ in range(2):
+            output = subprocess.check_output(command, shell=True, text=True)
+            identity = json.loads(output.splitlines()[-1])['measurement_identity']
+            assert identity['reusable'] and identity['unknown_reasons'] == []
+            assert len(identity['digest']) == 64
+            identities.append(identity['digest'])
+        assert identities[0] == identities[1]
+        assert _leases(lease_env) == []
     selects = [{'metric': 'contains_42'}, {'metric': 'contains_42', 'task': 'aiq_example_tool'}]
     fpath = write_recipe(
-        tmp_path, {'evaluate': evaluation_node(algo, worker=OLMO_PYTHON, endpoint='gpt-4o-mini')},
+        tmp_path, {'evaluate': evaluation_node(algo, worker=worker, endpoint='gpt-4o-mini')},
         claim='assert metrics.evaluate.score == 1.0',
         matrix={'evaluate.select': [json.dumps(s, sort_keys=True) for s in selects]},
     )
     out = tmp_path / 'out'
-    _, card = evaluate(fpath, out, lease_settings=_lease_settings())
+    _, card = evaluate(fpath, out, **options)
     assert card.result == 'VERIFIED', [c.evidence_row.get('metrics.evaluate.ineligible_reasons') for c in card.cell_results]
     records = [json.loads(p.read_text()) for p in evaluations(out)]
     assert sorted(r['action'] for r in records) == ['executed', 'reused']
     # One lease for the measurement: the second node's gate found the stored run.
     assert _leases(lease_env) == [(_leases(lease_env)[0][0], ['gpt-4o-mini'])]
     _no_secret(out)
+    digest = records[0]['measurement_identity']['digest']
+    assert all(r['measurement_identity']['reusable'] for r in records)
+    assert all(r['measurement_identity']['unknown_reasons'] == [] for r in records)
+    assert all(r['preflight_identity'] == digest for r in records)
+    assert all(Path(r['run_path']).parts[-3:] == ('runs', digest[:2], digest) for r in records)
+    if containerized:
+        assert digest == identities[0]
 
     # Rescheduling reuses everything: no new lease.
-    evaluate(fpath, out, lease_settings=_lease_settings())
+    evaluate(fpath, out, **options)
     assert len(_leases(lease_env)) == 1
+    assert (tmp_path / 'lease-entries').read_text().splitlines() == ['entered']
 
     # Only the endpoint URL changes: a new node (its parameters differ), the
     # same measurement (identity v3). Its gate reuses the run: no lease, and
     # the evidence is valid.
     algo['models'][0]['provider_options'] = {'base_url': 'http://127.0.0.1:8/v1'}
     moved = write_recipe(
-        tmp_path, {'evaluate': evaluation_node(algo, worker=OLMO_PYTHON, endpoint='gpt-4o-mini')},
+        tmp_path, {'evaluate': evaluation_node(algo, worker=worker, endpoint='gpt-4o-mini')},
         claim='assert metrics.evaluate.score == 1.0', name='moved_endpoint',
         matrix={'evaluate.select': [json.dumps(selects[0], sort_keys=True)]},
     )
-    _, moved_card = evaluate(moved, out, lease_settings=_lease_settings())
+    _, moved_card = evaluate(moved, out, **options)
     assert moved_card.result == 'VERIFIED'
     records = [json.loads(p.read_text()) for p in evaluations(out)]
     assert len(records) == 3 and sorted(r['action'] for r in records) == ['executed', 'reused', 'reused']
     assert len({r['measurement_identity']['digest'] for r in records}) == 1
     assert len(_leases(lease_env)) == 1
+    assert (tmp_path / 'lease-entries').read_text().splitlines() == ['entered']
 
 
 @needs_infer_stack
@@ -238,4 +297,3 @@ def test_a_leased_container_verifies_the_served_model(tmp_path, lease_env, monke
     assert record['action'] == 'executed'
     assert _leases(lease_env)[0][1] == ['example-lease']
     _no_secret(out)
-

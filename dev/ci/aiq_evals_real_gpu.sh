@@ -131,6 +131,12 @@ retry olmo_sync
 retry uv pip install -q --python "$OLMO/.venv/bin/python" kwconf
 
 retry docker pull -q "$CONTAINER_IMAGE"
+# Editable OLMo installs need git in the executing container, not just on the
+# host. Build the evaluator-owned provenance image from the selected base.
+retry docker build -q --build-arg "BASE_IMAGE=$CONTAINER_IMAGE" \
+    --iidfile "$WORK/worker-container.iid" \
+    -f "$EVALS/dev/environments/worker-container.Dockerfile" "$EVALS/dev/environments"
+CONTAINER_IMAGE=$(cat "$WORK/worker-container.iid")
 
 INFER_STACK_BIN=$MAGNET_ENV/bin/infer-stack
 if [ ! -x "$INFER_STACK_BIN" ]; then
