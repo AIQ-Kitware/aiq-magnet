@@ -237,7 +237,7 @@ def _run_case(
     worker_label: str,
     require_tool_execution: bool,
 ):
-    """Run one fresh leased measurement, assert artifacts, then assert reuse."""
+    """Run one fresh leased measurement and assert its real-hardware artifacts."""
     from magnet.leasing import LeaseSettings
 
     root = ctx['root'] / name
@@ -329,20 +329,6 @@ def _run_case(
     ]
     assert matching, (
         f'no new infer-stack lease claimed {endpoint!r}; new leases={new_claims!r}'
-    )
-
-    # Rescheduling the same materialized measurement must not start another
-    # model or take another GPU lease.
-    _, second_card = evaluate(
-        recipe_fpath,
-        out,
-        lease_settings=LeaseSettings(enabled=True, allowed_gpus=True),
-        container_settings=container_settings,
-    )
-    assert second_card.result == 'VERIFIED'
-    after_second = _read_leases(ctx['ledger'])
-    assert after_second == after_first, (
-        f'{name}: rescheduling an already materialized measurement took another lease'
     )
 
     return run

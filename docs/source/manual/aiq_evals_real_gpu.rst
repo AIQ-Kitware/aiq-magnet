@@ -53,12 +53,18 @@ All three cases must satisfy the common integration invariants:
   and canonical run artifacts.
 * Native coverage is complete enough to produce eligible evidence.
 * MAGNET verifies ``metrics.evaluate.eligible``.
-* Re-scheduling an already materialized measurement takes no second GPU lease.
 
 The two agentic cases additionally inspect aiq-magnet-evals' normalized sample
 trajectories and require evidence of an *executed tool result*.  Advertising a
 tool to the model, configuring an agent scaffold, or merely emitting a tool-call
 request is not enough to pass.
+
+Reuse is intentionally not part of this expensive hardware gate.  Canonical-run
+reuse and the rule that a reused evaluation should not acquire another lease are
+covered by the deterministic MAGNET/aiq-magnet-evals lease integration tests.
+Keeping that concern separate prevents a reuse/caching regression from obscuring
+the question this gate answers: whether a *fresh* Inspect or OLMo evaluation can
+reach a real GPU-served model and, for agentic cases, actually execute a tool.
 
 The model's benchmark score is printed as a diagnostic but is not itself an
 infrastructure pass condition.  A model can answer the tiny benchmark item
