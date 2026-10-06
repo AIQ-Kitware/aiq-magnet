@@ -74,7 +74,7 @@ REQUEST_KEYS = (
 )
 #: Parameters filled by preflight. They take part in kwdagger's node identity
 #: but may not be configured by a recipe.
-COMPUTED_KEYS = ('measurement_identity', 'import_identity')
+COMPUTED_KEYS = ('measurement_identity', 'import_identity', 'endpoint_provenance')
 DRY_RUN_IDENTITY = 'unresolved-dry-run'
 EVALUATION_SCHEMA = 'magnet-aiq-evals-node/2'
 
@@ -91,7 +91,7 @@ def build_request_dict(config: dict[str, Any]) -> dict[str, Any]:
     models = config['models']
     if isinstance(models, str):
         models = json.loads(models)
-    return {
+    request = {
         'schema_version': 1,
         'engine': config['engine'],
         'task': config['task'],
@@ -105,6 +105,8 @@ def build_request_dict(config: dict[str, Any]) -> dict[str, Any]:
                 'revision': model.get('revision'),
                 'cache_token': model.get('cache_token'),
                 'provider_options': dict(model.get('provider_options') or {}),
+                **({'identity_unknown_reasons': list(model['identity_unknown_reasons'])}
+                   if model.get('identity_unknown_reasons') else {}),
             }
             for model in models
         ],
@@ -112,6 +114,9 @@ def build_request_dict(config: dict[str, Any]) -> dict[str, Any]:
         'generation': dict(config.get('generation') or {}),
         'engine_options': dict(config.get('engine_options') or {}),
     }
+    from magnet.backends.aiq_evals.serving import bind_provenance
+
+    return bind_provenance(request, config.get('endpoint_provenance') or {})
 
 
 def selector_value(select: Any) -> dict[str, Any] | None:
@@ -153,6 +158,7 @@ class _PreflightState:
     def __init__(self) -> None:
         self.resolutions: dict[str, dict[str, Any]] = {}
         self.nonces: dict[str, str] = {}
+        self.provenance: dict[str, dict[str, Any]] = {}
 
 
 _PREFLIGHT: contextvars.ContextVar[_PreflightState | None] = contextvars.ContextVar(
@@ -257,6 +263,7 @@ class EvaluationNode(MagnetProcessNode):
         # Computed by preflight (see COMPUTED_KEYS); never configured.
         'measurement_identity': DRY_RUN_IDENTITY,
         'import_identity': None,
+        'endpoint_provenance': None,
     }
     perf_params = {
         # Shared content-addressed aiq-magnet-evals store; default under the kwdagger root.
@@ -273,6 +280,7 @@ class EvaluationNode(MagnetProcessNode):
         # Leases for other model roles, {role: alias} (e.g. a separately leased
         # grader). Supported where the engine accepts per-role endpoints (Inspect).
         'endpoints': None,
+        'verify_serving_provenance': True,
     }
     endpoint_params = ('endpoint', 'endpoints')  # see lease_roles()
     #: kwdagger's resolved-row cache is keyed on evaluation.json's mtime, so it
@@ -337,8 +345,11 @@ class EvaluationNode(MagnetProcessNode):
 
         return (
             *ContainerCapability.container_runtime_env,
+            'INFER_STACK_ENDPOINT_DESCRIPTOR', 'INFER_STACK_LEASE_ID',
             *(lease_endpoint_var(alias) for alias in self.resolve_lease_endpoints()),
         )
+
+    container_runtime_files = ('INFER_STACK_ENDPOINT_DESCRIPTOR',)
 
     def _import_source(self, config: dict[str, Any]) -> str | None:
         source = config.get('import_source')
@@ -361,7 +372,17 @@ class EvaluationNode(MagnetProcessNode):
         if state is None or missing_request_keys(dict(config)):
             config['measurement_identity'] = DRY_RUN_IDENTITY
             config['import_identity'] = None
+            config['endpoint_provenance'] = None
             return config
+        roles = self.lease_roles()
+        config['endpoint_provenance'] = None
+        if roles and _truthy(self._setting('verify_serving_provenance')):
+            from magnet.backends.aiq_evals.serving import catalog_provenance
+
+            key = json.dumps(roles, sort_keys=True)
+            if key not in state.provenance:
+                state.provenance[key] = catalog_provenance(roles)
+            config['endpoint_provenance'] = state.provenance[key]
         command = self.preflight_command(config)
         resolution = state.resolutions.get(command)
         if resolution is None:
@@ -429,7 +450,8 @@ class EvaluationNode(MagnetProcessNode):
         }
         for key in COMPUTED_KEYS:
             if config.get(key) not in (None, ''):
-                args[key] = config[key]
+                args[key] = (json.dumps(config[key], sort_keys=True)
+                             if key == 'endpoint_provenance' else config[key])
         select = selector_value(config.get('select'))
         if select is not None:
             args['select'] = json.dumps(select, sort_keys=True)
@@ -482,6 +504,8 @@ class EvaluationNode(MagnetProcessNode):
             'select': normalize_selector(selector_value(config.get('select'))),
             'coverage_policy': config.get('coverage_policy') or 'complete',
         }
+        if config.get('endpoint_provenance'):
+            expected['endpoint_provenance'] = config['endpoint_provenance']
         digest = str(config.get('measurement_identity') or '')
         if len(digest) == 64:
             expected['measurement_identity'] = digest
@@ -505,9 +529,11 @@ class EvaluationNode(MagnetProcessNode):
         if fpath is None:
             return None
         expected = json.dumps(self.expected_evaluation(), sort_keys=True)
+        # Keep the scheduling record, but reach the gate for the catalog check.
+        pending = ' --force_pending=True' if self._final().get('endpoint_provenance') else ''
         return self._wrap_interpreter(
             'python -m magnet.backends.aiq_evals.cli.check_done '
-            f'{shlex.quote(str(fpath))} --expected={shlex.quote(expected)}'
+            f'{shlex.quote(str(fpath))} --expected={shlex.quote(expected)}{pending}'
         )
 
     def _wrap_interpreter(self, command: str) -> str:

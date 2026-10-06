@@ -54,9 +54,12 @@ def lease_env(tmp_path, monkeypatch):
     catalog = tmp_path / 'catalog.yaml'
     catalog.write_text(
         'models:\n  example-model:\n    source: hf://example/model\n'
+        f'    revision: {"a" * 40}\n'
         'endpoints:\n'
         '  gpt-4o-mini:\n    model: example-model\n    engine: vllm\n'
+        f'    runtime:\n      image: org/vllm@sha256:{"b" * 64}\n'
         '  gpt-4o:\n    model: example-model\n    engine: vllm\n'
+        f'    runtime:\n      image: org/vllm@sha256:{"b" * 64}\n'
     )
     monkeypatch.setenv('INFER_STACK_BACKEND', 'null')
     monkeypatch.setenv('INFER_STACK_CATALOG', str(catalog))

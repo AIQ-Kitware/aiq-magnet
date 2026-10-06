@@ -589,7 +589,11 @@ def test_preflight_is_bounded_and_kills_its_process_group(tmp_path):
     assert time.monotonic() - start < 30
     pid = int(marker.read_text())
     stat = Path(f'/proc/{pid}/stat')
-    assert not stat.exists() or stat.read_text().split()[2] == 'Z'
+    try:
+        state = stat.read_text().split()[2]
+    except FileNotFoundError:
+        state = None
+    assert state in (None, 'Z')
 
 
 @needs_helm
@@ -825,7 +829,8 @@ def _leased_node(store, digest, monkeypatch, *, perf=None, **algo):
     node = EvaluationNode(
         name='evaluate',
         algo_params={'engine': 'inspect_ai', 'task': 't', 'models': [{'model': 'smol-135', 'revision': 'r'}], **algo},
-        perf_params={'endpoint': 'smol-135', 'store_dpath': str(store), **(perf or {})},
+        perf_params={'endpoint': 'smol-135', 'store_dpath': str(store),
+                     'verify_serving_provenance': False, **(perf or {})},
     )
     node.apply_lease_settings(LeaseSettings(enabled=True, allowed_gpus=False))
     node.configure({})

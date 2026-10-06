@@ -5,6 +5,9 @@ These recipes obtain their evaluations through
 `magnet.backends.aiq_evals.EvaluationNode`. Each exposes `metrics.evaluate.score`
 only when its `select` names exactly one metric and the evidence is eligible.
 
+Harbor, SWE-bench Verified, and Pro V2 smoke recipe preparation and serving
+provenance checks are documented in [SWEBENCH.md](SWEBENCH.md).
+
 | Recipe | Engine | Kind |
 | --- | --- | --- |
 | `helm_generation.yaml` | HELM (built-in `simple_mcqa`, local `simple/model1`) | generation |

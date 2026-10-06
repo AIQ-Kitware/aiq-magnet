@@ -43,6 +43,7 @@ class RunNodeCLI(kwconf.Config):
     allow_external_symlinks = kwconf.Value(False, isflag=True, help='follow links out of the import source')
     measurement_identity = kwconf.Value(None, parser=str, help='preflight measurement digest')
     import_identity = kwconf.Value(None, parser=str, help='preflight native content identity')
+    endpoint_provenance = kwconf.Value(None, parser=str, help='scheduled scientific serving facts by role')
     endpoint = kwconf.Value(None, parser=str, help='leased infer-stack alias (primary model)')
     endpoints = kwconf.Value(None, parser=str, help='leased aliases by model role, JSON {role: alias}')
     leased_command = kwconf.Value(
@@ -106,6 +107,8 @@ def _truthy(value) -> bool:
 
 
 def _write_evaluation(args, out_dpath: Path, summary: dict) -> None:
+    if args.endpoint_provenance:
+        summary = dict(summary, endpoint_provenance=json.loads(args.endpoint_provenance))
     fpath = Path(args.evaluation_fname)
     if fpath.parent == Path('.'):
         # A bare name lives in the node directory; kwdagger passes a full path.
@@ -142,6 +145,13 @@ def gate(args, out_dpath: Path) -> int:
     from magnet.backends.aiq_evals.projection import normalize_selector
 
     request = EvaluationRequest.from_dict(json.loads(args.request))
+    from magnet.backends.aiq_evals.serving import verify_catalog
+
+    try:
+        verify_catalog(json.loads(args.endpoints) if args.endpoints else {'primary': args.endpoint},
+                       json.loads(args.endpoint_provenance) if args.endpoint_provenance else {})
+    except (OSError, ValueError, subprocess.TimeoutExpired) as ex:
+        return _reschedule(out_dpath, {'status': 'not-run'}, [str(ex)])
     digest = args.measurement_identity or ''
     store = ResultStore(args.store_dpath)
 
@@ -272,8 +282,18 @@ def main(argv: list[str] | None = None) -> int:
         return gate(args, out_dpath)
     request_dict = json.loads(args.request)
     select = normalize_selector(json.loads(args.select) if args.select else None)
+    out_dpath = Path(args.out_dpath)
+    out_dpath.mkdir(parents=True, exist_ok=True)
+    roles = json.loads(args.endpoints) if args.endpoints else ({'primary': args.endpoint} if args.endpoint else {})
+    if not args.import_source:
+        from magnet.backends.aiq_evals.serving import verify_lease
+
+        try:
+            verify_lease(roles, json.loads(args.endpoint_provenance) if args.endpoint_provenance else {})
+        except (OSError, ValueError) as ex:
+            return _reschedule(out_dpath, {'status': 'not-run'}, [str(ex)])
     model_endpoints, lease_env = lease_runtime(
-        json.loads(args.endpoints) if args.endpoints else args.endpoint, request_dict,
+        {} if args.import_source else roles, request_dict,
     )
     request = EvaluationRequest.from_dict(request_dict)
     out_dpath = Path(args.out_dpath)

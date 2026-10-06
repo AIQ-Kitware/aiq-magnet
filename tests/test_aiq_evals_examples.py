@@ -31,7 +31,34 @@ def recipe_path(name):
 def test_recipes_ship_with_the_package():
     folder = importlib.resources.files('magnet') / 'examples' / 'aiq_evals'
     shipped = {p.name for p in folder.iterdir() if p.name.endswith(('.yaml', '.md'))}
-    assert shipped == {f'{name}.yaml' for name in RECIPES} | {'README.md'}
+    assert shipped == {f'{name}.yaml' for name in RECIPES} | {'README.md', 'SWEBENCH.md'}
+
+
+@pytest.mark.parametrize('kind', ['verified', 'pro', 'harbor'])
+def test_coding_smoke_recipe_prepares_and_compiles_without_resolution(tmp_path, monkeypatch, kind):
+    from aiq_evals_support import repo, require_magnet_evals
+
+    require_magnet_evals()
+    from magnet.backends.aiq_evals import pipeline
+    from magnet.examples.aiq_evals.swebench import main
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('dry-run must not resolve engines or acquire a lease')
+
+    monkeypatch.setattr(pipeline, 'run_preflight', forbidden)
+    path = tmp_path / 'recipe.yaml'
+    pins = tmp_path / 'pins.json'
+    from magnet_evals.benchmarks.swe_bench_pro import SMOKE_TASK
+
+    pins.write_text(json.dumps({SMOKE_TASK: 'sha256:' + 'a' * 64}))
+    assert main(['--kind', kind, '--endpoint', 'coding', '--worker_python', '/container-only/python',
+                 '--evals_root', str(repo()), '--output', str(path), '--task_path', str(tmp_path / 'task'),
+                 '--pro_root', str(tmp_path / 'pro'), '--image_pins', str(pins)]) == 0
+    _, card = evaluate(path, tmp_path / 'out', dry_run=True)
+    assert card.result == 'NOT_EVALUATED'
+    config = yaml.safe_load(path.read_text())['kwdagger']['pipeline']['nodes']['evaluate']
+    assert config['perf_params']['verify_serving_provenance']
+    assert config['algo_params']['engine'] == ('inspect_ai' if kind == 'verified' else 'harbor')
 
 
 @pytest.mark.parametrize('name', RECIPES)
