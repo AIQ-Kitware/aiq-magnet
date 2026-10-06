@@ -520,6 +520,10 @@ class EvaluationNode(MagnetProcessNode):
     @property
     def does_exist(self) -> bool:
         """Done only if the recorded run still validates and matches this node."""
+        # Even an existing canonical result must pass the host catalog check.
+        # Otherwise scheduling could skip the queued gate after an alias changed.
+        if self._final().get('endpoint_provenance'):
+            return False
         fpath = self._evaluation_fpath()
         return fpath is not None and evaluation_is_valid(Path(fpath), self.expected_evaluation())
 
