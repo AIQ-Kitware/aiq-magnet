@@ -1,0 +1,61 @@
+# OLMo Eval agent/tool evaluation through aiq-magnet-evals. See magnet/examples/aiq_evals/README.md.
+name: aiq_evals_olmo_agent
+title: OLMo Eval agent/tool evaluation through aiq-magnet-evals
+description: 'OLMo Eval OpenAI Agents scaffold calling a registered tool through an OpenAI-compatible
+  endpoint. Serve the deterministic example endpoint with `python -m magnet_evals.examples.chat_server
+  --port 8000` and set OPENAI_API_KEY (any value), or lease a real one: set perf_params.endpoint to an
+  infer-stack alias and the model binding to its served name. Set perf_params.worker_python to the engine
+  interpreter (for example with --params); the example tasks ship in the aiq-magnet-evals package.'
+version: '1.0'
+organizations:
+- Kitware
+submitter:
+  name: Kitware TA2 Team
+  email: aiq-ta2@kitware.com
+links:
+- title: aiq-magnet-evals
+  url: https://github.com/Erotemic/aiq-magnet-evals
+  type: software
+tags:
+- example
+- aiq-magnet-evals
+- olmo_eval
+- agentic
+claim:
+  python: assert metrics.evaluate.score == 1.0
+evidence:
+  scope: requested
+kwdagger:
+  result_node: evaluate
+  pipeline:
+    nodes:
+      evaluate:
+        class: magnet.backends.aiq_evals.EvaluationNode
+        algo_params:
+          engine: olmo_eval
+          task: aiq_example_tool
+          task_revision: example-v1
+          data_revision: example-v1
+          models:
+          - role: primary
+            model: gpt-4o-mini
+            provider: litellm
+            revision: example-endpoint-v1
+            provider_options:
+              base_url: http://127.0.0.1:8000/v1
+          engine_options:
+            upstream_revision: 73ade80e24f796af55caeb8fd7b75a7f3fd607fd
+            task_modules:
+            - magnet_evals.examples.olmo_tasks
+            required_secrets:
+            - OPENAI_API_KEY
+            harness_config:
+              scaffold: openai_agents
+              tools:
+              - aiq_example_double
+              scaffold_kwargs:
+                enable_compaction: false
+          select:
+            metric: contains_42
+        perf_params:
+          worker_python: null

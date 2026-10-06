@@ -14,7 +14,6 @@ from collections.abc import Mapping
 
 from kwdagger import Pipeline
 
-
 __all__ = [
     'LeaseCapability',
     'LeaseSettings',
@@ -126,6 +125,9 @@ class LeaseCapability:
         names = self.resolve_lease_endpoints()
         if not names:
             return command
+        # Defer runtime file expansion until the child inherits its lease env.
+        if getattr(self, 'container_runtime_files', ()):
+            command = 'bash -c ' + shlex.quote(command)
         return self._lease_command_prefix(names) + ' \\\n    ' + command
 
     def _lease_command_prefix(self, names: list[str]) -> str:

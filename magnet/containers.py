@@ -19,7 +19,6 @@ from collections.abc import Mapping, Sequence
 
 from kwdagger import Pipeline
 
-
 __all__ = [
     'ContainerCapability',
     'ContainerSettings',
@@ -166,6 +165,8 @@ class ContainerCapability:
         'OPENAI_BASE_URL',
         'OPENAI_API_KEY',
     )
+    #: Public files created by an enclosing runtime wrapper, mounted read-only.
+    container_runtime_files: tuple[str, ...] = ()
 
     #: Variables captured when the DAG command is rendered.
     container_capture_env: tuple[str, ...] = (
@@ -220,6 +221,12 @@ class ContainerCapability:
         # must be forwarded by name rather than captured while rendering.
         for name in _coerce_name_list(self.container_runtime_env):
             parts += ['-e', name]
+        for name in self.container_runtime_files:
+            import re
+
+            if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name):
+                raise ValueError(f'invalid runtime file variable: {name!r}')
+            parts.append('${' + name + ':+--volume="${' + name + '}:${' + name + '}:ro"}')
         for name, value in self._container_resolved_env().items():
             if value is None:
                 parts += ['-e', name]

@@ -307,7 +307,14 @@ class KWDaggerProcessor:
             run=not dry_run,
             **schedule_options,
         )
-        self.request_dag, self.queue = build_schedule(kwd_config)
+        # aiq-magnet-evals EvaluationNodes resolve their measurement identity while the
+        # schedule compiles, before kwdagger hashes them into node ids -- but
+        # never in a dry run, which must not execute task code (integration
+        # plan M3/M9).
+        from magnet.backends.aiq_evals import preflight_scope
+
+        with preflight_scope(enabled=not dry_run):
+            self.request_dag, self.queue = build_schedule(kwd_config)
 
     def _coerce_aggregate_pipeline(self) -> Any:
         """Configure the logical pipeline used by kwdagger aggregate loading."""
@@ -351,6 +358,14 @@ class KWDaggerProcessor:
         from kwdagger.aggregate_loader import build_tables
 
         pipeline = self._coerce_aggregate_pipeline()
+        if any(
+            getattr(node, 'cache_result_rows', True) is False
+            for node in pipeline.node_dict.values()
+        ):
+            # Rows derived from nodes that revalidate their inputs on every load
+            # (aiq-magnet-evals EvaluationNode) must not come from kwdagger's
+            # mtime-keyed row cache.
+            cache_resolved_results = False
         tables_by_node = build_tables(
             self.root_dpath,
             pipeline,
