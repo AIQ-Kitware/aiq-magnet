@@ -14,6 +14,7 @@
 set -euo pipefail
 WORK=${1:-${RUNNER_TEMP:-/tmp}/magnet-aiq-evals}
 EVALS_REPO=${AIQ_MAGNET_EVALS_REPO:-https://github.com/Erotemic/aiq-magnet-evals.git}
+INFER_REPO=${INFER_STACK_REPO:-https://github.com/AIQ-Kitware/infer_stack.git}
 OLMO_REPO=${OLMO_REPO:-https://github.com/allenai/olmo-eval.git}
 OLMO_REV=73ade80e24f796af55caeb8fd7b75a7f3fd607fd
 mkdir -p "$WORK"
@@ -33,11 +34,20 @@ if [ -z "${AIQ_MAGNET_EVALS_DIR:-}" ]; then
   git -C "$EVALS" checkout -q "$REV"
 fi
 
+# Scientific serving provenance needs the source compatibility pin, including
+# the public run descriptor. A local checkout override supports VM development.
+INFER=${INFER_STACK_DIR:-$WORK/infer-stack}
+if [ -z "${INFER_STACK_DIR:-}" ]; then
+  INFER_REV=${INFER_STACK_REV:?set INFER_STACK_REV to the tested serving revision}
+  [ -d "$INFER/.git" ] || retry git clone -q "$INFER_REPO" "$INFER"
+  git -C "$INFER" checkout -q "$INFER_REV"
+fi
+
 # MAGNET, its HELM extra, and aiq-magnet-evals; this is also the HELM worker.
 uv venv -q --python 3.12 "$WORK/magnet"
 retry uv pip install -q --python "$WORK/magnet/bin/python" \
   -c "$EVALS/dev/environments/phase1/helm-py312-constraints.txt" \
-  -e "$EVALS" -e ./packages/aiq-magnet-theory -e '.[tests,helm,leasing]' 'crfm-helm==0.5.14'
+  -e "$EVALS" -e "$INFER" -e ./packages/aiq-magnet-theory -e '.[tests,helm,leasing]' 'crfm-helm==0.5.14'
 
 # Inspect worker at the verified pin.
 uv venv -q --python 3.11 "$WORK/inspect"
