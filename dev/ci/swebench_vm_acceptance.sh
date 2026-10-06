@@ -38,7 +38,8 @@ Path(sys.argv[1]).write_text(json.dumps({
         'test_stale_serving_facts_abort_before_inference[lease]',
         'test_concurrent_selectors_share_one_native_execution',
         'test_infrastructure_failure_produces_no_false_score[True]',
-        'test_native_pro_replay_failure_is_ineligible')],
+        'test_native_pro_replay_failure_is_ineligible',
+        'test_cancelled_native_lease_releases_and_cleans_sandbox')],
     'quantization-measurement-invalidation': [module + name for name in (
         'test_quantization_invalidates_same_alias_measurement',
         'test_uncertain_serving_inputs_cannot_become_reusable')],

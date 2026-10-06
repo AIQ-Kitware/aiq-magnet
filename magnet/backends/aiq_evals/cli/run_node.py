@@ -166,10 +166,11 @@ def gate(args, out_dpath: Path) -> int:
               and run.resolved.identity.digest == digest)
         return run if ok else None
 
-    def run_child() -> int:
-        proc = subprocess.Popen(['bash', '-c', args.leased_command], start_new_session=(os.name == 'posix'))
+    async def run_child() -> int:
+        proc = await asyncio.create_subprocess_exec(
+            'bash', '-c', args.leased_command, start_new_session=(os.name == 'posix'))
         try:
-            return proc.wait()
+            return await proc.wait()
         except BaseException:
             for sig, grace in ((signal.SIGTERM, 30), (signal.SIGKILL, None)):
                 try:
@@ -177,9 +178,9 @@ def gate(args, out_dpath: Path) -> int:
                 except ProcessLookupError:
                     break
                 try:
-                    proc.wait(timeout=grace)
+                    await asyncio.wait_for(proc.wait(), timeout=grace)
                     break
-                except subprocess.TimeoutExpired:
+                except TimeoutError:
                     continue
             raise
 
@@ -201,14 +202,14 @@ def gate(args, out_dpath: Path) -> int:
         return [] if now == digest else [f'measurement identity: preflight {digest}, now {now}']
 
     if len(digest) != 64:
-        return run_child()
+        return asyncio.run(run_child())
 
     async def acquire() -> int:
         async with store.acquisition_lock(digest) as lock:
             run = stored_run()
             if run is None:
                 # The child re-resolves before executing (main()).
-                return await asyncio.to_thread(run_child)
+                return await run_child()
             stale = await asyncio.to_thread(current_identity_changes)
             if stale:
                 return _reschedule(out_dpath, {

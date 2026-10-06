@@ -10,9 +10,11 @@ import json
 import os
 import shlex
 import shutil
+import signal
 import sqlite3
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -231,8 +233,8 @@ def test_quantization_invalidates_same_alias_measurement(tmp_path, lease, pinned
     released(lease, 2)
 
 
-def compiled_node(tmp_path, tasks):
-    node = EvaluationNode(algo_params=algo(tasks), perf_params={'worker_python': WORKER,
+def compiled_node(tmp_path, tasks, configuration=None):
+    node = EvaluationNode(algo_params=configuration or algo(tasks), perf_params={'worker_python': WORKER,
         'endpoint': 'fixture-coding', 'store_dpath': str(tmp_path / 'store')})
     node.apply_lease_settings(LeaseSettings(enabled=True, allowed_gpus=False))
     node.configure({'out_dpath': str(tmp_path / 'node'),
@@ -345,3 +347,38 @@ def test_native_pro_replay_failure_is_ineligible(tmp_path):
     assert not view.eligible and 'score' not in flat_metrics(view.to_dict())
     assert result.samples[0].native['native_rewards'] == {'reward': 1.0}
     assert not result.samples[0].native['counted_as_model_failure']
+
+
+def test_cancelled_native_lease_releases_and_cleans_sandbox(tmp_path, lease, pinned_tasks):
+    configuration = algo(pinned_tasks)
+    configuration['task_options'] = {'agent': 'python:tests.native.harbor_sleep_agent:SleepAgent'}
+    command = compiled_node(tmp_path, pinned_tasks, configuration)
+    process = subprocess.Popen(['bash', '-c', command], stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        deadline = time.monotonic() + 180
+        while not list((tmp_path / 'store').rglob('agent/started')):
+            assert process.poll() is None, process.communicate()
+            assert time.monotonic() < deadline, 'native sleep agent did not start'
+            time.sleep(0.2)
+        record, = (tmp_path / 'store').rglob('owned-projects/*.json')
+        project = json.loads(record.read_text())['project']
+        process.send_signal(signal.SIGTERM)
+        stdout, stderr = process.communicate(timeout=90)
+        assert process.returncode != 0, stdout + stderr
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.communicate(timeout=90)
+    released(lease, 1)
+    assert not list((tmp_path / 'store').rglob('RUN_COMPLETE'))
+    selector = 'label=com.docker.compose.project=' + project
+    assert not subprocess.check_output(['docker', 'ps', '-aq', '--filter', selector]).strip()
+    assert not subprocess.check_output(['docker', 'network', 'ls', '-q', '--filter', selector]).strip()
+    from magnet_evals import load_run
+
+    marker, = (tmp_path / 'store').rglob('ATTEMPT_TERMINAL')
+    run = load_run(marker.parent)
+    assert run.result.status == 'cancelled' and not run.complete
+    if capture := os.environ.get('AIQ_MAGNET_HARBOR_CAPTURE_DIR'):
+        shutil.copytree(run.path, Path(capture) / 'cancelled/run')
