@@ -17,8 +17,8 @@ import json
 import os
 import shlex
 import shutil
-import subprocess
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -132,8 +132,8 @@ def test_olmo_agent_runs_inside_a_real_lease_and_reuse_takes_none(tmp_path, leas
                 pytest.fail('needs MAGNET_TEST_DOCKER=1 and MAGNET_TEST_CONTAINER_VENV')
             pytest.skip('needs Docker and a portable MAGNET venv')
         import magnet
-        from magnet.containers import ContainerSettings
         from magnet.backends.aiq_evals.pipeline import EvaluationNode
+        from magnet.containers import ContainerSettings
 
         worker_venv = Path(OLMO_PYTHON).parent.parent
         container_venv = Path(CONTAINER_VENV)
@@ -153,9 +153,15 @@ def test_olmo_agent_runs_inside_a_real_lease_and_reuse_takes_none(tmp_path, leas
         # Use the actual resolve_node CLI and node wrapper, without a lease.
         probe = EvaluationNode()
         probe.apply_container_settings(settings)
+        from magnet.backends.aiq_evals.serving import (
+            bind_provenance,
+            catalog_provenance,
+        )
+
+        preflight_request = bind_provenance(algo, catalog_provenance({'primary': 'gpt-4o-mini'}))
         command = probe.wrap_with_container(
             'python -m magnet.backends.aiq_evals.cli.resolve_node '
-            f'--request {shlex.quote(json.dumps(algo))} --worker_python {worker}'
+            f'--request {shlex.quote(json.dumps(preflight_request))} --worker_python {worker}'
         )
         identities = []
         for _ in range(2):
