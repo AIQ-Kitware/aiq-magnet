@@ -62,6 +62,7 @@ from magnet.records import (
 from magnet.schema import RECIPE_NAME_PATTERN, NewEvaluationRecipeSchema
 from magnet.theory.cards import report_from_card
 from magnet.utils.util_logger import setup_logging
+from magnet.utils.util_signal import signals_as_system_exit
 
 #: kwdagger's own default, used when there is no GPU to derive a cap from.
 DEFAULT_TMUX_WORKERS = 8
@@ -385,14 +386,8 @@ class NewEvaluationCLI(kwconf.Config):
             enabled=bool(args['per_node_leasing']),
             allowed_gpus=bool(args['lease_allowed_gpus']),
         )
-        import signal
-        def terminated(signum, frame):
-            raise SystemExit(128 + signum)
-        signals = [signal.SIGTERM, signal.SIGINT]
-        previous = {}
-        for sig in signals:
-            previous[sig] = signal.signal(sig, terminated)
-        try:
+        # Let cancellation unwind through evaluate() to save interruption metadata.
+        with signals_as_system_exit():
             recipe.evaluate(
                 verbose=bool(args.verbose),
                 provenance=coerce_provenance(args['provenance']),
@@ -400,9 +395,6 @@ class NewEvaluationCLI(kwconf.Config):
                 readout_only=bool(args['readout_only']),
                 **schedule_options,
             )
-        finally:
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
         recipe.summarize()
 
 
