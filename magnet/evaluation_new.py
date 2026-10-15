@@ -55,7 +55,7 @@ from magnet.evaluation import (
 )
 from magnet.records import (
     RecordFiles,
-    atomic_json,
+    atomic_json_write,
     execution_snapshot,
     timestamp,
 )
@@ -388,7 +388,10 @@ class NewEvaluationCLI(kwconf.Config):
         import signal
         def terminated(signum, frame):
             raise SystemExit(128 + signum)
-        previous = {sig: signal.signal(sig, terminated) for sig in (signal.SIGTERM, signal.SIGINT)}
+        signals = [signal.SIGTERM, signal.SIGINT]
+        previous = {}
+        for sig in signals:
+            previous[sig] = signal.signal(sig, terminated)
         try:
             recipe.evaluate(
                 verbose=bool(args.verbose),
@@ -1204,54 +1207,43 @@ def evaluate_new_recipe(
         readout_only=readout_only,
     )
     execution_path = record / RecordFiles.EXECUTION
-    atomic_json(execution_path, snapshot)
-    descriptor = {
-        'schema_version': 1,
-        'record_id': recipe._run_hash,
-        'record_directory': str(record),
-    }
+    atomic_json_write(execution_path, snapshot)
+    descriptor = {'schema_version': 1, 'record_id': recipe._run_hash,
+                  'record_directory': str(record)}
     if target is not None:
-        atomic_json(target, descriptor)
+        atomic_json_write(target, descriptor)
     logger.info(f'MAGNET record: {record}')
     try:
         if readout_only and schedule_options.get('dry_run'):
-            raise ValueError(
-                'readout_only and dry_run answer different questions; select one'
-            )
-        result = _evaluate_new_recipe(
-            recipe,
-            verbose=verbose,
-            provenance=provenance,
-            readout_only=readout_only,
-            **schedule_options,
-        )
+            raise ValueError('readout_only and dry_run answer different questions; select one')
+        result = _evaluate_new_recipe(recipe, verbose=verbose, provenance=provenance,
+                                      readout_only=readout_only, **schedule_options)
     except BaseException as ex:
+        if isinstance(ex, (KeyboardInterrupt, SystemExit)):
+            state = 'interrupted'
+        else:
+            state = 'error'
         snapshot.update(
-            state='interrupted'
-            if isinstance(ex, (KeyboardInterrupt, SystemExit))
-            else 'error',
+            state=state,
             ended=timestamp(),
             exception_type=type(ex).__name__,
         )
-        atomic_json(execution_path, snapshot)
+        atomic_json_write(execution_path, snapshot)
         raise
-    snapshot.update(
-        state='readout'
-        if readout_only
-        else 'dry_run'
-        if schedule_options.get('dry_run')
-        else 'evaluated',
-        ended=timestamp(),
-    )
-    atomic_json(execution_path, snapshot)
+    if readout_only:
+        state = 'readout'
+    elif schedule_options.get('dry_run'):
+        state = 'dry_run'
+    else:
+        state = 'evaluated'
+    snapshot.update(state=state, ended=timestamp())
+    atomic_json_write(execution_path, snapshot)
     try:
         write_result_reports(load_result_bundle(record))
     except Exception as ex:
         snapshot['presentation_error'] = type(ex).__name__
-        atomic_json(execution_path, snapshot)
-        logger.warning(
-            f'Serialized verdict preserved; presentation failed: {type(ex).__name__}'
-        )
+        atomic_json_write(execution_path, snapshot)
+        logger.warning(f'Serialized verdict preserved; presentation failed: {type(ex).__name__}')
     # A presentation is derived. It is not a second source of claim outcomes.
     return result
 
@@ -1283,7 +1275,7 @@ def _evaluate_new_recipe(
     cell_results_path = (recipe_output_path / RecordFiles.CELLS).ensuredir()
     raw_symbol_metadata = _parse_symbol_metadata(recipe.symbols)
     if raw_symbol_metadata:
-        atomic_json(
+        atomic_json_write(
             recipe_output_path / RecordFiles.SYMBOL_METADATA,
             raw_symbol_metadata,
         )
@@ -1298,14 +1290,14 @@ def _evaluate_new_recipe(
     # An explicit queue_name from the caller still wins.
     schedule_options.setdefault('queue_name', recipe.queue_name)
     dry_run = bool(schedule_options.get('dry_run', False))
-    processor.schedule(
-        **dict(schedule_options, dry_run=True)
-        if readout_only
-        else schedule_options
-    )
+    if readout_only:
+        submission_options = dict(schedule_options, dry_run=True)
+    else:
+        submission_options = schedule_options
+    processor.schedule(**submission_options)
     requested_runs = processor.inspect_requested_runs()
     requested_work = _summarize_requested_runs(requested_runs)
-    atomic_json(recipe_output_path / RecordFiles.REQUESTED_RUNS, requested_runs)
+    atomic_json_write(recipe_output_path / RecordFiles.REQUESTED_RUNS, requested_runs)
 
     if dry_run:
         # Nothing ran, so there is nothing this invocation could have judged.
@@ -1429,7 +1421,7 @@ def _evaluate_new_recipe(
         provenance=resolved_provenance,
     )
 
-    atomic_json(
+    atomic_json_write(
         recipe_output_path / RecordFiles.VERDICT, result_card.as_record()
     )
 

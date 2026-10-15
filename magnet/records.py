@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import importlib.metadata
 import json
 import os
@@ -13,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import safer
+import ubelt as ub
 
 
 class RecordFiles:
@@ -52,7 +52,7 @@ def timestamp() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def atomic_json(path: Path, value: dict | list) -> None:
+def atomic_json_write(path: Path, value: dict | list) -> None:
     """Write JSON using the same safer policy as the existing evaluators."""
     with safer.open(
         path,
@@ -65,37 +65,24 @@ def atomic_json(path: Path, value: dict | list) -> None:
         file.write('\n')
 
 
-def file_digest(path: Path) -> str:
-    with path.open('rb') as file:
-        return hashlib.file_digest(file, 'sha256').hexdigest()
-
-
 def source_snapshot(file: str | Path) -> dict:
     path = Path(file).resolve()
     result = {'file': str(path)}
     try:
-        result['sha256'] = file_digest(path)
+        result['sha256'] = ub.hash_file(path, hasher='sha256', base='hex')
     except OSError as ex:
         result.update(sha256=None, source_error=type(ex).__name__)
     try:
 
         def git(*args):
-            return subprocess.run(
-                ['git', '-C', str(path.parent), *args],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=5,
-            ).stdout.strip()
+            return subprocess.run(['git', '-C', str(path.parent), *args],
+                                  check=True, capture_output=True, text=True, timeout=5).stdout.strip()
 
         result['revision'] = git('rev-parse', 'HEAD')
-        result['dirty'] = bool(
-            git('status', '--porcelain', '--untracked-files=normal')
-        )
+        result['dirty'] = bool(git('status', '--porcelain', '--untracked-files=normal'))
         # Hash the patch without copying arbitrary repository content into metadata.
-        result['tracked_patch_sha256'] = hashlib.sha256(
-            git('diff', 'HEAD', '--no-ext-diff').encode()
-        ).hexdigest()
+        patch = git('diff', 'HEAD', '--no-ext-diff')
+        result['tracked_patch_sha256'] = ub.hash_data(patch, hasher='sha256', base='hex')
     except (OSError, subprocess.SubprocessError):
         result['revision'] = None
     return result
@@ -111,11 +98,12 @@ def execution_snapshot(
     """Record execution facts; arbitrary runtime settings are not captured."""
     versions = {}
     sources = {}
-    for package, module in [
+    packages = [
         ('aiq-magnet', 'magnet.evaluation_new'),
         ('kwdagger', 'kwdagger'),
         ('cmd_queue', 'cmd_queue'),
-    ]:
+    ]
+    for package, module in packages:
         try:
             versions[package] = importlib.metadata.version(package)
         except importlib.metadata.PackageNotFoundError:

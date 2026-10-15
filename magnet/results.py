@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any
 
 import safer
+import ubelt as ub
 import yaml
 
-from magnet.records import RecordFiles, atomic_json, file_digest
+from magnet.records import RecordFiles, atomic_json_write
 
 
 def _mapping(
@@ -26,11 +27,11 @@ def _mapping(
 ) -> dict:
     if optional and not path.is_file():
         return {}
-    value = (
-        yaml.safe_load(path.read_text())
-        if yaml_file
-        else json.loads(path.read_text())
-    )
+    text = path.read_text()
+    if yaml_file:
+        value = yaml.safe_load(text)
+    else:
+        value = json.loads(text)
     if not isinstance(value, dict):
         raise ValueError(f'expected an object in {path}')
     return value
@@ -78,24 +79,14 @@ class ResultBundle:
         evidence = cell.get('evidence') or {}
         node = (self.card.get('kwdagger') or {}).get('result_node')
         prefix = f'metrics.{node}.' if node else None
-        selected = {
-            k[len(prefix) :]: v
-            for k, v in evidence.items()
-            if prefix and k.startswith(prefix)
-        }
+        selected = {k[len(prefix):]: v for k, v in evidence.items()
+                    if prefix and k.startswith(prefix)}
         if selected:
             return selected
         # Older bundles preserve concrete claim inputs as dashboard symbols.
-        return {
-            k: v
-            for k, v in (cell.get('symbols') or {}).items()
-            if k.startswith('metrics.')
-            or (
-                (self.card.get('symbols') or {}).get(k, {}).get('metadata')
-                or {}
-            ).get('kind')
-            == 'metric'
-        }
+        return {k: v for k, v in (cell.get('symbols') or {}).items()
+                if k.startswith('metrics.') or
+                ((self.card.get('symbols') or {}).get(k, {}).get('metadata') or {}).get('kind') == 'metric'}
 
 
 def load_result_bundle(path: str | os.PathLike) -> ResultBundle:
@@ -105,11 +96,10 @@ def load_result_bundle(path: str | os.PathLike) -> ResultBundle:
     card = _mapping(root / RecordFiles.CARD, yaml_file=True)
     verdict = _mapping(root / RecordFiles.VERDICT, optional=True)
     claims = verdict.get('claims', [])
-    if not isinstance(claims, list) or not all(
-        isinstance(k, str) for k in claims
-    ):
+    if not isinstance(claims, list) or not all(isinstance(k, str) for k in claims):
         raise ValueError('verdict claims must be a list of result IDs')
-    cells, missing = {}, []
+    cells = {}
+    missing = []
     for key in claims:
         file = _relative(root, RecordFiles.cell_verdict(key).as_posix())
         if file.is_file():
@@ -138,16 +128,12 @@ def discover_result_bundles(path: str | os.PathLike) -> list[dict]:
             continue
         dirs[:] = []
         bundle = load_result_bundle(folder)
-        records.append(
-            {
-                'path': str(bundle.root),
-                'result': bundle.verdict.get('result', 'NOT_RECORDED'),
-                'claims': len(bundle.verdict.get('claims', [])),
-                'available_claims': len(bundle.cells),
-                'missing_claims': bundle.missing_claims,
-                'execution_state': bundle.execution.get('state', 'unrecorded'),
-            }
-        )
+        records.append({'path': str(bundle.root),
+                        'result': bundle.verdict.get('result', 'NOT_RECORDED'),
+                        'claims': len(bundle.verdict.get('claims', [])),
+                        'available_claims': len(bundle.cells),
+                        'missing_claims': bundle.missing_claims,
+                        'execution_state': bundle.execution.get('state', 'unrecorded')})
     return sorted(records, key=lambda item: item['path'])
 
 
@@ -175,36 +161,19 @@ def _present_value(name: str, value: Any, level: int = 4) -> list[str]:
         for key, item in value.items():
             lines.extend(_present_value(str(key), item, level + 1))
         return lines
-    if (
-        isinstance(value, list)
-        and value
-        and all(isinstance(row, dict) for row in value)
-    ):
-        columns = list(
-            dict.fromkeys(
-                k
-                for row in value
-                for k, v in row.items()
-                if not isinstance(v, (list, dict))
-            )
-        )
+    if isinstance(value, list) and value and all(isinstance(row, dict) for row in value):
+        columns = list(dict.fromkeys(k for row in value for k, v in row.items()
+                                    if not isinstance(v, (list, dict))))
         lines = [f'{heading} {name}', '']
         if columns:
-            lines += [
-                '| ' + ' | '.join(_cell(c) for c in columns) + ' |',
-                '| ' + ' | '.join('---' for _ in columns) + ' |',
-            ]
-            lines += [
-                '| ' + ' | '.join(_cell(row.get(c)) for c in columns) + ' |'
-                for row in value
-            ]
+            lines += ['| ' + ' | '.join(_cell(c) for c in columns) + ' |',
+                      '| ' + ' | '.join('---' for _ in columns) + ' |']
+            lines += ['| ' + ' | '.join(_cell(row.get(c)) for c in columns) + ' |' for row in value]
             lines.append('')
         for i, row in enumerate(value, 1):
             for key, item in row.items():
                 if isinstance(item, (list, dict)):
-                    lines.extend(
-                        _present_value(f'{name}[{i}].{key}', item, level + 1)
-                    )
+                    lines.extend(_present_value(f'{name}[{i}].{key}', item, level + 1))
         return lines
     return [f'- **{name}:** {_cell(value)}', '']
 
@@ -212,43 +181,21 @@ def _present_value(name: str, value: Any, level: int = 4) -> list[str]:
 def render_result(bundle: ResultBundle, *, format: str = 'markdown') -> str:
     """Present stored values. Never evaluate Python claims or load pipelines."""
     if format == 'json':
-        return (
-            json.dumps(
-                {
-                    'card': bundle.card,
-                    'verdict': bundle.verdict,
-                    'cells': bundle.cells,
-                    'missing_claims': bundle.missing_claims,
-                    'execution': bundle.execution,
-                },
-                indent=2,
-                ensure_ascii=False,
-            )
-            + '\n'
-        )
+        return json.dumps({'card': bundle.card, 'verdict': bundle.verdict,
+                           'cells': bundle.cells, 'missing_claims': bundle.missing_claims,
+                           'execution': bundle.execution}, indent=2, ensure_ascii=False) + '\n'
     if format not in {'markdown', 'text'}:
         raise ValueError(f'unknown report format: {format}')
-    lines = [
-        f'# {bundle.card.get("title", bundle.card.get("name", "Evaluation"))}',
-        '',
-        f'Result: **{bundle.verdict.get("result", "NOT_RECORDED")}**',
-        '',
-        str(bundle.card.get('description') or ''),
-        '',
-    ]
+    lines = [f"# {bundle.card.get('title', bundle.card.get('name', 'Evaluation'))}", '',
+             f"Result: **{bundle.verdict.get('result', 'NOT_RECORDED')}**", '',
+             str(bundle.card.get('description') or ''), '']
     if not bundle.verdict:
-        lines += [
-            'No aggregate verdict was recorded. Available execution metadata follows; '
-            'this is not a claim verdict.',
-            '',
-        ]
+        lines += ['No aggregate verdict was recorded. Available execution metadata follows; '
+                  'this is not a claim verdict.', '']
     if bundle.missing_claims:
-        lines += [
-            'Missing referenced claim records: '
-            + ', '.join(bundle.missing_claims),
-            '',
-        ]
-    for key in ('evidence', 'requested_work', 'metrics', 'provenance'):
+        lines += ['Missing referenced claim records: ' + ', '.join(bundle.missing_claims), '']
+    verdict_sections = ['evidence', 'requested_work', 'metrics', 'provenance']
+    for key in verdict_sections:
         if key in bundle.verdict:
             lines.extend(_present_value(key, bundle.verdict[key], 2))
     claim = bundle.card.get('claim') or {}
@@ -256,59 +203,30 @@ def render_result(bundle: ResultBundle, *, format: str = 'markdown') -> str:
     fence = '```'
     while fence in python:
         fence += '`'
-    lines += [
-        '## Claim',
-        '',
-        fence + 'python',
-        python,
-        fence,
-        '',
-        '## Claim results',
-        '',
-    ]
+    lines += ['## Claim', '', fence + 'python', python, fence, '', '## Claim results', '']
     for key, cell in bundle.cells.items():
-        lines += [
-            f'### {key}',
-            '',
-            f'Status: **{cell.get("status", "UNKNOWN")}**',
-            '',
-            str(cell.get('output') or ''),
-            '',
-        ]
+        lines += [f'### {key}', '', f"Status: **{cell.get('status', 'UNKNOWN')}**", '',
+                  str(cell.get('output') or ''), '']
         measurements = bundle.measurements(cell)
         if measurements:
             lines.extend(_present_value('Measurements', measurements, 4))
         else:
-            lines += [
-                'No separately identified measurements; resolved claim inputs follow.',
-                '',
-            ]
+            lines += ['No separately identified measurements; resolved claim inputs follow.', '']
         inputs = cell.get('symbols') or {}
         if measurements:
-            inputs = {
-                k: v
-                for k, v in inputs.items()
-                if not k.startswith('metrics.') and k not in measurements
-            }
+            inputs = {k: v for k, v in inputs.items()
+                      if not k.startswith('metrics.') and k not in measurements}
         lines.extend(_present_value('Resolved claim inputs', inputs, 4))
         if cell.get('consumed'):
-            lines.extend(
-                _present_value('Consumed evidence fields', cell['consumed'], 4)
-            )
+            lines.extend(_present_value('Consumed evidence fields', cell['consumed'], 4))
     if bundle.execution:
         lines.extend(_present_value('Execution snapshot', bundle.execution, 2))
-    lines += [
-        'Presentation generated from serialized results. Logs and original artifact '
-        'paths are not required to read this report.',
-        '',
-    ]
+    lines += ['Presentation generated from serialized results. Logs and original artifact '
+              'paths are not required to read this report.', '']
     text = '\n'.join(line.rstrip() for line in lines)
     if format == 'text':
         import re
-
-        text = re.sub(r'^#{1,6} ', '', text, flags=re.MULTILINE).replace(
-            '**', ''
-        )
+        text = re.sub(r'^#{1,6} ', '', text, flags=re.MULTILINE).replace('**', '')
     return text
 
 
@@ -349,9 +267,7 @@ def export_result_bundle(
     if bundle.manifest:
         checked = verify_result_bundle(bundle.root)
         if not checked['valid']:
-            raise ValueError(
-                f'source bundle failed integrity checks: {checked["errors"]}'
-            )
+            raise ValueError(f'source bundle failed integrity checks: {checked["errors"]}')
     destination = Path(destination).absolute()
     if destination.exists():
         raise FileExistsError(destination)
@@ -363,22 +279,16 @@ def export_result_bundle(
     ) as folder:
         staging = Path(folder) / 'bundle'
         staging.mkdir()
-        manifest = {
-            'schema_version': 1,
-            'format': 'magnet.result-bundle',
-            'source_record': str(bundle.root),
-            'files': {},
-            'artifacts': [],
-            'missing_supporting': [],
-            'supporting': supporting,
-        }
+        manifest = {'schema_version': 1, 'format': 'magnet.result-bundle',
+                    'source_record': str(bundle.root), 'files': {}, 'artifacts': [],
+                    'missing_supporting': [], 'supporting': supporting}
 
         def copy(source: Path, rel: str) -> None:
             target = _relative(staging, rel)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
             manifest['files'][rel] = {
-                'sha256': file_digest(target),
+                'sha256': ub.hash_file(target, hasher='sha256', base='hex'),
                 'size': target.stat().st_size,
             }
 
@@ -390,33 +300,26 @@ def export_result_bundle(
         # A launcher may keep this explicit diagnostic outside the record and
         # link it in. Only --include_logs follows this known console locator.
         if include_logs:
-            for name in (RecordFiles.LOG, RecordFiles.CONSOLE):
+            log_names = [RecordFiles.LOG, RecordFiles.CONSOLE]
+            for name in log_names:
                 if (bundle.root / name).is_file():
-                    source = (
-                        (bundle.root / name).resolve()
-                        if name == RecordFiles.CONSOLE
-                        else _relative(bundle.root, name)
-                    )
-                    copy(source, name)
+                    if name == RecordFiles.CONSOLE:
+                        log_path = (bundle.root / name).resolve()
+                    else:
+                        log_path = _relative(bundle.root, name)
+                    copy(log_path, name)
 
         wanted: dict[str, tuple[str, str]] = {}
         requests = []
         requests_path = bundle.root / RecordFiles.REQUESTED_RUNS
         if requests_path.is_file():
             requests = json.loads(requests_path.read_text())
-        observed = {
-            item['expected_output']: item
-            for item in requests
-            if item.get('expected_output')
-        }
+        observed = {item['expected_output']: item for item in requests if item.get('expected_output')}
         if supporting in {'terminal', 'requested'}:
             for cell in bundle.cells.values():
                 original = cell.get('artifact')
                 if original:
-                    wanted[original] = (
-                        'terminal',
-                        str(cell.get('cell') or Path(original).parent.name),
-                    )
+                    wanted[original] = ('terminal', str(cell.get('cell') or Path(original).parent.name))
         if supporting == 'requested':
             for item in requests:
                 if nodes and item['node'] not in nodes:
@@ -427,9 +330,7 @@ def export_result_bundle(
         for i, (original, (node, process)) in enumerate(sorted(wanted.items())):
             path = bundle.artifact_path(original)
             if not path.is_file():
-                manifest['missing_supporting'].append(
-                    {'source': original, 'process_id': process}
-                )
+                manifest['missing_supporting'].append({'source': original, 'process_id': process})
                 continue
             # Numbered directories avoid collisions without trusting node names as paths.
             rel = f'artifacts/{i:05d}/{path.name}'
@@ -437,17 +338,9 @@ def export_result_bundle(
             prior = observed.get(original, {})
             expected = prior.get('output_sha256_at_readout')
             if expected and manifest['files'][rel]['sha256'] != expected:
-                raise ValueError(
-                    f'supporting artifact changed since readout: {original}'
-                )
-            manifest['artifacts'].append(
-                {
-                    'source': original,
-                    'path': rel,
-                    'node': node,
-                    'process_id': process,
-                }
-            )
+                raise ValueError(f'supporting artifact changed since readout: {original}')
+            manifest['artifacts'].append({'source': original, 'path': rel,
+                                          'node': node, 'process_id': process})
             config = path.parent / RecordFiles.JOB_CONFIG
             if config.is_file():
                 config_rel = f'artifacts/{i:05d}/{RecordFiles.JOB_CONFIG}'
@@ -457,19 +350,17 @@ def export_result_bundle(
                     expected
                     and manifest['files'][config_rel]['sha256'] != expected
                 ):
-                    raise ValueError(
-                        f'supporting configuration changed since readout: {original}'
-                    )
+                    raise ValueError(f'supporting configuration changed since readout: {original}')
         for name, path in (attachments or {}).items():
             # Attachments cannot shadow the scientific record or its manifest.
             _relative(staging, name)
             copy(Path(path), f'attachments/{name}')
         for path in write_result_reports(bundle, staging):
             manifest['files'][path.name] = {
-                'sha256': file_digest(path),
+                'sha256': ub.hash_file(path, hasher='sha256', base='hex'),
                 'size': path.stat().st_size,
             }
-        atomic_json(staging / RecordFiles.MANIFEST, manifest)
+        atomic_json_write(staging / RecordFiles.MANIFEST, manifest)
         staging.rename(destination)
     return destination
 
@@ -480,17 +371,9 @@ def verify_result_bundle(path: str | os.PathLike) -> dict:
     errors = [f'missing claim record: {key}' for key in bundle.missing_claims]
     files = bundle.manifest.get('files')
     if files is None:
-        return {
-            'valid': not errors,
-            'integrity_manifest': False,
-            'checked_files': 0,
-            'errors': errors,
-            'missing_supporting': [],
-        }
-    if (
-        bundle.manifest.get('format') != 'magnet.result-bundle'
-        or bundle.manifest.get('schema_version') != 1
-    ):
+        return {'valid': not errors, 'integrity_manifest': False, 'checked_files': 0,
+                'errors': errors, 'missing_supporting': []}
+    if bundle.manifest.get('format') != 'magnet.result-bundle' or bundle.manifest.get('schema_version') != 1:
         errors.append('unsupported export manifest')
     for rel, expected in files.items():
         file = _relative(bundle.root, rel)
@@ -498,21 +381,14 @@ def verify_result_bundle(path: str | os.PathLike) -> dict:
             errors.append(f'missing exported file: {rel}')
         elif (
             file.stat().st_size != expected['size']
-            or file_digest(file) != expected['sha256']
+            or ub.hash_file(file, hasher='sha256', base='hex') != expected['sha256']
         ):
             errors.append(f'content changed: {rel}')
     for item in bundle.manifest.get('artifacts', []):
         if item['path'] not in files:
-            errors.append(
-                f'artifact not covered by integrity manifest: {item["path"]}'
-            )
+            errors.append(f'artifact not covered by integrity manifest: {item["path"]}')
     for key in bundle.core_files():
         if key not in files:
             errors.append(f'core file not covered by integrity manifest: {key}')
-    return {
-        'valid': not errors,
-        'integrity_manifest': True,
-        'checked_files': len(files),
-        'errors': errors,
-        'missing_supporting': bundle.manifest.get('missing_supporting', []),
-    }
+    return {'valid': not errors, 'integrity_manifest': True, 'checked_files': len(files),
+            'errors': errors, 'missing_supporting': bundle.manifest.get('missing_supporting', [])}

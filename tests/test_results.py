@@ -5,12 +5,12 @@ import shutil
 from pathlib import Path
 
 import pytest
+import ubelt as ub
 import yaml
 
 from magnet.results import (
     discover_result_bundles,
     export_result_bundle,
-    file_digest,
     load_result_bundle,
     render_result,
     verify_result_bundle,
@@ -21,87 +21,40 @@ from magnet.results import (
 def bundle(tmp_path):
     root = tmp_path / 'source' / 'record'
     root.mkdir(parents=True)
-    artifact = (
-        root.parent
-        / '_kwdagger'
-        / 'summary'
-        / 'summary_id_123'
-        / 'summary.json'
-    )
+    artifact = root.parent / '_kwdagger' / 'summary' / 'summary_id_123' / 'summary.json'
     artifact.parent.mkdir(parents=True)
     artifact.write_text(json.dumps({'mean': 0.125, 'rows': 7}))
     (artifact.parent / 'job_config.json').write_text('{"budget": 10}')
-    card = {
-        'title': 'A detached result',
-        'description': 'The experimental scope.',
-        'claim': {
-            'python': "raise RuntimeError('report must not execute this')"
-        },
-        'kwdagger': {
-            'pipeline': 'unavailable_pipeline:factory',
-            'result_node': 'summary',
-        },
-        'symbols': {'threshold': {'value': 0}},
-    }
+    card = {'title': 'A detached result', 'description': 'The experimental scope.',
+            'claim': {'python': "raise RuntimeError('report must not execute this')"},
+            'kwdagger': {'pipeline': 'unavailable_pipeline:factory', 'result_node': 'summary'},
+            'symbols': {'threshold': {'value': 0}}}
     (root / 'card.yaml').write_text(yaml.safe_dump(card))
-    verdict = {
-        'result': 'VERIFIED',
-        'claims': ['summary_id_123_abc'],
-        'evidence': {'scope': 'requested', 'available': 1, 'discovered': 3},
-        'requested_work': {'processes': 3, 'outputs_available': 1},
-    }
+    verdict = {'result': 'VERIFIED', 'claims': ['summary_id_123_abc'],
+               'evidence': {'scope': 'requested', 'available': 1, 'discovered': 3},
+               'requested_work': {'processes': 3, 'outputs_available': 1}}
     (root / 'verdict.json').write_text(json.dumps(verdict))
     cellpath = root / 'results' / verdict['claims'][0] / 'verdict.json'
     cellpath.parent.mkdir(parents=True)
-    cellpath.write_text(
-        json.dumps(
-            {
-                'status': 'VERIFIED',
-                'output': 'Assertion holds',
-                'cell': 'summary_id_123',
-                'artifact': str(artifact),
-                'symbols': {'threshold': 0, 'metrics.summary.mean': 0.125},
-                'consumed': ['metrics.summary.mean'],
-                'evidence': {
-                    'metrics.summary.mean': 0.125,
-                    'metrics.summary.folds': [
-                        {'name': 'a', 'delta': 0.1, 'ci': [0.01, 0.2]},
-                        {'name': 'b', 'delta': 0.15, 'ci': [0.02, 0.3]},
-                    ],
-                    'metrics.parent.rows': [
-                        'inherited data should not dominate presentation'
-                    ],
-                },
-            }
-        )
-    )
-    (root / 'requested_runs.json').write_text(
-        json.dumps(
-            [
-                {
-                    'process_id': 'summary_id_123',
-                    'node': 'summary',
-                    'expected_output': str(artifact),
-                },
-                {
-                    'process_id': 'pending_id',
-                    'node': 'pending',
-                    'expected_output': str(artifact.parent / 'absent.json'),
-                },
-            ]
-        )
-    )
+    cellpath.write_text(json.dumps({'status': 'VERIFIED', 'output': 'Assertion holds',
+        'cell': 'summary_id_123', 'artifact': str(artifact),
+        'symbols': {'threshold': 0, 'metrics.summary.mean': 0.125},
+        'consumed': ['metrics.summary.mean'],
+        'evidence': {'metrics.summary.mean': 0.125,
+                     'metrics.summary.folds': [{'name': 'a', 'delta': 0.1, 'ci': [0.01, 0.2]},
+                                                {'name': 'b', 'delta': 0.15, 'ci': [0.02, 0.3]}],
+                     'metrics.parent.rows': ['inherited data should not dominate presentation']}}))
+    (root / 'requested_runs.json').write_text(json.dumps([
+        {'process_id': 'summary_id_123', 'node': 'summary', 'expected_output': str(artifact)},
+        {'process_id': 'pending_id', 'node': 'pending', 'expected_output': str(artifact.parent / 'absent.json')},
+    ]))
     (root / 'log').write_text('not needed for reading results')
     # An unrelated deployment descriptor must never enter a core/evidence export.
-    (root.parent / '_kwdagger' / 'pool.json').write_text(
-        '{"API_KEY": "do-not-export"}'
-    )
+    (root.parent / '_kwdagger' / 'pool.json').write_text('{"API_KEY": "do-not-export"}')
     return root
 
 
-def test_detached_report_needs_neither_pipeline_nor_claim_execution(
-    bundle, tmp_path
-):
+def test_detached_report_needs_neither_pipeline_nor_claim_execution(bundle, tmp_path):
     output = export_result_bundle(bundle, tmp_path / 'core')
     shutil.rmtree(bundle.parent)
     stored = load_result_bundle(output)
@@ -115,39 +68,24 @@ def test_detached_report_needs_neither_pipeline_nor_claim_execution(
     assert verify_result_bundle(output)['valid']
 
 
-def test_exported_artifact_locator_survives_moving_and_original_deletion(
-    bundle, tmp_path
-):
+def test_exported_artifact_locator_survives_moving_and_original_deletion(bundle, tmp_path):
     native = load_result_bundle(bundle)
     original = next(iter(native.cells.values()))['artifact']
-    output = export_result_bundle(
-        bundle, tmp_path / 'export', supporting='terminal'
-    )
-    assert (output / 'card.yaml').read_bytes() == (
-        bundle / 'card.yaml'
-    ).read_bytes()
+    output = export_result_bundle(bundle, tmp_path / 'export', supporting='terminal')
+    assert (output / 'card.yaml').read_bytes() == (bundle / 'card.yaml').read_bytes()
     moved = tmp_path / 'moved'
     output.rename(moved)
     shutil.rmtree(bundle.parent)
     stored = load_result_bundle(moved)
-    assert json.loads(stored.artifact_path(original).read_text()) == {
-        'mean': 0.125,
-        'rows': 7,
-    }
+    assert json.loads(stored.artifact_path(original).read_text()) == {'mean': 0.125, 'rows': 7}
     assert verify_result_bundle(moved)['valid']
     # Re-export an already portable bundle, preserving the original source locator.
-    second = export_result_bundle(
-        moved, tmp_path / 'again', supporting='terminal'
-    )
+    second = export_result_bundle(moved, tmp_path / 'again', supporting='terminal')
     assert load_result_bundle(second).artifact_path(original).is_file()
 
 
-def test_optional_missing_supporting_files_preserve_partial_result(
-    bundle, tmp_path
-):
-    output = export_result_bundle(
-        bundle, tmp_path / 'out', supporting='requested'
-    )
+def test_optional_missing_supporting_files_preserve_partial_result(bundle, tmp_path):
+    output = export_result_bundle(bundle, tmp_path / 'out', supporting='requested')
     verified = verify_result_bundle(output)
     assert verified['valid']
     assert verified['missing_supporting'][0]['process_id'] == 'pending_id'
@@ -155,9 +93,7 @@ def test_optional_missing_supporting_files_preserve_partial_result(
 
 
 def test_node_filter_exports_only_selected_declared_outputs(bundle, tmp_path):
-    output = export_result_bundle(
-        bundle, tmp_path / 'out', supporting='requested', nodes=('summary',)
-    )
+    output = export_result_bundle(bundle, tmp_path / 'out', supporting='requested', nodes=('summary',))
     manifest = json.loads((output / 'bundle_manifest.json').read_text())
     assert len(manifest['artifacts']) == 1
     assert not manifest['missing_supporting']
@@ -165,12 +101,8 @@ def test_node_filter_exports_only_selected_declared_outputs(bundle, tmp_path):
 
 
 @pytest.mark.parametrize('change', ['edit', 'remove'])
-def test_integrity_detects_modified_or_missing_export_file(
-    bundle, tmp_path, change
-):
-    output = export_result_bundle(
-        bundle, tmp_path / 'out', supporting='terminal'
-    )
+def test_integrity_detects_modified_or_missing_export_file(bundle, tmp_path, change):
+    output = export_result_bundle(bundle, tmp_path / 'out', supporting='terminal')
     artifact = next((output / 'artifacts').glob('*/summary.json'))
     if change == 'edit':
         artifact.write_text('{"mean": 99}')
@@ -191,9 +123,7 @@ def test_missing_claim_is_reported_separately_from_aggregate_verdict(bundle):
 
 
 def test_empty_evidence_and_interrupted_records_can_be_read(bundle):
-    (bundle / 'verdict.json').write_text(
-        '{"result": "INCONCLUSIVE", "claims": []}'
-    )
+    (bundle / 'verdict.json').write_text('{"result": "INCONCLUSIVE", "claims": []}')
     assert 'INCONCLUSIVE' in render_result(load_result_bundle(bundle))
     (bundle / 'verdict.json').unlink()
     (bundle / 'execution.json').write_text('{"state": "interrupted"}')
@@ -219,18 +149,11 @@ def test_legacy_symbols_and_declared_metrics_are_presented(bundle):
 
 def test_result_commands_return_normal_exit_statuses(bundle, tmp_path, capsys):
     from magnet.cli.main import MagnetCLI
-
-    assert (
-        MagnetCLI.main(argv=['results', 'show', str(bundle), '--format=json'])
-        == 0
-    )
+    assert MagnetCLI.main(argv=['results', 'show', str(bundle), '--format=json']) == 0
     output = capsys.readouterr().out
     assert json.loads(output)['verdict']['result'] == 'VERIFIED'
     target = tmp_path / 'out'
-    assert (
-        MagnetCLI.main(argv=['results', 'export', str(bundle), str(target)])
-        == 0
-    )
+    assert MagnetCLI.main(argv=['results', 'export', str(bundle), str(target)]) == 0
     assert MagnetCLI.main(argv=['results', 'verify', str(target)]) == 0
     (target / 'report.md').write_text('changed')
     assert MagnetCLI.main(argv=['results', 'verify', str(target)]) == 1
@@ -288,14 +211,10 @@ def test_discovery_prunes_cache_and_latest_alias(bundle):
     assert records[0]['result'] == 'VERIFIED'
 
 
-def test_explicit_attachments_are_hashed_without_replacing_native_records(
-    bundle, tmp_path
-):
+def test_explicit_attachments_are_hashed_without_replacing_native_records(bundle, tmp_path):
     note = tmp_path / 'note.txt'
     note.write_text('supplemental analysis, not a native verdict')
-    output = export_result_bundle(
-        bundle, tmp_path / 'out', attachments={'verdict.json': note}
-    )
+    output = export_result_bundle(bundle, tmp_path / 'out', attachments={'verdict.json': note})
     assert (output / 'attachments/verdict.json').read_text() == note.read_text()
     assert load_result_bundle(output).verdict['result'] == 'VERIFIED'
     assert verify_result_bundle(output)['valid']
@@ -303,21 +222,14 @@ def test_explicit_attachments_are_hashed_without_replacing_native_records(
     assert not verify_result_bundle(output)['valid']
 
 
-def test_supporting_artifact_drift_since_readout_is_not_silently_repackaged(
-    bundle, tmp_path
-):
+def test_supporting_artifact_drift_since_readout_is_not_silently_repackaged(bundle, tmp_path):
     requests = json.loads((bundle / 'requested_runs.json').read_text())
     source = Path(requests[0]['expected_output'])
-    requests[0]['output_sha256_at_readout'] = file_digest(source)
+    requests[0]['output_sha256_at_readout'] = ub.hash_file(source, hasher='sha256', base='hex')
     (bundle / 'requested_runs.json').write_text(json.dumps(requests))
     source.write_text('{"mean": 99}')
     with pytest.raises(ValueError, match='changed since readout'):
         export_result_bundle(bundle, tmp_path / 'out', supporting='terminal')
     assert not (tmp_path / 'out').exists()
     # Saved claim evidence is still a valid historical snapshot on its own.
-    assert (
-        load_result_bundle(
-            export_result_bundle(bundle, tmp_path / 'core')
-        ).verdict['result']
-        == 'VERIFIED'
-    )
+    assert load_result_bundle(export_result_bundle(bundle, tmp_path / 'core')).verdict['result'] == 'VERIFIED'

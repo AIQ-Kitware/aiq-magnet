@@ -22,9 +22,7 @@ class ShowResultCLI(kwconf.Config):
 
     path = kwconf.Value(None, required=True, position=1)
     format = kwconf.Value('markdown', choices=['markdown', 'text', 'json'])
-    output = kwconf.Value(
-        None, help='Write the presentation here instead of stdout'
-    )
+    output = kwconf.Value(None, help='Write the presentation here instead of stdout')
 
     @classmethod
     def main(cls, argv=None, **kwargs):
@@ -52,18 +50,12 @@ class ShowResultCLI(kwconf.Config):
 
 class ExportResultCLI(kwconf.Config):
     """Export a native result with optional selected supporting artifacts."""
-
     source = kwconf.Value(None, required=True, position=1)
     destination = kwconf.Value(None, required=True, position=2)
     supporting = kwconf.Value('none', choices=['none', 'terminal', 'requested'])
-    nodes = kwconf.Value(
-        '', help='Comma-separated requested node names; empty selects all'
-    )
+    nodes = kwconf.Value('', help='Comma-separated requested node names; empty selects all')
     include_logs = kwconf.Flag(False)
-    attachments = kwconf.Value(
-        None,
-        help='JSON/YAML mapping (or mapping file) of attachment names to files',
-    )
+    attachments = kwconf.Value(None, help='JSON/YAML mapping (or mapping file) of attachment names to files')
 
     @classmethod
     def main(cls, argv=None, **kwargs):
@@ -71,24 +63,17 @@ class ExportResultCLI(kwconf.Config):
         attachments = None
         if args.attachments:
             import kwutil
-
             attachments = kwutil.Yaml.coerce(args.attachments)
             if not isinstance(attachments, dict):
                 raise ValueError('attachments must map relative names to files')
-        result = export_result_bundle(
-            args.source,
-            args.destination,
-            supporting=args.supporting,
-            nodes=tuple(x.strip() for x in args.nodes.split(',') if x.strip()),
-            include_logs=args.include_logs,
-            attachments=attachments,
-        )
+        result = export_result_bundle(args.source, args.destination, supporting=args.supporting,
+                                      nodes=tuple(x.strip() for x in args.nodes.split(',') if x.strip()),
+                                      include_logs=args.include_logs, attachments=attachments)
         print(result)
 
 
 class VerifyResultCLI(kwconf.Config):
     """Verify an exported bundle's bytes and claim references."""
-
     path = kwconf.Value(None, required=True, position=1)
 
     @classmethod
@@ -101,7 +86,6 @@ class VerifyResultCLI(kwconf.Config):
 
 class ListResultsCLI(kwconf.Config):
     """Find saved evaluation records without loading pipeline code or caches."""
-
     path = kwconf.Value(None, required=True, position=1)
     format = kwconf.Value('text', choices=['text', 'json'])
 
@@ -113,10 +97,8 @@ class ListResultsCLI(kwconf.Config):
             print(json.dumps(records, indent=2))
         else:
             for item in records:
-                print(
-                    f'{item["result"]:<15} claims={item["available_claims"]}/{item["claims"]} '
-                    f'execution={item["execution_state"]}  {item["path"]}'
-                )
+                print(f"{item['result']:<15} claims={item['available_claims']}/{item['claims']} "
+                      f"execution={item['execution_state']}  {item['path']}")
 
 
 class ResultsCLI(kwconf.ModalCLI):
