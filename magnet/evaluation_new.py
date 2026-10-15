@@ -1290,6 +1290,9 @@ def _evaluate_new_recipe(
     # An explicit queue_name from the caller still wins.
     schedule_options.setdefault('queue_name', recipe.queue_name)
     dry_run = bool(schedule_options.get('dry_run', False))
+    # TODO: Readout-only currently uses dry-run scheduling to compile the graph.
+    # Separate compilation from scheduling: compile, optionally execute, then
+    # collect available evidence, evaluate claims and save through one shared path.
     if readout_only:
         submission_options = dict(schedule_options, dry_run=True)
     else:
