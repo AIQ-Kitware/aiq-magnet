@@ -279,7 +279,7 @@ def export_result_bundle(
     ) as folder:
         staging = Path(folder) / 'bundle'
         staging.mkdir()
-        manifest = {'schema_version': 1, 'format': 'magnet.result-bundle',
+        manifest: dict[str, Any] = {'schema_version': 1, 'format': 'magnet.result-bundle',
                     'source_record': str(bundle.root), 'files': {}, 'artifacts': [],
                     'missing_supporting': [], 'supporting': supporting}
 

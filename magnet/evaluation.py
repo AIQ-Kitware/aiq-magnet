@@ -962,10 +962,8 @@ def main(argv: Optional[List[str]] = None, **kwargs: Any) -> None:
         special_options=False,
     )
 
-    # Item access, not `args.validate`: the option shares its name with
-    # `kwconf.Config.validate`, and the method wins attribute lookup. Reading it
-    # as an attribute yields a bound method, which silently compares unequal to
-    # every mode and turns validation off. See tests/test_kwconf_configs.py.
+    # Item access also supports older kwconf versions without field proxies,
+    # where Config.validate wins attribute lookup. See tests/test_kwconf_configs.py.
     validate = args['validate']
     path = args.path
     if path is None:

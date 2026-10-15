@@ -1285,10 +1285,9 @@ def _evaluate_new_recipe(
     # TODO: Readout-only currently uses dry-run scheduling to compile the graph.
     # Separate compilation from scheduling: compile, optionally execute, then
     # collect available evidence, evaluate claims and save through one shared path.
+    submission_options: EvaluationScheduleOptions = schedule_options.copy()
     if readout_only:
-        submission_options = dict(schedule_options, dry_run=True)
-    else:
-        submission_options = schedule_options
+        submission_options['dry_run'] = True
     processor.schedule(**submission_options)
     requested_runs = processor.inspect_requested_runs()
     requested_work = _summarize_requested_runs(requested_runs)

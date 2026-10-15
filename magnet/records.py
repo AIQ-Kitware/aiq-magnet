@@ -109,8 +109,9 @@ def execution_snapshot(
         except importlib.metadata.PackageNotFoundError:
             versions[package] = None
         imported = sys.modules.get(module)
-        if imported is not None and getattr(imported, '__file__', None):
-            sources[package] = source_snapshot(imported.__file__)
+        module_file = getattr(imported, '__file__', None)
+        if module_file is not None:
+            sources[package] = source_snapshot(module_file)
     return {
         'schema_version': 1,
         'record_id': recipe._run_hash,

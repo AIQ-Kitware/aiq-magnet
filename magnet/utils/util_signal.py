@@ -1,12 +1,12 @@
 """Scoped signal handling for command-line entrypoints."""
 
 import signal
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 
 
 @contextmanager
-def signals_as_system_exit() -> Iterator[None]:
+def signals_as_system_exit() -> Generator[None, None, None]:
     """Convert SIGTERM/SIGINT to SystemExit so Python cleanup can run.
 
     Uses conventional exit codes (128 + signal number) and restores prior
