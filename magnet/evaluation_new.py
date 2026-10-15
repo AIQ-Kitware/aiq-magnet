@@ -259,6 +259,12 @@ class NewEvaluationCLI(kwconf.Config):
         ),
     )
 
+    readout_only = kwconf.Flag(
+        False,
+        help='Compile without submitting work, then evaluate available evidence. '
+             'Unlike dry_run this writes a real evidence verdict.',
+    )
+
     evidence_scope: str | None = kwconf.Value(
         None,
         parser=str,
@@ -286,6 +292,11 @@ class NewEvaluationCLI(kwconf.Config):
             'execution settings such as backend/container image should stay '
             'in their normal options rather than being duplicated here.'
         ),
+    )
+
+    record_path_file: str | None = kwconf.Value(
+        None,
+        help='Atomically write this invocation\'s exact record identity here before scheduling.',
     )
 
     verbose: bool = kwconf.Value(
@@ -368,11 +379,21 @@ class NewEvaluationCLI(kwconf.Config):
             enabled=bool(args['per_node_leasing']),
             allowed_gpus=bool(args['lease_allowed_gpus']),
         )
-        recipe.evaluate(
-            verbose=bool(args.verbose),
-            provenance=coerce_provenance(args['provenance']),
-            **schedule_options,
-        )
+        import signal
+        def terminated(signum, frame):
+            raise SystemExit(128 + signum)
+        previous = {sig: signal.signal(sig, terminated) for sig in (signal.SIGTERM, signal.SIGINT)}
+        try:
+            recipe.evaluate(
+                verbose=bool(args.verbose),
+                provenance=coerce_provenance(args['provenance']),
+                record_path_file=args['record_path_file'],
+                readout_only=bool(args['readout_only']),
+                **schedule_options,
+            )
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
         recipe.summarize()
 
 
@@ -811,10 +832,13 @@ class NewEvaluationRecipe(EvaluationCard):
         self,
         verbose: bool = False,
         provenance: ProvenanceInput = None,
+        record_path_file: str | os.PathLike[str] | None = None,
+        readout_only: bool = False,
         **schedule_options: Unpack[EvaluationScheduleOptions],
     ) -> NewEvaluationResultCard:
         return evaluate_new_recipe(
-            self, verbose=verbose, provenance=provenance, **schedule_options
+            self, verbose=verbose, provenance=provenance,
+            record_path_file=record_path_file, readout_only=readout_only, **schedule_options,
         )
 
 
@@ -1147,6 +1171,53 @@ def evaluate_new_recipe(
     *,
     verbose: bool = False,
     provenance: ProvenanceInput = None,
+    record_path_file: str | os.PathLike[str] | None = None,
+    readout_only: bool = False,
+    **schedule_options: Unpack[EvaluationScheduleOptions],
+) -> NewEvaluationResultCard:
+    """Evaluate with an early, durable identity and independent execution record."""
+    from magnet.records import atomic_json, execution_snapshot, timestamp
+    from magnet.results import load_result_bundle, render_result
+
+    record = (recipe.output_path / recipe._run_hash).absolute().ensuredir()
+    setup_logging(verbose, record)
+    (record / 'card.yaml').write_text(yaml.safe_dump(recipe.original_card, sort_keys=False))
+    snapshot = execution_snapshot(recipe, dict(schedule_options, readout_only=readout_only))
+    atomic_json(record / 'execution.json', snapshot)
+    descriptor = {'schema_version': 1, 'record_id': recipe._run_hash,
+                  'record_directory': str(record)}
+    if record_path_file is not None:
+        target = ub.Path(record_path_file).absolute()
+        if target == record or target in (record / 'card.yaml', record / 'verdict.json', record / 'execution.json'):
+            raise ValueError('record_path_file must not replace native record files')
+        atomic_json(target, descriptor)
+    logger.info(f'MAGNET record: {record}')
+    try:
+        if readout_only and schedule_options.get('dry_run'):
+            raise ValueError('readout_only and dry_run answer different questions; select one')
+        result = _evaluate_new_recipe(recipe, verbose=verbose, provenance=provenance,
+                                      readout_only=readout_only, **schedule_options)
+    except BaseException as ex:
+        snapshot.update(state='interrupted' if isinstance(ex, (KeyboardInterrupt, SystemExit)) else 'error',
+                        ended=timestamp(), exception_type=type(ex).__name__)
+        atomic_json(record / 'execution.json', snapshot)
+        raise
+    snapshot.update(state='readout' if readout_only else
+                    'dry_run' if schedule_options.get('dry_run') else 'evaluated', ended=timestamp())
+    atomic_json(record / 'execution.json', snapshot)
+    bundle = load_result_bundle(record)
+    for name, fmt in [('report.md', 'markdown'), ('report.txt', 'text')]:
+        (record / name).write_text(render_result(bundle, format=fmt))
+    # A presentation is derived. It is not a second source of claim outcomes.
+    return result
+
+
+def _evaluate_new_recipe(
+    recipe: NewEvaluationRecipe,
+    *,
+    verbose: bool = False,
+    provenance: ProvenanceInput = None,
+    readout_only: bool = False,
     **schedule_options: Unpack[EvaluationScheduleOptions],
 ) -> NewEvaluationResultCard:
     """Schedule requested work, then evaluate the claim over available evidence."""
@@ -1161,7 +1232,6 @@ def evaluate_new_recipe(
 
     recipe_output_path = recipe.output_path / recipe._run_hash
     recipe_output_path.ensuredir()
-    setup_logging(verbose, recipe_output_path)
 
     with safer.open(
         recipe_output_path / 'card.yaml', 'w', temp_file=SAFER_USE_TEMPFILE
@@ -1191,7 +1261,7 @@ def evaluate_new_recipe(
     # An explicit queue_name from the caller still wins.
     schedule_options.setdefault('queue_name', recipe.queue_name)
     dry_run = bool(schedule_options.get('dry_run', False))
-    processor.schedule(**schedule_options)
+    processor.schedule(**dict(schedule_options, dry_run=True) if readout_only else schedule_options)
     requested_runs = processor.inspect_requested_runs()
     requested_work = _summarize_requested_runs(requested_runs)
     with safer.open(

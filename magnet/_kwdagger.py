@@ -456,6 +456,15 @@ class KWDaggerProcessor:
             }
             if expected is not None:
                 record['expected_output'] = os.fspath(expected)
+                # These are observations at readout, not claims about which
+                # invocation originally produced a reused computation.
+                from magnet.results import file_digest
+                if expected.is_file():
+                    record['output_sha256_at_readout'] = file_digest(expected)
+                config = expected.parent / 'job_config.json'
+                if config.is_file():
+                    record['config_fpath'] = os.fspath(config)
+                    record['config_sha256_at_readout'] = file_digest(config)
             if stat_fpath is not None:
                 record['stat_fpath'] = os.fspath(stat_fpath)
             log_fpath = getattr(job, 'log_fpath', None) if job else None

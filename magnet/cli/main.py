@@ -17,6 +17,7 @@ import kwconf
 from magnet.cli.download_cli import DownloadModalCLI
 from magnet.evaluation import EvaluationConfig
 from magnet.evaluation_new import NewEvaluationCLI
+from magnet.cli.results_cli import ResultsCLI
 from magnet import __version__
 
 
@@ -34,6 +35,7 @@ MagnetCLI.register(
     EvaluationConfig, command='evaluate_legacy', alias=['evaluate']
 )
 MagnetCLI.register(NewEvaluationCLI, command='evaluate_new')
+MagnetCLI.register(ResultsCLI, command='results')
 
 
 __cli__ = MagnetCLI
