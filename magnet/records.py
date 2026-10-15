@@ -62,7 +62,11 @@ def _safe(value):
 
 def source_snapshot(file: str | Path) -> dict:
     path = Path(file).resolve()
-    result = {'file': str(path), 'sha256': file_digest(path)}
+    result = {'file': str(path)}
+    try:
+        result['sha256'] = file_digest(path)
+    except OSError as ex:
+        result.update(sha256=None, source_error=type(ex).__name__)
     try:
         def git(*args):
             return subprocess.run(['git', '-C', str(path.parent), *args],

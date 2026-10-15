@@ -8,7 +8,7 @@ import pytest
 import yaml
 
 from magnet.evaluation_new import NewEvaluationRecipe
-from magnet.records import _safe
+from magnet.records import _safe, source_snapshot
 
 
 @pytest.fixture
@@ -113,3 +113,21 @@ def test_readout_only_does_not_fill_missing_outputs(card, tmp_path):
     assert result.result == 'INCONCLUSIVE'
     assert not list((out / '_kwdagger').glob('*/*/result.json'))
     assert (out / recipe._run_hash / 'verdict.json').is_file()
+
+
+def test_failed_presentation_does_not_change_or_hide_serialized_verdict(card, tmp_path, monkeypatch):
+    import magnet.results
+    def fail(*args, **kwargs):
+        raise RuntimeError('presentation failure')
+    monkeypatch.setattr(magnet.results, 'render_result', fail)
+    recipe = NewEvaluationRecipe(card, tmp_path / 'out')
+    assert recipe.evaluate(backend='serial').result == 'VERIFIED'
+    record = tmp_path / 'out' / recipe._run_hash
+    assert json.loads((record / 'verdict.json').read_text())['result'] == 'VERIFIED'
+    assert json.loads((record / 'execution.json').read_text())['presentation_error'] == 'RuntimeError'
+
+
+def test_unavailable_source_provenance_is_explicit_not_an_execution_gate(tmp_path):
+    snapshot = source_snapshot(tmp_path / 'unavailable.py')
+    assert snapshot['sha256'] is None
+    assert snapshot['source_error'] == 'FileNotFoundError'

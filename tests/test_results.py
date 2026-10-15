@@ -8,7 +8,7 @@ import yaml
 
 from magnet.results import (
     discover_result_bundles, export_result_bundle, load_result_bundle,
-    render_result, verify_result_bundle,
+    render_result, verify_result_bundle, file_digest,
 )
 
 
@@ -195,3 +195,16 @@ def test_explicit_attachments_are_hashed_without_replacing_native_records(bundle
     assert verify_result_bundle(output)['valid']
     (output / 'attachments/verdict.json').write_text('changed')
     assert not verify_result_bundle(output)['valid']
+
+
+def test_supporting_artifact_drift_since_readout_is_not_silently_repackaged(bundle, tmp_path):
+    requests = json.loads((bundle / 'requested_runs.json').read_text())
+    source = Path(requests[0]['expected_output'])
+    requests[0]['output_sha256_at_readout'] = file_digest(source)
+    (bundle / 'requested_runs.json').write_text(json.dumps(requests))
+    source.write_text('{"mean": 99}')
+    with pytest.raises(ValueError, match='changed since readout'):
+        export_result_bundle(bundle, tmp_path / 'out', supporting='terminal')
+    assert not (tmp_path / 'out').exists()
+    # Saved claim evidence is still a valid historical snapshot on its own.
+    assert load_result_bundle(export_result_bundle(bundle, tmp_path / 'core')).verdict['result'] == 'VERIFIED'

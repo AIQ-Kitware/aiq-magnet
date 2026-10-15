@@ -87,6 +87,9 @@ Choose additional evidence explicitly:
 listed in the manifest without changing the recorded scientific verdict.
 No recursive cache or serving-environment copy occurs. Absolute source paths
 remain provenance; the manifest supplies portable artifact locations.
+Where readout-time output/configuration hashes were recorded, an export
+rejects supporting files that have changed since that snapshot. Historical
+bundles without those hashes remain readable and exportable.
 
 Supplemental analyses can be attached without replacing native verdicts:
 

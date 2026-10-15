@@ -1205,9 +1205,14 @@ def evaluate_new_recipe(
     snapshot.update(state='readout' if readout_only else
                     'dry_run' if schedule_options.get('dry_run') else 'evaluated', ended=timestamp())
     atomic_json(record / 'execution.json', snapshot)
-    bundle = load_result_bundle(record)
-    for name, fmt in [('report.md', 'markdown'), ('report.txt', 'text')]:
-        (record / name).write_text(render_result(bundle, format=fmt))
+    try:
+        bundle = load_result_bundle(record)
+        for name, fmt in [('report.md', 'markdown'), ('report.txt', 'text')]:
+            (record / name).write_text(render_result(bundle, format=fmt))
+    except Exception as ex:
+        snapshot['presentation_error'] = type(ex).__name__
+        atomic_json(record / 'execution.json', snapshot)
+        logger.warning(f'Serialized verdict preserved; presentation failed: {type(ex).__name__}')
     # A presentation is derived. It is not a second source of claim outcomes.
     return result
 

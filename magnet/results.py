@@ -207,7 +207,7 @@ def render_result(bundle: ResultBundle, *, format: str = 'markdown') -> str:
         lines.extend(_present_value('Execution snapshot', bundle.execution, 2))
     lines += ['Presentation generated from serialized results. Logs and original artifact '
               'paths are not required to read this report.', '']
-    text = '\n'.join(lines)
+    text = '\n'.join(line.rstrip() for line in lines)
     if format == 'text':
         import re
         text = re.sub(r'^#{1,6} ', '', text, flags=re.MULTILINE).replace('**', '')
@@ -267,13 +267,16 @@ def export_result_bundle(source: str | os.PathLike, destination: str | os.PathLi
             copy(_relative(bundle.root, rel), rel)
 
         wanted: dict[str, tuple[str, str]] = {}
+        requests = []
+        if (bundle.root / 'requested_runs.json').is_file():
+            requests = json.loads((bundle.root / 'requested_runs.json').read_text())
+        observed = {item['expected_output']: item for item in requests if item.get('expected_output')}
         if supporting in {'terminal', 'requested'}:
             for cell in bundle.cells.values():
                 original = cell.get('artifact')
                 if original:
                     wanted[original] = ('terminal', str(cell.get('cell') or Path(original).parent.name))
         if supporting == 'requested' and (bundle.root / 'requested_runs.json').is_file():
-            requests = json.loads((bundle.root / 'requested_runs.json').read_text())
             for item in requests:
                 if nodes and item['node'] not in nodes:
                     continue
@@ -288,11 +291,18 @@ def export_result_bundle(source: str | os.PathLike, destination: str | os.PathLi
             # Numbered directories avoid collisions without trusting node names as paths.
             rel = f'artifacts/{i:05d}/{path.name}'
             copy(path, rel)
+            prior = observed.get(original, {})
+            expected = prior.get('output_sha256_at_readout')
+            if expected and manifest['files'][rel]['sha256'] != expected:
+                raise ValueError(f'supporting artifact changed since readout: {original}')
             manifest['artifacts'].append({'source': original, 'path': rel,
                                           'node': node, 'process_id': process})
             config = path.parent / 'job_config.json'
             if config.is_file():
                 copy(config, f'artifacts/{i:05d}/job_config.json')
+                expected = prior.get('config_sha256_at_readout')
+                if expected and manifest['files'][f'artifacts/{i:05d}/job_config.json']['sha256'] != expected:
+                    raise ValueError(f'supporting configuration changed since readout: {original}')
         for name, path in (attachments or {}).items():
             # Attachments cannot shadow the scientific record or its manifest.
             _relative(staging, name)
