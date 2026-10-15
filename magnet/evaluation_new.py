@@ -26,7 +26,7 @@ import warnings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Tuple, TypedDict, Unpack, cast
+from typing import Any, Dict, List, Tuple, Unpack, cast
 
 import kwconf
 import kwutil
@@ -52,6 +52,12 @@ from magnet.evaluation import (
     _calculate_metrics,
     _parse_symbol_metadata,
     _reduce_results,
+)
+from magnet.records import (
+    RecordFiles,
+    atomic_json,
+    execution_snapshot,
+    timestamp,
 )
 from magnet.schema import RECIPE_NAME_PATTERN, NewEvaluationRecipeSchema
 from magnet.theory.cards import report_from_card
@@ -932,7 +938,7 @@ def _evaluate_claim_cell(
 def _write_cell_result(
     cell_result: NewEvaluationCellResult, cell_results_path: ub.Path
 ) -> ub.Path:
-    results_fpath = cell_results_path / cell_result.result_id / 'verdict.json'
+    results_fpath = cell_results_path / cell_result.result_id / RecordFiles.VERDICT
     results_fpath.parent.ensuredir()
     with safer.open(results_fpath, 'w', temp_file=SAFER_USE_TEMPFILE) as file:
         json.dump(cell_result.as_record(), file, indent=2, ensure_ascii=False)
@@ -1176,43 +1182,76 @@ def evaluate_new_recipe(
     **schedule_options: Unpack[EvaluationScheduleOptions],
 ) -> NewEvaluationResultCard:
     """Evaluate with an early, durable identity and independent execution record."""
-    from magnet.records import atomic_json, execution_snapshot, timestamp
-    from magnet.results import load_result_bundle, render_result
+    from magnet.results import load_result_bundle, write_result_reports
 
     record = (recipe.output_path / recipe._run_hash).absolute().ensuredir()
-    setup_logging(verbose, record)
-    (record / 'card.yaml').write_text(yaml.safe_dump(recipe.original_card, sort_keys=False))
-    snapshot = execution_snapshot(recipe, dict(schedule_options, readout_only=readout_only))
-    atomic_json(record / 'execution.json', snapshot)
-    descriptor = {'schema_version': 1, 'record_id': recipe._run_hash,
-                  'record_directory': str(record)}
+    target = None
     if record_path_file is not None:
-        target = ub.Path(record_path_file).absolute()
-        if target == record or target in (record / 'card.yaml', record / 'verdict.json', record / 'execution.json'):
-            raise ValueError('record_path_file must not replace native record files')
+        target = ub.Path(record_path_file).resolve()
+        if target.is_relative_to(record.resolve()):
+            raise ValueError(
+                'record_path_file must be outside the result directory'
+            )
+    setup_logging(verbose, record)
+    with safer.open(
+        record / RecordFiles.CARD, 'w', temp_file=SAFER_USE_TEMPFILE
+    ) as file:
+        yaml.safe_dump(recipe.original_card, file, sort_keys=False)
+    snapshot = execution_snapshot(
+        recipe,
+        backend=schedule_options.get('backend'),
+        dry_run=bool(schedule_options.get('dry_run', False)),
+        readout_only=readout_only,
+    )
+    execution_path = record / RecordFiles.EXECUTION
+    atomic_json(execution_path, snapshot)
+    descriptor = {
+        'schema_version': 1,
+        'record_id': recipe._run_hash,
+        'record_directory': str(record),
+    }
+    if target is not None:
         atomic_json(target, descriptor)
     logger.info(f'MAGNET record: {record}')
     try:
         if readout_only and schedule_options.get('dry_run'):
-            raise ValueError('readout_only and dry_run answer different questions; select one')
-        result = _evaluate_new_recipe(recipe, verbose=verbose, provenance=provenance,
-                                      readout_only=readout_only, **schedule_options)
+            raise ValueError(
+                'readout_only and dry_run answer different questions; select one'
+            )
+        result = _evaluate_new_recipe(
+            recipe,
+            verbose=verbose,
+            provenance=provenance,
+            readout_only=readout_only,
+            **schedule_options,
+        )
     except BaseException as ex:
-        snapshot.update(state='interrupted' if isinstance(ex, (KeyboardInterrupt, SystemExit)) else 'error',
-                        ended=timestamp(), exception_type=type(ex).__name__)
-        atomic_json(record / 'execution.json', snapshot)
+        snapshot.update(
+            state='interrupted'
+            if isinstance(ex, (KeyboardInterrupt, SystemExit))
+            else 'error',
+            ended=timestamp(),
+            exception_type=type(ex).__name__,
+        )
+        atomic_json(execution_path, snapshot)
         raise
-    snapshot.update(state='readout' if readout_only else
-                    'dry_run' if schedule_options.get('dry_run') else 'evaluated', ended=timestamp())
-    atomic_json(record / 'execution.json', snapshot)
+    snapshot.update(
+        state='readout'
+        if readout_only
+        else 'dry_run'
+        if schedule_options.get('dry_run')
+        else 'evaluated',
+        ended=timestamp(),
+    )
+    atomic_json(execution_path, snapshot)
     try:
-        bundle = load_result_bundle(record)
-        for name, fmt in [('report.md', 'markdown'), ('report.txt', 'text')]:
-            (record / name).write_text(render_result(bundle, format=fmt))
+        write_result_reports(load_result_bundle(record))
     except Exception as ex:
         snapshot['presentation_error'] = type(ex).__name__
-        atomic_json(record / 'execution.json', snapshot)
-        logger.warning(f'Serialized verdict preserved; presentation failed: {type(ex).__name__}')
+        atomic_json(execution_path, snapshot)
+        logger.warning(
+            f'Serialized verdict preserved; presentation failed: {type(ex).__name__}'
+        )
     # A presentation is derived. It is not a second source of claim outcomes.
     return result
 
@@ -1238,23 +1277,16 @@ def _evaluate_new_recipe(
     recipe_output_path = recipe.output_path / recipe._run_hash
     recipe_output_path.ensuredir()
 
-    with safer.open(
-        recipe_output_path / 'card.yaml', 'w', temp_file=SAFER_USE_TEMPFILE
-    ) as file:
-        yaml.safe_dump(recipe.original_card, file, sort_keys=False)
-
     # The visualization dashboard treats this directory as part of MAGNET's
     # run-bundle contract, including when no evidence rows are currently
     # available.
-    cell_results_path = (recipe_output_path / 'results').ensuredir()
+    cell_results_path = (recipe_output_path / RecordFiles.CELLS).ensuredir()
     raw_symbol_metadata = _parse_symbol_metadata(recipe.symbols)
     if raw_symbol_metadata:
-        with safer.open(
-            recipe_output_path / 'symbol_metadata.json',
-            'w',
-            temp_file=SAFER_USE_TEMPFILE,
-        ) as file:
-            json.dump(raw_symbol_metadata, file, indent=2, ensure_ascii=False)
+        atomic_json(
+            recipe_output_path / RecordFiles.SYMBOL_METADATA,
+            raw_symbol_metadata,
+        )
 
     processor = KWDaggerProcessor(
         recipe.kwdagger, root_dpath=recipe.kwdagger_dpath
@@ -1266,16 +1298,14 @@ def _evaluate_new_recipe(
     # An explicit queue_name from the caller still wins.
     schedule_options.setdefault('queue_name', recipe.queue_name)
     dry_run = bool(schedule_options.get('dry_run', False))
-    processor.schedule(**dict(schedule_options, dry_run=True) if readout_only else schedule_options)
+    processor.schedule(
+        **dict(schedule_options, dry_run=True)
+        if readout_only
+        else schedule_options
+    )
     requested_runs = processor.inspect_requested_runs()
     requested_work = _summarize_requested_runs(requested_runs)
-    with safer.open(
-        recipe_output_path / 'requested_runs.json',
-        'w',
-        temp_file=SAFER_USE_TEMPFILE,
-    ) as file:
-        json.dump(requested_runs, file, indent=2, ensure_ascii=False)
-        file.write('\n')
+    atomic_json(recipe_output_path / RecordFiles.REQUESTED_RUNS, requested_runs)
 
     if dry_run:
         # Nothing ran, so there is nothing this invocation could have judged.
@@ -1290,7 +1320,7 @@ def _evaluate_new_recipe(
         # makes a dry run a way to check a card's theory links on their own.
         _link_kwdagger_root(recipe_output_path, recipe.kwdagger_dpath)
         if theory_report is not None:
-            theory_report.write(recipe_output_path / 'theory.json')
+            theory_report.write(recipe_output_path / RecordFiles.THEORY)
 
         result_card = NewEvaluationResultCard(
             result='NOT_EVALUATED',
@@ -1399,16 +1429,12 @@ def _evaluate_new_recipe(
         provenance=resolved_provenance,
     )
 
-    with safer.open(
-        recipe_output_path / 'verdict.json',
-        'w',
-        temp_file=SAFER_USE_TEMPFILE,
-    ) as file:
-        json.dump(result_card.as_record(), file, indent=2, ensure_ascii=False)
-        file.write('\n')
+    atomic_json(
+        recipe_output_path / RecordFiles.VERDICT, result_card.as_record()
+    )
 
     if theory_report is not None:
-        theory_report.write(recipe_output_path / 'theory.json')
+        theory_report.write(recipe_output_path / RecordFiles.THEORY)
 
     recipe.result_card = result_card
     recipe.claim.status = aggregate_result

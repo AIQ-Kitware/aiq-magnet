@@ -13,29 +13,28 @@ Example:
     >>> # Test version works
     >>> MagnetCLI.main(argv=['--version'])
 """
+
 import kwconf
+
+from magnet import __version__
 from magnet.cli.download_cli import DownloadModalCLI
+from magnet.cli.results_cli import ResultsCLI
 from magnet.evaluation import EvaluationConfig
 from magnet.evaluation_new import NewEvaluationCLI
-from magnet.cli.results_cli import ResultsCLI
-from magnet import __version__
 
 
 class MagnetCLI(kwconf.ModalCLI):
     """
     Top level MAGNET CLI
     """
+
     __version__ = __version__
 
-
-MagnetCLI.register(DownloadModalCLI, command='download')
-# The historical evaluator gets an explicit migration name while `evaluate`
-# remains a compatibility alias until the new evaluator takes that name.
-MagnetCLI.register(
-    EvaluationConfig, command='evaluate_legacy', alias=['evaluate']
-)
-MagnetCLI.register(NewEvaluationCLI, command='evaluate_new')
-MagnetCLI.register(ResultsCLI, command='results')
+    download = DownloadModalCLI
+    # Preserve the historical name during migration to the new evaluator.
+    evaluate_legacy = kwconf.ModalValue(EvaluationConfig, alias=['evaluate'])
+    evaluate_new = NewEvaluationCLI
+    results = ResultsCLI
 
 
 __cli__ = MagnetCLI

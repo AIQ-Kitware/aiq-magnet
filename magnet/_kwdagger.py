@@ -458,10 +458,10 @@ class KWDaggerProcessor:
                 record['expected_output'] = os.fspath(expected)
                 # These are observations at readout, not claims about which
                 # invocation originally produced a reused computation.
-                from magnet.results import file_digest
+                from magnet.records import RecordFiles, file_digest
                 if expected.is_file():
                     record['output_sha256_at_readout'] = file_digest(expected)
-                config = expected.parent / 'job_config.json'
+                config = expected.parent / RecordFiles.JOB_CONFIG
                 if config.is_file():
                     record['config_fpath'] = os.fspath(config)
                     record['config_sha256_at_readout'] = file_digest(config)

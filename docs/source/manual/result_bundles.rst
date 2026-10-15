@@ -119,15 +119,17 @@ Invocation identity and provenance
 
 Before scheduling, MAGNET atomically writes its exact record ID and directory
 to that descriptor. Launchers should allocate a separate descriptor per
-attempt, not find the newest directory by modification time. The native
-``execution.json`` records execution options, software/source snapshots,
+attempt outside the result directory, not find the newest directory by
+modification time. The native ``execution.json`` records the scheduler backend,
+dry-run/readout-only flags, software/source snapshots,
 timestamps and evaluated/dry-run/readout/interrupted/error state. These states
 describe an invocation, not whether an entire accumulated DAG is complete.
 SIGINT and SIGTERM received by the CLI preserve interruption metadata.
 
-Container environment values are omitted from execution metadata; names and
-redacted settings remain. Caller-supplied ``--provenance`` still belongs to
-the caller and is preserved unchanged. Providers/adapters must supply facts
+Arbitrary runtime settings, container options and environments are not copied
+into this snapshot. MAGNET does not strip credentials from supplied data.
+Caller-supplied ``--provenance`` belongs to the caller and is preserved
+unchanged. Providers/adapters must supply facts
 about actual weights, precision and remote services; MAGNET does not infer
 those from aliases. Output/configuration hashes in the operational inventory
 are observations at readout. They do not assign current execution settings
