@@ -183,7 +183,7 @@ def _write_executable(path, text):
 
 
 def test_run_sh_checks_commands_without_invoking_them(tmp_path):
-    """Presence checks use ``command -v``; only infer-stack status is run."""
+    """Presence checks use command -v; backend lookup ignores status formatting."""
     bindir = ub.Path(tmp_path) / 'bin'
     bindir.mkdir()
     calls = ub.Path(tmp_path) / 'calls.txt'
@@ -196,9 +196,10 @@ def test_run_sh_checks_commands_without_invoking_them(tmp_path):
         '#!/bin/sh\n'
         f'printf "infer-stack:%s\\n" "$*" >> {calls}\n'
         'if [ "$1" = status ]; then\n'
-        '    printf "backend: compose\\n"\n'
+        '    printf "configured backend  compose\\n"\n'
         '    exit 0\n'
         'fi\n'
+        'if [ "$*" = "config get backend" ]; then printf "compose\\n"; exit 0; fi\n'
         'exit 98\n'
     )
     _write_executable(bindir / 'infer-stack', infer_stack_script)
@@ -209,7 +210,7 @@ def test_run_sh_checks_commands_without_invoking_them(tmp_path):
         'exit 0\n',
     )
 
-    env = _child_env()
+    env = _child_env(INFER_STACK_BACKEND=None)
     env['PATH'] = f'{bindir}:/usr/bin:/bin'
     run_sh = CARD_FPATH.parent / 'run.sh'
     proc = subprocess.run(
@@ -219,7 +220,8 @@ def test_run_sh_checks_commands_without_invoking_them(tmp_path):
     assert proc.returncode == 0, proc.stderr
     invoked = calls.read_text().splitlines()
     assert not any(line.startswith('magnet:') for line in invoked)
-    assert 'infer-stack:status' in invoked
+    assert 'infer-stack:config get backend' in invoked
+    assert 'infer-stack:status' not in invoked
     python_call = next(line for line in invoked if line.startswith('python:'))
     assert 'catalog-mock.yaml' in python_call
     assert '--container_image=' not in python_call
@@ -241,7 +243,7 @@ def test_run_sh_defaults_to_gpu_and_container(tmp_path):
         bindir / 'infer-stack',
         '#!/bin/sh\n'
         f'printf "infer-stack:%s\\n" "$*" >> {calls}\n'
-        'if [ "$1" = status ]; then printf "backend: compose\\n"; exit 0; fi\n'
+        'if [ "$*" = "config get backend" ]; then printf "compose\\n"; exit 0; fi\n'
         'exit 98\n',
     )
     _write_executable(
@@ -286,6 +288,43 @@ def test_run_sh_defaults_to_gpu_and_container(tmp_path):
     )
 
 
+@pytest.mark.parametrize('configured, override, accepted', [
+    ('compose', None, True),
+    ('kubeai', None, True),
+    ('', None, False),
+    ('null', None, False),
+    ('', 'compose', True),
+    ('compose', 'kubeai', True),
+    ('compose', 'null', False),
+])
+def test_run_sh_resolves_backend_configuration(tmp_path, configured, override, accepted):
+    bindir = ub.Path(tmp_path) / 'bin'
+    bindir.mkdir()
+    calls = ub.Path(tmp_path) / 'calls.txt'
+    _write_executable(bindir / 'magnet', '#!/bin/sh\nexit 97\n')
+    _write_executable(
+        bindir / 'infer-stack',
+        '#!/bin/sh\n'
+        f'printf "infer-stack:%s\\n" "$*" >> {calls}\n'
+        'if [ "$*" != "config get backend" ]; then exit 98; fi\n'
+        f'printf "%s\\n" {_shlex.quote(configured)}\n'
+        f'exit {0 if configured else 1}\n',
+    )
+    _write_executable(bindir / 'python', f'#!/bin/sh\necho python >> {calls}\n')
+    env = _child_env(INFER_STACK_BACKEND=override)
+    env['PATH'] = f'{bindir}:/usr/bin:/bin'
+    proc = subprocess.run(
+        ['bash', CARD_FPATH.parent / 'run.sh', '--mock', '--no-container'],
+        capture_output=True, text=True, env=env,
+    )
+    invoked = calls.read_text().splitlines() if calls.exists() else []
+    assert proc.returncode == (0 if accepted else 1), proc.stderr
+    assert ('python' in invoked) == accepted
+    assert ('infer-stack:config get backend' in invoked) == (override is None)
+    if not accepted:
+        assert 'infer-stack config init --yes --backend compose' in proc.stderr
+
+
 def test_node_image_is_decoupled_from_the_repository_checkout():
     """Catalog/card edits must not invalidate MAGNET installation in the image."""
     dockerfile = (CARD_FPATH.parent / 'Dockerfile').read_text()
@@ -315,7 +354,7 @@ def test_run_sh_accepts_an_untracked_real_catalog(tmp_path):
         bindir / 'infer-stack',
         '#!/bin/sh\n'
         f'printf "infer-stack:%s\\n" "$*" >> {calls}\n'
-        'if [ "$1" = status ]; then printf "backend: compose\\n"; exit 0; fi\n'
+        'if [ "$*" = "config get backend" ]; then printf "compose\\n"; exit 0; fi\n'
         'exit 98\n',
     )
     _write_executable(
