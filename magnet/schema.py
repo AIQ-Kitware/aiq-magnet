@@ -200,7 +200,31 @@ class TheorySchema(BaseModel):
     model_config = {'extra': 'forbid'}
 
 
-class EvaluationCardSchema(BaseModel):
+class _EvaluationCardFields(BaseModel):
+    """Fields common to the legacy evaluation card and the new recipe."""
+
+    # --- Required ---
+    title: str
+    description: str
+    claim: ClaimSchema
+    version: str = Field(coerce_numbers_to_str=True)
+    organizations: list[str]
+    submitter: SubmitterSchema
+    tags: list[str]
+    links: list[LinkSchema]
+
+    # --- Recommended ---
+    category: str | None = None
+
+    # --- Evaluation configuration ---
+    claim_aggregation_strategy: ClaimAggregationStrategySchema | None = None
+    symbols: dict[str, SymbolSchema] | None = None
+
+    # --- how the code relates to a theoretical object (optional) ---
+    theory: TheorySchema | None = None
+
+
+class EvaluationCardSchema(_EvaluationCardFields):
     """
     Schema for an Evaluation Card YAML.
 
@@ -239,26 +263,6 @@ class EvaluationCardSchema(BaseModel):
         'Arithmetic'
     """
 
-    # --- Required ---
-    title: str
-    description: str
-    claim: ClaimSchema
-    version: str = Field(coerce_numbers_to_str=True)
-    organizations: list[str]
-    submitter: SubmitterSchema
-    tags: list[str]
-    links: list[LinkSchema]
-
-    # --- Recommended ---
-    category: str | None = None
-
-    # --- Evaluation configuration ---
-    claim_aggregation_strategy: ClaimAggregationStrategySchema | None = None
-    symbols: dict[str, SymbolSchema] | None = None
-
-    # --- how the code relates to a theoretical object (optional) ---
-    theory: TheorySchema | None = None
-
     # --- Backend (at most one) ---
     kwdagger: KWDaggerSchema | None = None
     pipeline: dict[str, Any] | None = None
@@ -276,10 +280,15 @@ class EvaluationCardSchema(BaseModel):
         return self
 
 
-class NewEvaluationKWDaggerSchema(KWDaggerSchema):
+class NewEvaluationKWDaggerSchema(BaseModel):
     """KWDagger block required by the replacement evaluation API."""
 
+    # Mutable Pydantic fields cannot safely narrow result_node in a subclass.
+    model_config = ConfigDict(extra='allow')
+
     result_node: str
+    pipeline: str | dict[str, Any]
+    matrix: dict[str, Any] | None = None
 
 
 #: A recipe `name` is used as an identifier -- a tmux session name, a path
@@ -288,7 +297,7 @@ class NewEvaluationKWDaggerSchema(KWDaggerSchema):
 RECIPE_NAME_PATTERN = r'^[A-Za-z0-9_-]+$'
 
 
-class NewEvaluationRecipeSchema(EvaluationCardSchema):
+class NewEvaluationRecipeSchema(_EvaluationCardFields):
     """
     Schema for a recipe consumed by ``magnet evaluate_new``.
 
@@ -315,9 +324,11 @@ class NewEvaluationRecipeSchema(EvaluationCardSchema):
         'held_out_model'
     """
 
-    name: str | None = Field(default=None, pattern=RECIPE_NAME_PATTERN)
+    # The new backend fields are deliberately independent of the optional,
+    # mutable legacy fields on EvaluationCardSchema.
     kwdagger: NewEvaluationKWDaggerSchema
     pipeline: None = None
+    name: str | None = Field(default=None, pattern=RECIPE_NAME_PATTERN)
     evidence: EvidenceSchema = Field(default_factory=EvidenceSchema)
 
     @model_validator(mode='after')
