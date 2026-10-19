@@ -20,13 +20,18 @@ from magnet.results import (
 class ShowResultCLI(kwconf.Config):
     """Present an existing native result, including older dashboard bundles."""
 
-    path = kwconf.Value(None, required=True, position=1)
-    format = kwconf.Value('markdown', choices=['markdown', 'text', 'json'])
-    output = kwconf.Value(None, help='Write the presentation here instead of stdout')
+    path: str | None = kwconf.Value(None, required=True, position=1)
+    format: str = kwconf.Value('markdown', choices=['markdown', 'text', 'json'])
+    output: str | None = kwconf.Value(
+        None, help='Write the presentation here instead of stdout'
+    )
 
     @classmethod
-    def main(cls, argv=None, **kwargs):
+    def main(
+        cls, argv: list[str] | None = None, **kwargs: object
+    ) -> None:
         args = cls.cli(argv=argv, data=kwargs, strict=True)
+        assert args.path is not None  # Required by the CLI parser.
         bundle = load_result_bundle(args.path)
         text = render_result(bundle, format=args.format)
         if args.output:
@@ -50,16 +55,27 @@ class ShowResultCLI(kwconf.Config):
 
 class ExportResultCLI(kwconf.Config):
     """Export a native result with optional selected supporting artifacts."""
-    source = kwconf.Value(None, required=True, position=1)
-    destination = kwconf.Value(None, required=True, position=2)
-    supporting = kwconf.Value('none', choices=['none', 'terminal', 'requested'])
-    nodes = kwconf.Value('', help='Comma-separated requested node names; empty selects all')
-    include_logs = kwconf.Flag(False)
-    attachments = kwconf.Value(None, help='JSON/YAML mapping (or mapping file) of attachment names to files')
+    source: str | None = kwconf.Value(None, required=True, position=1)
+    destination: str | None = kwconf.Value(None, required=True, position=2)
+    supporting: str = kwconf.Value(
+        'none', choices=['none', 'terminal', 'requested']
+    )
+    nodes: str = kwconf.Value(
+        '', help='Comma-separated requested node names; empty selects all'
+    )
+    include_logs: bool = kwconf.Flag(False)
+    attachments: str | None = kwconf.Value(
+        None,
+        help='JSON/YAML mapping (or mapping file) of attachment names to files',
+    )
 
     @classmethod
-    def main(cls, argv=None, **kwargs):
+    def main(
+        cls, argv: list[str] | None = None, **kwargs: object
+    ) -> None:
         args = cls.cli(argv=argv, data=kwargs, strict=True)
+        assert args.source is not None  # Required by the CLI parser.
+        assert args.destination is not None  # Required by the CLI parser.
         attachments = None
         if args.attachments:
             import kwutil
@@ -74,11 +90,14 @@ class ExportResultCLI(kwconf.Config):
 
 class VerifyResultCLI(kwconf.Config):
     """Verify an exported bundle's bytes and claim references."""
-    path = kwconf.Value(None, required=True, position=1)
+    path: str | None = kwconf.Value(None, required=True, position=1)
 
     @classmethod
-    def main(cls, argv=None, **kwargs):
+    def main(
+        cls, argv: list[str] | None = None, **kwargs: object
+    ) -> int:
         args = cls.cli(argv=argv, data=kwargs, strict=True)
+        assert args.path is not None  # Required by the CLI parser.
         result = verify_result_bundle(args.path)
         print(json.dumps(result, indent=2))
         return 0 if result['valid'] else 1
@@ -86,12 +105,15 @@ class VerifyResultCLI(kwconf.Config):
 
 class ListResultsCLI(kwconf.Config):
     """Find saved evaluation records without loading pipeline code or caches."""
-    path = kwconf.Value(None, required=True, position=1)
-    format = kwconf.Value('text', choices=['text', 'json'])
+    path: str | None = kwconf.Value(None, required=True, position=1)
+    format: str = kwconf.Value('text', choices=['text', 'json'])
 
     @classmethod
-    def main(cls, argv=None, **kwargs):
+    def main(
+        cls, argv: list[str] | None = None, **kwargs: object
+    ) -> None:
         args = cls.cli(argv=argv, data=kwargs, strict=True)
+        assert args.path is not None  # Required by the CLI parser.
         records = discover_result_bundles(args.path)
         if args.format == 'json':
             print(json.dumps(records, indent=2))
