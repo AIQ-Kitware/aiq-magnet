@@ -138,6 +138,10 @@ ini_options.norecursedirs = ".git build __pycache__ dev docs dockerfiles"
 [tool.ty.environment]
 extra-paths = [ "./examples" ]
 
+[tool.ty.rules]
+# Keep suppressions for intentional kwconf field/method collisions across ty versions.
+unused-ignore-comment = "ignore"
+
 [tool.uv.workspace]
 members = [ "packages/aiq-magnet-theory" ]
 

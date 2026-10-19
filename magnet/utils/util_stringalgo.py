@@ -96,25 +96,20 @@ def shortest_unique_prefixes(items, sep=None, allow_simple=True, min_length=0, a
 
         trie = pygtrie.StringTrie.fromkeys(items, value=0, separator=sep)
 
-    # Set the value (frequency) of all nodes to zero.
-    for node in _trie_iternodes(trie):
-        node.value = 0
-
-    # For each item trace its path and increment frequencies
+    # Count all paths using pygtrie's public step API.  Intermediate nodes
+    # start unset; get(0) handles them without reading private _Node.value
+    # (which may hold pygtrie's internal _NoValue sentinel).
     for item in items:
-        final_node, trace = trie._get_node(item)
-        for key, node in trace:
-            node.value += 1  # ty: ignore[unsupported-operator]
+        for step in trie.walk_towards(item):
+            step.value = step.get(0) + 1
 
-    # if not isinstance(node.value, int):
-    #     node.value = 0
-
-    # Query for the first prefix with frequency 1 for each item.
-    # This is the shortest unique prefix over all items.
+    # Query the first prefix with frequency 1 for each item.  pygtrie's
+    # prefix results are step objects, not typed (key, value) tuples.
     unique = []
     for item in items:
         freq = None
-        for prefix, freq in trie.prefixes(item):  # ty: ignore[not-iterable]
+        for step in trie.prefixes(item):
+            prefix, freq = step.key, step.value
             if freq == 1:
                 if sep is None:
                     prefix_length = len(prefix)

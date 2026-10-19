@@ -207,6 +207,35 @@ def test_new_recipe_schema_requires_result_node(kwdagger_card):
         )
 
 
+def test_new_recipe_requires_kwdagger_even_with_symbols(simple_card):
+    # The legacy card schema accepts symbol-only recipes; the new evaluator
+    # requires an execution backend.
+    EvaluationCardSchema.model_validate(simple_card)
+    with pytest.raises(ValidationError, match='kwdagger'):
+        NewEvaluationRecipeSchema.model_validate(simple_card)
+
+
+def test_new_recipe_rejects_legacy_pipeline(kwdagger_card):
+    # The new schema must not accidentally inherit the permissive legacy
+    # pipeline field when its typed backend is a separate Pydantic model.
+    with pytest.raises(ValidationError, match='pipeline'):
+        NewEvaluationRecipeSchema.model_validate({
+            **kwdagger_card,
+            'pipeline': {'nodes': {}},
+        })
+
+
+def test_new_recipe_keeps_unknown_kwdagger_params(kwdagger_card):
+    # KWDagger owns its configuration language; allow passthrough keys in
+    # both schema variants.
+    data = {
+        **kwdagger_card,
+        'kwdagger': {**kwdagger_card['kwdagger'], 'custom_param': [1, 2]},
+    }
+    recipe = NewEvaluationRecipeSchema.model_validate(data)
+    assert recipe.kwdagger.model_extra == {'custom_param': [1, 2]}
+
+
 def test_new_recipe_schema_rejects_legacy_symbol_sweeps(kwdagger_card):
     data = {
         **kwdagger_card,

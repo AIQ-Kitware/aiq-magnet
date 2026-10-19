@@ -292,7 +292,9 @@ class NewEvaluationCLI(kwconf.Config):
         False, isflag=True, help='Verbose log output', group='logging'
     )
 
-    validate: str = kwconf.Value(
+    # kwconf intentionally allows config fields to shadow class operations.
+    # Keep the public 'validate' config key and CLI flag unchanged.
+    validate: str = kwconf.Value(  # ty: ignore
         'error',
         parser=str,
         choices=['only', 'error', 'warning', 'off'],

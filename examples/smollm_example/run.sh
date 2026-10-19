@@ -138,8 +138,12 @@ MSG
     exit 127
 fi
 
-# Require an initialized infer-stack backend.
-if ! infer-stack status 2>/dev/null | grep -qE '^\s*backend:\s*(compose|kubeai)'; then
+# Read the effective backend rather than parsing human-readable status output.
+backend="${INFER_STACK_BACKEND:-}"
+if [[ -z "$backend" ]]; then
+    backend="$(infer-stack config get backend 2>/dev/null || true)"
+fi
+if [[ "$backend" != compose && "$backend" != kubeai ]]; then
     echo "infer-stack has no backend configured. Once per machine:" >&2
     echo "    infer-stack config init --yes --backend compose" >&2
     exit 1
